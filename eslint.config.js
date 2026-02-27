@@ -5,18 +5,48 @@ import reactHooks from "eslint-plugin-react-hooks";
 import reactRefresh from "eslint-plugin-react-refresh";
 
 export default [
-  // Ignorar build e dependências
+  // 1) Ignorar pastas geradas e arquivos que não fazem sentido lintar
   {
     ignores: ["dist/**", "node_modules/**", ".wrangler/**"],
   },
 
-  // Base JS recomendada
+  // 2) Base JS recomendada
   js.configs.recommended,
 
-  // TypeScript (flat config)
+  // 3) TypeScript recomendado (flat config)
   ...tseslint.configs.recommended,
 
-  // Regras do app (TS/React)
+  // 4) Configs e scripts de build/dev (ambiente Node)
+  {
+    files: [
+      "eslint.config.js",
+      "tailwind.config.{js,cjs,mjs}",
+      "postcss.config.{js,cjs,mjs}",
+      "vite.config.{ts,js,mjs,cjs}",
+      "wrangler.{ts,js,mjs,cjs}",
+      "*.config.{ts,js,mjs,cjs}",
+      "test-*.mjs",
+      "scripts/**/*.{ts,js,mjs,cjs}",
+    ],
+    languageOptions: {
+      ecmaVersion: "latest",
+      sourceType: "module",
+      globals: {
+        ...globals.node,
+        // Node 20+ tem fetch global, mas o ESLint precisa saber
+        fetch: "readonly",
+        console: "readonly",
+      },
+    },
+    rules: {
+      // Permitir require() em arquivos de config (tailwind costuma usar require)
+      "@typescript-eslint/no-require-imports": "off",
+      // Se aparecer 'require is not defined' em JS config
+      "no-undef": "off",
+    },
+  },
+
+  // 5) App React/TS (browser)
   {
     files: ["**/*.{ts,tsx}"],
     languageOptions: {
@@ -32,30 +62,21 @@ export default [
       "react-refresh": reactRefresh,
     },
     rules: {
-      // React hooks
       ...reactHooks.configs.recommended.rules,
 
-      /**
-       * Para o Codex trabalhar sem quebrar CI:
-       * - Não travar PR por "any" enquanto tipamos aos poucos.
-       * - Não travar PR por variáveis não usadas enquanto refatora.
-       */
+      // Para não travar PR agora: vira warning
       "@typescript-eslint/no-explicit-any": "warn",
       "@typescript-eslint/no-unused-vars": [
         "warn",
         { argsIgnorePattern: "^_", varsIgnorePattern: "^_", caughtErrorsIgnorePattern: "^_" },
       ],
 
-      /**
-       * React Refresh:
-       * Em libs de UI é comum ter exports extras.
-       * Mantemos como warn.
-       */
+      // UI libs às vezes exportam mais coisas
       "react-refresh/only-export-components": "warn",
     },
   },
 
-  // Worker (ambiente server/edge) - mantém as mesmas regras, mas aqui você pode ajustar depois
+  // 6) Worker (Node/Edge-like)
   {
     files: ["src/worker/**/*.{ts,tsx}"],
     languageOptions: {
