@@ -1,0 +1,13 @@
+# Copy to .dev.vars (same folder) to run locally with `npm run dev`
+# Cloudflare Workers bindings
+
+# API-Football (API-Sports)
+APIFOOTBALL_KEY=fe28792f9b4c1754388ab1a8383836b7
+
+# TheSportsDB (free key is usually 123)
+THESPORTSDB_KEY=123
+
+# Optional (only if you use these features)
+THE_ODDS_API_KEY=
+FIRECRAWL_API_KEY=
+RAPIDAPI_KEY=
