@@ -1,0 +1,6 @@
+mobile
+publisher
+shared
+.yarn
+.pnp.*
+node_modules
