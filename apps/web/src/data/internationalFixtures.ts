@@ -41,6 +41,7 @@ export const internationalFixtures: Record<string, InternationalMatch[]> = {
     { homeTeam: 'Monaco', awayTeam: 'Lyon', date: '2026-05-17 17:05' },
     { homeTeam: 'Lille', awayTeam: 'Nice', date: '2026-05-18 17:05' },
     { homeTeam: 'Lens', awayTeam: 'Rennes', date: '2026-05-24 20:00' },
+    { homeTeam: 'Nice', awayTeam: 'Saint-Etienne', date: '2026-05-30 16:00' },
   ],
   champions_league: [
     { homeTeam: 'Real Madrid', awayTeam: 'Manchester City', date: '2026-05-27 21:00' },
