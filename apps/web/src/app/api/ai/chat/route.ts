@@ -155,7 +155,7 @@ function uniqueSorted(values: string[]): string[] {
 
 function buildConversationContext(messages: ChatMessage[]): string {
   return messages
-    .slice(-6)
+    .slice(-8)
     .map((m) => m.content)
     .join(' ');
 }
@@ -275,10 +275,90 @@ function buildDetailedTeamStatsAnswer(question: string, context: string): string
   return null;
 }
 
-function buildLocalStatsAnswer(question: string, context: string): string | null {
-  const detailedAnswer = buildDetailedTeamStatsAnswer(question, context);
-  if (detailedAnswer) return detailedAnswer;
+function questionMentionsAnyDetailedTeam(normalized: string): boolean {
+  return LOCAL_STATS_SETS.some((set) =>
+    set.stats.some((team) => normalized.includes(normalizeQuestion(team.team)))
+  );
+}
 
+function asksCompetitionAggregate(question: string): boolean {
+  const normalized = normalizeQuestion(question);
+  const aggregateIntent =
+    normalized.includes('media do campeonato') ||
+    normalized.includes('media da competicao') ||
+    normalized.includes('media da liga') ||
+    normalized.includes('campeonato inteiro') ||
+    normalized.includes('todos os times') ||
+    normalized.includes('todos os clubes') ||
+    normalized.includes('media geral') ||
+    (normalized.includes('campeonato') && !questionMentionsAnyDetailedTeam(normalized));
+
+  return aggregateIntent && (normalized.includes('media') || normalized.includes('escanteio'));
+}
+
+function average(values: Array<number | undefined>): number {
+  const valid = values.filter((value): value is number => Number.isFinite(value));
+  if (valid.length === 0) return 0;
+  return valid.reduce((sum, value) => sum + value, 0) / valid.length;
+}
+
+function rounded(value: number): string {
+  return (Math.round(value * 10) / 10).toFixed(1);
+}
+
+function pickStatsGroupForAggregate(question: string, context: string): { label: string; teams: SimpleTeamStats[] } | null {
+  const normalizedQuestion = normalizeQuestion(question);
+  const normalizedContext = normalizeQuestion(`${question} ${context}`);
+  const allTeams = LOCAL_STATS_SETS.flatMap((set) => set.stats);
+  const leagues = uniqueSorted(allTeams.map((team) => team.league ?? ''));
+
+  const explicitLeague =
+    leagues.find((league) => questionMentionsLeague(normalizedQuestion, league)) ??
+    (normalizedQuestion.includes('brasileiro') || normalizedQuestion.includes('brasileirao')
+      ? leagues.find((league) => normalizeQuestion(league).includes('brasileirao serie a'))
+      : undefined);
+
+  if (explicitLeague) {
+    const teams = allTeams.filter((team) => team.league === explicitLeague);
+    if (teams.length > 0) return { label: explicitLeague, teams };
+  }
+
+  const explicitSet = LOCAL_STATS_SETS.find((set) => questionMentionsLeague(normalizedQuestion, set.label));
+  if (explicitSet) return { label: explicitSet.label, teams: explicitSet.stats };
+
+  const contextualLeague = leagues.find((league) => questionMentionsLeague(normalizedContext, league));
+  if (contextualLeague) {
+    const teams = allTeams.filter((team) => team.league === contextualLeague);
+    if (teams.length > 0) return { label: contextualLeague, teams };
+  }
+
+  const contextualSet = LOCAL_STATS_SETS.find((set) => questionMentionsLeague(normalizedContext, set.label));
+  if (contextualSet) return { label: contextualSet.label, teams: contextualSet.stats };
+
+  const fallbackSet = LOCAL_STATS_SETS[0];
+  return fallbackSet ? { label: fallbackSet.label, teams: fallbackSet.stats } : null;
+}
+
+function buildCompetitionAverageAnswer(question: string, context: string): string | null {
+  if (!asksCompetitionAggregate(question)) return null;
+
+  const group = pickStatsGroupForAggregate(question, context);
+  if (!group || group.teams.length === 0) return null;
+
+  const halfOnly = detectHalfRequest(normalizeQuestion(question));
+
+  if (halfOnly === 'first') {
+    return `${group.label}, media local dos times no 1o tempo:\n\n- Media a favor no 1o tempo: ${rounded(average(group.teams.map((team) => team.avgCornersFirstHalf)))} escanteios por time/jogo.\n- Media total a favor no jogo: ${rounded(average(group.teams.map((team) => team.avgCornersFor)))} escanteios por time/jogo.\n- Amostra: ${group.teams.length} times cadastrados na base local.`;
+  }
+
+  if (halfOnly === 'second') {
+    return `${group.label}, media local dos times no 2o tempo:\n\n- Media a favor no 2o tempo: ${rounded(average(group.teams.map((team) => team.avgCornersSecondHalf)))} escanteios por time/jogo.\n- Media total a favor no jogo: ${rounded(average(group.teams.map((team) => team.avgCornersFor)))} escanteios por time/jogo.\n- Amostra: ${group.teams.length} times cadastrados na base local.`;
+  }
+
+  return `${group.label}, media local geral:\n\n- Media a favor por time: ${rounded(average(group.teams.map((team) => team.avgCornersFor)))} escanteios por jogo.\n- Media contra por time: ${rounded(average(group.teams.map((team) => team.avgCornersAgainst)))} escanteios cedidos por jogo.\n- Media total nos jogos: ${rounded(average(group.teams.map((team) => team.avgTotalCorners)))} escanteios.\n- Por tempo: ${rounded(average(group.teams.map((team) => team.avgCornersFirstHalf)))} no 1o tempo e ${rounded(average(group.teams.map((team) => team.avgCornersSecondHalf)))} no 2o tempo.\n- Amostra: ${group.teams.length} times cadastrados na base local.`;
+}
+
+function buildLocalStatsAnswer(question: string, context: string): string | null {
   const combined = normalizeQuestion(`${context} ${question}`);
   if (
     !combined.includes('escanteio') &&
@@ -288,6 +368,12 @@ function buildLocalStatsAnswer(question: string, context: string): string | null
   ) {
     return null;
   }
+
+  const aggregateAnswer = buildCompetitionAverageAnswer(question, context);
+  if (aggregateAnswer) return aggregateAnswer;
+
+  const detailedAnswer = buildDetailedTeamStatsAnswer(question, context);
+  if (detailedAnswer) return detailedAnswer;
 
   for (const set of LOCAL_STATS_SETS) {
     const team = set.stats.find((item) => combined.includes(normalizeQuestion(item.team)));

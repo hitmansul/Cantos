@@ -21,6 +21,7 @@ import {
   teamStats,
   type DetailedTeamStats,
 } from '@/data/teamCornerStats';
+import { currentUpcomingMatches } from '@/data/currentFixtures';
 import { internationalFixtures, type InternationalMatch } from '@/data/internationalFixtures';
 import { FutureMatchPrediction } from '@/components/FutureMatchPrediction';
 
@@ -228,6 +229,10 @@ const defaultTeamStats: TeamStatsWithHalf = {
 };
 
 const LEAGUE_NAMES: Record<string, string> = {
+  segunda_division: 'LaLiga 2',
+  chile_primera: 'Primera Division Chile',
+  bolivia_primera: 'Division Profesional Bolivia',
+  china_csl: 'Chinese Super League',
   'Série A': '🇧🇷 Brasileirão Série A',
   'Série B': '🇧🇷 Brasileirão Série B',
   'Copa do Brasil': '🇧🇷 Copa do Brasil',
@@ -523,6 +528,28 @@ export function GlobalCornerSearch() {
         league: LEAGUE_NAMES[m.competition] ?? m.competition,
         leagueKey: m.competition,
         predictedCorners: p.total,
+        homeCorners: p.home,
+        awayCorners: p.away,
+        predicted1stHalf: p.firstHalf,
+        predicted2ndHalf: p.secondHalf,
+        confidence: p.confidence,
+        rawMs,
+      });
+    });
+
+    currentUpcomingMatches.forEach((m) => {
+      const rawMs = parseDateMs(m.date);
+      const { date, time } = formatMsToDisplay(rawMs);
+      const p = predict(m.homeTeam, m.awayTeam);
+      const leagueKey = m.leagueKey ?? m.competition;
+      addMatch({
+        homeTeam: m.homeTeam,
+        awayTeam: m.awayTeam,
+        date,
+        time,
+        league: displayLeagueName(leagueKey),
+        leagueKey,
+        predictedCorners: m.predictedCorners ?? p.total,
         homeCorners: p.home,
         awayCorners: p.away,
         predicted1stHalf: p.firstHalf,

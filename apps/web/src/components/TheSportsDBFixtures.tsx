@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button';
 import { useTheSportsDBNextFixtures, type TheSportsDBFixture, formatMatchDate } from '@/hooks/useTheSportsDB';
 import { findReferee, getRefereeStatsSummary, type RefereeCardStats } from '@/data/brazilianReferees';
 import { FutureMatchPrediction } from '@/components/FutureMatchPrediction';
+import { currentUpcomingMatches } from '@/data/currentFixtures';
 
 interface TheSportsDBFixturesProps {
   league: 'brasileirao_a' | 'brasileirao_b' | 'copa_do_brasil';
@@ -22,13 +23,42 @@ const LEAGUE_INFO = {
   copa_do_brasil: { name: 'Copa do Brasil', flag: '🇧🇷' },
 };
 
+function toTimestamp(date: string): string {
+  return date.includes(' ') ? date.replace(' ', 'T') + ':00' : `${date}T12:00:00`;
+}
+
+function localFixturesForLeague(league: TheSportsDBFixturesProps['league']): TheSportsDBFixture[] {
+  return currentUpcomingMatches
+    .filter((match) => match.leagueKey === league)
+    .map((match, index) => ({
+      id: `local-${league}-${index}-${match.homeTeam}-${match.awayTeam}`,
+      homeTeam: match.homeTeam,
+      awayTeam: match.awayTeam,
+      homeTeamId: '',
+      awayTeamId: '',
+      homeTeamBadge: null,
+      awayTeamBadge: null,
+      date: match.date.slice(0, 10),
+      time: match.date.includes(' ') ? match.date.slice(11, 16) : '',
+      timestamp: toTimestamp(match.date),
+      round: match.round || 'Proximos jogos',
+      referee: null,
+      venue: null,
+      status: null,
+      homeScore: null,
+      awayScore: null,
+    }));
+}
+
 export function TheSportsDBFixtures({ league, onSelectMatch }: TheSportsDBFixturesProps) {
   const { fixtures, loading, error, refetch } = useTheSportsDBNextFixtures(league);
   const [selectedReferee, setSelectedReferee] = useState<RefereeCardStats | null>(null);
   const [selectedMatchId, setSelectedMatchId] = useState<string | null>(null);
   const leagueInfo = LEAGUE_INFO[league];
+  const localFixtures = localFixturesForLeague(league);
+  const visibleFixtures = localFixtures.length > 0 ? localFixtures : fixtures;
 
-  if (loading) {
+  if (loading && visibleFixtures.length === 0) {
     return (
       <div className="flex items-center justify-center py-12">
         <div className="flex flex-col items-center gap-3">
@@ -39,7 +69,7 @@ export function TheSportsDBFixtures({ league, onSelectMatch }: TheSportsDBFixtur
     );
   }
 
-  if (error) {
+  if (error && visibleFixtures.length === 0) {
     return (
       <div className="rounded-xl border border-red-500/20 bg-red-500/10 p-6">
         <div className="flex items-start gap-3">
@@ -59,7 +89,7 @@ export function TheSportsDBFixtures({ league, onSelectMatch }: TheSportsDBFixtur
     );
   }
 
-  if (fixtures.length === 0) {
+  if (visibleFixtures.length === 0) {
     return (
       <div className="text-center py-12 text-muted-foreground">
         <Calendar className="w-12 h-12 mx-auto mb-3 opacity-50" />
@@ -70,7 +100,7 @@ export function TheSportsDBFixtures({ league, onSelectMatch }: TheSportsDBFixtur
 
   // Agrupar por rodada
   const groupedMatches = new Map<string, TheSportsDBFixture[]>();
-  for (const match of fixtures) {
+  for (const match of visibleFixtures) {
     const round = match.round || 'Rodada';
     if (!groupedMatches.has(round)) {
       groupedMatches.set(round, []);
@@ -87,7 +117,7 @@ export function TheSportsDBFixtures({ league, onSelectMatch }: TheSportsDBFixtur
           <span className="text-lg">{leagueInfo.flag}</span>
           <h3 className="font-semibold">{leagueInfo.name}</h3>
           <span className="text-xs text-muted-foreground bg-muted px-2 py-0.5 rounded-full">
-            {fixtures.length} jogos
+            {visibleFixtures.length} jogos
           </span>
         </div>
         <button

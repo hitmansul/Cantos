@@ -12,8 +12,23 @@ import {
   findTeamByName,
   type DetailedTeamStats,
 } from "@/data/teamCornerStats";
+import { currentUpcomingMatches } from "@/data/currentFixtures";
 
 const STORAGE_KEY = "cornerstats_favorite_teams";
+
+function parseMatchDateMs(date: string): number {
+  const iso = date.includes(" ") ? date.replace(" ", "T") + ":00" : `${date}T12:00:00`;
+  return Date.parse(iso);
+}
+
+function saoPauloDay(ms: number): string {
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo" }).format(ms);
+}
+
+function isFutureOrToday(date: string): boolean {
+  const ms = parseMatchDateMs(date);
+  return Number.isFinite(ms) && saoPauloDay(ms) >= saoPauloDay(Date.now());
+}
 
 interface FavoriteTeam {
   name: string;
@@ -95,11 +110,12 @@ export function FavoriteTeamAlerts({ onTeamClick }: FavoriteTeamAlertsProps) {
   // Get upcoming matches for favorite teams
   const favoriteMatches = useMemo(() => {
     const favoriteNames = new Set(favorites.map(f => f.name));
-    return upcomingMatches
+    return [...upcomingMatches, ...currentUpcomingMatches]
+      .filter(match => isFutureOrToday(match.date))
       .filter(match => 
         favoriteNames.has(match.homeTeam) || favoriteNames.has(match.awayTeam)
       )
-      .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+      .sort((a, b) => parseMatchDateMs(a.date) - parseMatchDateMs(b.date));
   }, [favorites]);
 
   // Get team stats for display

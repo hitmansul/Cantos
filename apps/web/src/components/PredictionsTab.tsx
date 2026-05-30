@@ -11,7 +11,9 @@ import {
   findTeamByName,
   getHeadToHead,
   upcomingMatches,
+  teamStats,
 } from "@/data/teamCornerStats";
+import { currentUpcomingMatches } from "@/data/currentFixtures";
 import { DateFilterCompact, DateFilterOption, getDateRange } from "./DateFilter";
 
 interface PredictionFilters {
@@ -35,6 +37,53 @@ const defaultFilters: PredictionFilters = {
   onlyStrongPicks: false,
   searchTeam: "",
 };
+
+function normalizeTeamName(value: string): string {
+  return value
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, "");
+}
+
+function findTeamForPrediction(teamName: string): DetailedTeamStats | null {
+  const direct = findTeamByName(teamName);
+  if (direct) return direct;
+
+  const normalized = normalizeTeamName(teamName);
+  return (
+    teamStats.find((team) => {
+      const candidate = normalizeTeamName(team.team);
+      return candidate === normalized || candidate.includes(normalized) || normalized.includes(candidate);
+    }) ?? null
+  );
+}
+
+function parseMatchDateMs(date: string): number {
+  const iso = date.includes(" ") ? date.replace(" ", "T") + ":00" : `${date}T12:00:00`;
+  return Date.parse(iso);
+}
+
+function saoPauloDay(ms: number): string {
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo" }).format(ms);
+}
+
+function isFutureOrToday(match: NextMatch): boolean {
+  const ms = parseMatchDateMs(match.date);
+  return Number.isFinite(ms) && saoPauloDay(ms) >= saoPauloDay(Date.now());
+}
+
+function getPredictionMatches(): NextMatch[] {
+  const seen = new Set<string>();
+  return [...upcomingMatches, ...currentUpcomingMatches]
+    .filter(isFutureOrToday)
+    .filter((match) => {
+      const key = `${normalizeTeamName(match.homeTeam)}-${normalizeTeamName(match.awayTeam)}-${match.date.slice(0, 10)}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+}
 
 interface PredictionData {
   match: NextMatch;
@@ -400,10 +449,10 @@ export function PredictionsTab({ onSelectMatch }: PredictionsTabProps) {
   const [showFilters, setShowFilters] = useState(false);
 
   const allPredictions = useMemo(() => {
-    return upcomingMatches
+    return getPredictionMatches()
       .map(match => {
-        const homeTeam = findTeamByName(match.homeTeam) ?? null;
-        const awayTeam = findTeamByName(match.awayTeam) ?? null;
+        const homeTeam = findTeamForPrediction(match.homeTeam);
+        const awayTeam = findTeamForPrediction(match.awayTeam);
         const h2h = getHeadToHead(match.homeTeam, match.awayTeam);
         const prediction = calculatePrediction(homeTeam, awayTeam, h2h?.avgTotalCorners ?? null);
         

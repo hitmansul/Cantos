@@ -5,6 +5,7 @@ import { RefreshCw, AlertCircle, Radio, CornerUpRight, Clock, Trophy } from 'luc
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { FutureMatchPrediction } from '@/components/FutureMatchPrediction';
 
 interface LiveMatch {
   id: number;
@@ -53,13 +54,34 @@ const COMPETITION_ICONS: Record<number, string> = {
   13: '🏆',
 };
 
-function LiveMatchCard({ match }: { match: LiveMatch }) {
+function LiveMatchCard({
+  match,
+  selected,
+  onClick,
+}: {
+  match: LiveMatch;
+  selected?: boolean;
+  onClick?: () => void;
+}) {
   const icon = COMPETITION_ICONS[match.competitionId] || '⚽';
   const minuteDisplay =
     typeof match.minute === 'number' ? `${match.minute}'` : match.minute || match.statusText;
 
   return (
-    <Card className="p-4 border-emerald-500/30 bg-gradient-to-br from-emerald-500/5 to-green-500/5 hover:border-emerald-400/50 transition-all">
+    <Card
+      role="button"
+      tabIndex={0}
+      onClick={onClick}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          onClick?.();
+        }
+      }}
+      className={`p-4 cursor-pointer border-emerald-500/30 bg-gradient-to-br from-emerald-500/5 to-green-500/5 hover:border-emerald-400/50 transition-all ${
+        selected ? 'ring-2 ring-emerald-500/60 border-emerald-400' : ''
+      }`}
+    >
       <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-2">
           <span className="text-lg">{icon}</span>
@@ -133,6 +155,7 @@ export function LiveMatches() {
   const [lastUpdatedDisplay, setLastUpdatedDisplay] = useState('');
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [selectedCompetition, setSelectedCompetition] = useState('all');
+  const [selectedMatchId, setSelectedMatchId] = useState<number | null>(null);
   // fetchTick increments each time a fetch completes — triggers the time update effect
   const [fetchTick, setFetchTick] = useState(0);
 
@@ -223,6 +246,12 @@ export function LiveMatches() {
       setSelectedCompetition('all');
     }
   }, [matchesByCompetition, selectedCompetition]);
+
+  useEffect(() => {
+    if (selectedMatchId !== null && !matches.some((match) => match.id === selectedMatchId)) {
+      setSelectedMatchId(null);
+    }
+  }, [matches, selectedMatchId]);
 
   const visibleMatches =
     selectedCompetition === 'all'
@@ -380,9 +409,27 @@ export function LiveMatches() {
                 </Badge>
               </h4>
               <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                {compMatches.map((match) => (
-                  <LiveMatchCard key={match.id} match={match} />
-                ))}
+                {compMatches.map((match) => {
+                  const selected = selectedMatchId === match.id;
+                  return (
+                    <div key={match.id} className="space-y-3">
+                      <LiveMatchCard
+                        match={match}
+                        selected={selected}
+                        onClick={() => setSelectedMatchId((current) => (current === match.id ? null : match.id))}
+                      />
+                      {selected && (
+                        <FutureMatchPrediction
+                          homeTeam={match.homeTeam.name}
+                          awayTeam={match.awayTeam.name}
+                          league={match.competition || competition}
+                          kickoff="Ao vivo"
+                          onClose={() => setSelectedMatchId(null)}
+                        />
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             </div>
           ))}

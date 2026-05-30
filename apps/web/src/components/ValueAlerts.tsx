@@ -9,7 +9,9 @@ import {
   upcomingMatches,
   findTeamByName,
   getHeadToHead,
+  teamStats,
 } from "@/data/teamCornerStats";
+import { currentUpcomingMatches } from "@/data/currentFixtures";
 
 interface BookmakerOdds {
   name: string;
@@ -39,6 +41,7 @@ const BOOKMAKERS = [
   { name: "KTO", logo: "🔵", color: "text-blue-400" },
   { name: "Estrela Bet", logo: "⭐", color: "text-yellow-400" },
   { name: "Pinnacle", logo: "🔴", color: "text-red-400" },
+  { name: "Bet365", logo: "🟡", color: "text-lime-300" },
 ];
 
 // Typical market odds for corner markets (based on common bookmaker offerings)
@@ -95,12 +98,87 @@ function probToOdds(prob: number): number {
   return 100 / prob;
 }
 
+function normalizeTeamName(value: string): string {
+  return value
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, "");
+}
+
+function findTeamForAlert(teamName: string) {
+  const direct = findTeamByName(teamName);
+  if (direct) return direct;
+
+  const normalized = normalizeTeamName(teamName);
+  return teamStats.find((team) => {
+    const candidate = normalizeTeamName(team.team);
+    return candidate === normalized || candidate.includes(normalized) || normalized.includes(candidate);
+  });
+}
+
+function parseMatchDateMs(date: string): number {
+  const iso = date.includes(" ") ? date.replace(" ", "T") + ":00" : `${date}T12:00:00`;
+  return Date.parse(iso);
+}
+
+function saoPauloDay(ms: number): string {
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo" }).format(ms);
+}
+
+function isFutureOrToday(match: NextMatch): boolean {
+  const ms = parseMatchDateMs(match.date);
+  if (!Number.isFinite(ms)) return false;
+  return saoPauloDay(ms) >= saoPauloDay(Date.now());
+}
+
+function getAlertMatches(): NextMatch[] {
+  const seen = new Set<string>();
+  const matches = [...upcomingMatches, ...currentUpcomingMatches]
+    .filter(isFutureOrToday)
+    .filter((match) => {
+      const key = `${normalizeTeamName(match.homeTeam)}-${normalizeTeamName(match.awayTeam)}-${match.date.slice(0, 10)}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+
+  return matches;
+}
+
 function calculateMatchPrediction(match: NextMatch) {
-  const homeTeam = findTeamByName(match.homeTeam);
-  const awayTeam = findTeamByName(match.awayTeam);
+  const homeTeam = findTeamForAlert(match.homeTeam);
+  const awayTeam = findTeamForAlert(match.awayTeam);
   const h2h = getHeadToHead(match.homeTeam, match.awayTeam);
 
-  if (!homeTeam || !awayTeam) return null;
+  const calcOverProb = (expectedTotal: number, threshold: number) => {
+    const variance = 2.5;
+    const zScore = (threshold - expectedTotal) / variance;
+    const prob = 100 * (1 - 0.5 * (1 + Math.tanh(zScore * 0.8)));
+    return Math.min(95, Math.max(5, prob));
+  };
+
+  if (!homeTeam || !awayTeam) {
+    const expectedTotal = match.predictedCorners || 9.5;
+    const confidence: "alta" | "média" | "baixa" = homeTeam || awayTeam ? "média" : "baixa";
+
+    return {
+      expectedTotal,
+      probabilities: {
+        "Over 7.5": calcOverProb(expectedTotal, 7.5),
+        "Over 8.5": calcOverProb(expectedTotal, 8.5),
+        "Over 9.5": calcOverProb(expectedTotal, 9.5),
+        "Over 10.5": calcOverProb(expectedTotal, 10.5),
+        "Over 11.5": calcOverProb(expectedTotal, 11.5),
+        "Under 7.5": 100 - calcOverProb(expectedTotal, 7.5),
+        "Under 8.5": 100 - calcOverProb(expectedTotal, 8.5),
+        "Under 9.5": 100 - calcOverProb(expectedTotal, 9.5),
+        "Under 10.5": 100 - calcOverProb(expectedTotal, 10.5),
+        "Under 11.5": 100 - calcOverProb(expectedTotal, 11.5),
+      },
+      confidence,
+    };
+  }
 
   const weights = { base: 0.4, recent: 0.25, h2h: 0.2, overall: 0.15 };
 
@@ -124,13 +202,6 @@ function calculateMatchPrediction(match: NextMatch) {
   }
 
   const expectedTotal = homeExpected + awayExpected;
-  const variance = 2.5;
-
-  const calcOverProb = (threshold: number) => {
-    const zScore = (threshold - expectedTotal) / variance;
-    const prob = 100 * (1 - 0.5 * (1 + Math.tanh(zScore * 0.8)));
-    return Math.min(95, Math.max(5, prob));
-  };
 
   // Confidence based on data consistency
   const homeConsistency = Math.abs(homeTeam.avgLast5 - homeTeam.avgCornersFor) < 1;
@@ -144,16 +215,16 @@ function calculateMatchPrediction(match: NextMatch) {
   return {
     expectedTotal,
     probabilities: {
-      "Over 7.5": calcOverProb(7.5),
-      "Over 8.5": calcOverProb(8.5),
-      "Over 9.5": calcOverProb(9.5),
-      "Over 10.5": calcOverProb(10.5),
-      "Over 11.5": calcOverProb(11.5),
-      "Under 7.5": 100 - calcOverProb(7.5),
-      "Under 8.5": 100 - calcOverProb(8.5),
-      "Under 9.5": 100 - calcOverProb(9.5),
-      "Under 10.5": 100 - calcOverProb(10.5),
-      "Under 11.5": 100 - calcOverProb(11.5),
+      "Over 7.5": calcOverProb(expectedTotal, 7.5),
+      "Over 8.5": calcOverProb(expectedTotal, 8.5),
+      "Over 9.5": calcOverProb(expectedTotal, 9.5),
+      "Over 10.5": calcOverProb(expectedTotal, 10.5),
+      "Over 11.5": calcOverProb(expectedTotal, 11.5),
+      "Under 7.5": 100 - calcOverProb(expectedTotal, 7.5),
+      "Under 8.5": 100 - calcOverProb(expectedTotal, 8.5),
+      "Under 9.5": 100 - calcOverProb(expectedTotal, 9.5),
+      "Under 10.5": 100 - calcOverProb(expectedTotal, 10.5),
+      "Under 11.5": 100 - calcOverProb(expectedTotal, 11.5),
     },
     confidence,
   };
@@ -162,7 +233,7 @@ function calculateMatchPrediction(match: NextMatch) {
 function findValueBets(): ValueBet[] {
   const valueBets: ValueBet[] = [];
 
-  for (const match of upcomingMatches) {
+  for (const match of getAlertMatches()) {
     const prediction = calculateMatchPrediction(match);
     if (!prediction) continue;
 
