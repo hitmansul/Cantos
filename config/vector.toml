@@ -1,0 +1,172 @@
+[sources.web_logs]
+type               = "file"
+include            = ["/var/log/web.log"]
+ignore_older_secs  = 0
+read_from          = "beginning"
+  [sources.web_logs.multiline]
+  start_pattern     = '^\[traceId:[^\]]+\]'   # first line of a block
+  condition_pattern = '^\[traceId:[^\]]+\]'   # next header → stop
+  mode              = "halt_before"
+  timeout_ms        = 1000                    # flush after 1 s of silence
+
+[sources.web_err]
+type               = "file"
+include            = ["/var/log/web-err.log"]
+ignore_older_secs  = 0
+read_from          = "beginning"
+  [sources.web_err.multiline]
+  start_pattern     = '^\[traceId:[^\]]+\]'   # first line of a block
+  condition_pattern = '^\[traceId:[^\]]+\]'   # next header → stop
+  mode              = "halt_before"
+  timeout_ms        = 1000                    # flush after 1 s of silence
+
+[sources.mobile_logs]
+type               = "file"
+include            = ["/var/log/mobile.log"]
+ignore_older_secs  = 0
+read_from          = "beginning"
+  [sources.mobile_logs.multiline]
+  start_pattern     = '^\s*(LOG|INFO|DEBUG|WARN|ERROR)'   # first line of a block starts with LOG, INFO, DEBUG, WARN, or ERROR
+  condition_pattern = '^\s*(LOG|INFO|DEBUG|WARN|ERROR)'   # next line with any log level → stop
+  mode              = "halt_before"
+  timeout_ms        = 1000                                # flush after 1 s of silence
+
+[sources.mobile_err]
+type               = "file"
+include            = ["/var/log/mobile-err.log"]
+ignore_older_secs  = 0
+read_from          = "beginning"
+  [sources.mobile_err.multiline]
+  start_pattern     = '^\s*(LOG|INFO|DEBUG|WARN|ERROR)'   # first line of a block starts with LOG, INFO, DEBUG, WARN, or ERROR
+  condition_pattern = '^\s*(LOG|INFO|DEBUG|WARN|ERROR)'   # next line with any log level → stop
+  mode              = "halt_before"
+  timeout_ms        = 1000                                # flush after 1 s of silence
+
+[transforms.web_err_prepare]
+type   = "remap"
+inputs = ["web_err"]
+source = '''
+.app_name = "web"
+.level    = "error"
+.source   = "${SANDBOX_ENVIRONMENT:?err}"
+.devServerId = "${DEV_SERVER_ID:?err}"
+
+# Work on a definite‑string copy of the message
+msg = string!(.message)
+
+# Pull out the first traceId found anywhere in the text
+capture = parse_regex(msg, r'\[traceId:(?P<trace_id>[^\]]+)\]') ?? null
+if capture != null {
+  .trace_id = capture.trace_id
+
+  # Strip ALL "[traceId:…] " prefixes (infallibly)
+  msg = replace(msg, r'\[traceId:[^\]]+\]\s*', "")
+}
+
+.message = msg
+'''
+
+[transforms.web_err_with_trace]
+type      = "filter"
+inputs    = ["web_err_prepare"]
+condition = '.trace_id != null'
+
+[transforms.web_err_without_trace]
+type      = "filter"
+inputs    = ["web_err_prepare"]
+condition = '.trace_id == null'
+
+[transforms.web_err_reduce]
+type   = "reduce"
+inputs = ["web_err_with_trace"]
+group_by         = ["trace_id"]          # only events with this field are grouped
+flush_period_ms  = 500                   # check twice per second …
+expire_after_ms  = 10_000                # … and force‑flush after 10 s of silence
+
+  # how to merge the individual events
+  [transforms.web_err_reduce.merge_strategies]
+  message   = "concat_newline"  # join the individual messages
+
+# Mobile (INFO)
+[transforms.tag_mobile_logs]
+type   = "remap"
+inputs = ["mobile_logs"]
+source = '''
+.app_name = "mobile"
+.level    = "info"
+.source   = "${SANDBOX_ENVIRONMENT:?err}"
+.devServerId = "${DEV_SERVER_ID:?err}"
+'''
+
+# Mobile errors (ERROR)
+[transforms.tag_mobile_err]
+type   = "remap"
+inputs = ["mobile_err"]
+source = '''
+.app_name = "mobile"
+.level    = "error"
+.source   = "${SANDBOX_ENVIRONMENT:?err}"
+.devServerId = "${DEV_SERVER_ID:?err}"
+'''
+
+[transforms.web_prepare]
+type   = "remap"
+inputs = ["web_logs"]
+source = '''
+.app_name = "web"
+.level    = "info"
+.source   = "${SANDBOX_ENVIRONMENT:?err}"
+.devServerId = "${DEV_SERVER_ID:?err}"
+
+# Work on a definite‑string copy of the message
+msg = string!(.message)
+
+# Pull out the first traceId found anywhere in the text
+capture = parse_regex(msg, r'\[traceId:(?P<trace_id>[^\]]+)\]') ?? null
+if capture != null {
+  .trace_id = capture.trace_id
+
+  # Strip ALL "[traceId:…] " prefixes (infallibly)
+  msg = replace(msg, r'\[traceId:[^\]]+\]\s*', "")
+}
+
+.message = msg
+'''
+
+[transforms.web_with_trace]
+type      = "filter"
+inputs    = ["web_prepare"]
+condition = '.trace_id != null'
+
+[transforms.web_without_trace]
+type      = "filter"
+inputs    = ["web_prepare"]
+condition = '.trace_id == null'
+
+
+[transforms.web_reduce]
+type   = "reduce"
+inputs = ["web_with_trace"]
+group_by         = ["trace_id"]          # only events with this field are grouped
+flush_period_ms  = 500                   # check twice per second …
+expire_after_ms  = 10_000                # … and force‑flush after 10 s of silence
+
+  # how to merge the individual events
+  [transforms.web_reduce.merge_strategies]
+  message   = "concat_newline"  # join the individual messages
+
+
+[sinks.http]
+type            = "http"
+inputs          = ["web_reduce", "web_without_trace", "web_err_reduce", "web_err_without_trace", "tag_mobile_logs", "tag_mobile_err"]
+uri             = "${LOGS_ENDPOINT:?err}"
+encoding.codec  = "json"
+payload_prefix  = '{"projectGroupId": "${NEXT_PUBLIC_PROJECT_GROUP_ID:?err}", "logs":'
+payload_suffix  = "}"
+auth.strategy   = "bearer"
+auth.token      = "${CREATE_TEMP_API_KEY:?err}"
+
+[sinks.console]
+type           = "console"
+inputs         = ["web_reduce", "web_without_trace", "web_err_reduce", "web_err_without_trace", "tag_mobile_logs", "tag_mobile_err"]
+encoding.codec = "json"

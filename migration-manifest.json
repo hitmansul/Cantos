@@ -1,0 +1,39 @@
+{
+  "stats": {
+    "files": 263,
+    "routeShells": 3,
+    "tables": 5,
+    "indexes": 5,
+    "inserts": 1,
+    "users": 1,
+    "routesGenerated": 6
+  },
+  "envKeys": [
+    "API_FOOTBALL_KEY",
+    "FIRECRAWL_API_KEY",
+    "GEMINI_API_KEY",
+    "ODDSPAPI_KEY",
+    "RAPIDAPI_KEY",
+    "THE_ODDS_API_KEY"
+  ],
+  "redactedSecretKeys": [],
+  "assetMigration": {
+    "oldBase": "https://unknown.mochausercontent.com/",
+    "newBase": "https://dtvoeevhaseb5.cloudfront.net/uploads/mocha-import/c688e06e-3378-4f19-b5d4-3cb434225887/",
+    "assetCount": 17
+  },
+  "notes": [
+    "tailwind.config: Unknown theme.extend namespace \"keyframes\" — skipped. v4 may not support it as a @theme key.",
+    "tailwind.config: Unknown theme.extend namespace \"animation\" — skipped. v4 may not support it as a @theme key.",
+    "tailwind.config: Config has 1 plugin(s) — these aren't ported automatically. Common Tailwind v3 plugins (typography, forms, container-queries, aspect-ratio) ship as v4-compatible packages; add them as @plugin directives in global.css.",
+    "rewrite-routes: emitted 3 app/ route shells.",
+    "strip-mocha-build: merged 4 runtime dep(s) from user package.json; pinned 1 dep(s).",
+    "rewrite-imports: rewrote 62 file(s).",
+    "sqlite-to-pg: 5 tables, 5 indexes, 1 inserts; skipped 4 _mocha_migrations rows.",
+    "asset-rewrite: 0 file(s) updated; 0 per-url + 0 base-host substitution(s); old=https://unknown.mochausercontent.com/ new=https://dtvoeevhaseb5.cloudfront.net/uploads/mocha-import/c688e06e-3378-4f19-b5d4-3cb434225887/",
+    "seed-users: 1 user row(s), 1 account row(s); skipped 0 record(s) without id+email."
+  ],
+  "manualSteps": [
+    "**Enable Google sign-in.** Your Mocha users signed in with Google, so we added a Google sign-in button to your app. To make it work, paste your Google OAuth credentials below.\n\nIf you don't have these yet, create an OAuth client at [Google Cloud Console](https://console.cloud.google.com/apis/credentials) and set the authorized redirect URI to `https://<your-app>.created.app/api/auth/callback/google`."
+  ]
+}

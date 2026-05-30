@@ -1,0 +1,34 @@
+services:
+  devserver:
+    build:
+      context: .
+      args:
+        NPM_TOKEN: ${NPM_TOKEN:-}
+    ports:
+      - "4000:4000"
+      - "8081:8081"
+      - "9000:9000"
+    command: /usr/local/bin/start-cmd.sh
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:9000/healthz"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+
+  tests:
+    image: mcr.microsoft.com/playwright:v1.58.1-jammy
+    working_dir: /tests
+    volumes:
+      - ../tests/v2:/tests
+    environment:
+      - DEV_SERVER_URL=http://devserver:4000
+      - HEALTHCHECK_URL=http://devserver:9000
+      - MOBILE_SERVER_URL=http://devserver:8081
+      - CI=true
+    depends_on:
+      devserver:
+        condition: service_healthy
+    command: sh -c "corepack enable && yarn install && yarn playwright test"
+    profiles:
+      - test
