@@ -1,59 +1,20 @@
-/**
- * ⚠ ANYTHING PLATFORM — DO NOT REWRITE THIS FILE ⚠
- *
- * Shipped v2 auth scaffolding. The useEffect-on-mount → authClient.signOut →
- * window.location.href redirect is load-bearing for the mobile WebView's
- * "sign out" flow. Safe to restyle the spinner / copy; unsafe to bypass
- * authClient.signOut or change the redirect behavior.
- */
-'use client';
-
-import { Suspense, useEffect, useState } from 'react';
-import { useSearchParams } from 'next/navigation';
-import { authClient } from '@/lib/auth-client';
-
-function LogoutHandler() {
-  const searchParams = useSearchParams();
-  const callbackUrl = searchParams.get('callbackUrl') || '/';
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      const { error: signOutError } = await authClient.signOut();
-      if (cancelled) return;
-      if (signOutError) {
-        setError(signOutError.message ?? 'Sign out failed');
-        return;
-      }
-      if (typeof window !== 'undefined') {
-        window.location.href = callbackUrl;
-      } else {
-        console.warn('logout: window is undefined; cannot redirect to callbackUrl');
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [callbackUrl]);
-
-  return (
-    <main className="flex min-h-screen w-full items-center justify-center bg-gray-50 p-[16px]">
-      <div className="flex flex-col items-center gap-[12px] text-[14px] text-gray-600">
-        {error ? (
-          <span className="text-red-600">{error}</span>
-        ) : (
-          <span>Signing out…</span>
-        )}
-      </div>
-    </main>
-  );
-}
+import Link from 'next/link';
 
 export default function LogoutPage() {
   return (
-    <Suspense>
-      <LogoutHandler />
-    </Suspense>
+    <main className="flex min-h-screen items-center justify-center bg-slate-950 px-6 text-white">
+      <section className="w-full max-w-md rounded-lg border border-slate-800 bg-slate-900 p-6 text-center">
+        <h1 className="text-2xl font-bold">Sessao encerrada</h1>
+        <p className="mt-3 text-sm text-slate-400">
+          A versao publica nao usa login, entao nao ha sessao ativa para encerrar.
+        </p>
+        <Link
+          href="/"
+          className="mt-6 inline-flex rounded-md bg-emerald-500 px-4 py-2 text-sm font-semibold text-slate-950 hover:bg-emerald-400"
+        >
+          Ir para o app
+        </Link>
+      </section>
+    </main>
   );
 }
