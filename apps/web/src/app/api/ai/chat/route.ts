@@ -10,10 +10,8 @@ import {
 } from '@/data/cornerStats';
 import { scores365Get, SCORES365_COMPETITIONS } from '@/app/api/utils/scores365';
 
-// Extend serverless function timeout to 60s
 export const maxDuration = 60;
 
-// ── League key → friendly name + country ─────────────────────────────────────
 const LEAGUE_NAMES: Record<string, { name: string; country: string }> = {
   brasileirao_a: { name: 'Brasileirão Série A', country: 'Brasil' },
   brasileirao_b: { name: 'Brasileirão Série B', country: 'Brasil' },
@@ -102,13 +100,240 @@ const LEAGUE_NAMES: Record<string, { name: string; country: string }> = {
   caf_champions: { name: 'CAF Champions League', country: 'CAF' },
 };
 
+type ChatMessage = { role: 'user' | 'assistant'; content: string };
+
+type SimpleTeamStats = {
+  team: string;
+  league?: string;
+  avgCornersFor: number;
+  avgCornersAgainst: number;
+  avgTotalCorners: number;
+  avgCornersFirstHalf?: number;
+  avgCornersSecondHalf?: number;
+  avgCornersHome?: number;
+  avgCornersAway?: number;
+  avgLast5?: number;
+  last5Games?: number[];
+  over85Pct: number;
+  over95Pct: number;
+  over105Pct: number;
+  gamesPlayed: number;
+};
+
+type LocalStatsSet = {
+  label: string;
+  competition: string;
+  stats: SimpleTeamStats[];
+};
+
+const LOCAL_STATS_SETS: LocalStatsSet[] = [
+  { label: 'Brasileirão, Copa do Brasil e Libertadores detalhada', competition: 'Base detalhada', stats: teamStats as SimpleTeamStats[] },
+  { label: 'Copa Libertadores', competition: 'CONMEBOL', stats: libertadoresTeamStats as SimpleTeamStats[] },
+  { label: 'Copa Sul-Americana', competition: 'CONMEBOL', stats: sulAmericanaTeamStats as SimpleTeamStats[] },
+  { label: 'Champions League', competition: 'UEFA', stats: championsLeagueTeamStats as SimpleTeamStats[] },
+  { label: 'Europa League', competition: 'UEFA', stats: europaLeagueTeamStats as SimpleTeamStats[] },
+  { label: 'Conference League', competition: 'UEFA', stats: conferenceLeagueTeamStats as SimpleTeamStats[] },
+];
+
 function leagueDisplay(key: string): string {
   const info = LEAGUE_NAMES[key];
   if (info) return `${info.name} - ${info.country}`;
   return key;
 }
 
-// Track question in FAQ table (non-blocking)
+function normalizeQuestion(question: string): string {
+  return question
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[º°]/g, 'o');
+}
+
+function uniqueSorted(values: string[]): string[] {
+  return Array.from(new Set(values.filter(Boolean))).sort((a, b) => a.localeCompare(b, 'pt-BR'));
+}
+
+function buildConversationContext(messages: ChatMessage[]): string {
+  return messages
+    .slice(-6)
+    .map((m) => m.content)
+    .join(' ');
+}
+
+function buildSupportedLeagueCatalog(): string {
+  const grouped: Record<string, string[]> = {};
+  Object.values(LEAGUE_NAMES).forEach((info) => {
+    (grouped[info.country] ??= []).push(info.name);
+  });
+
+  return Object.entries(grouped)
+    .sort(([a], [b]) => a.localeCompare(b, 'pt-BR'))
+    .map(([country, leagues]) => `- ${country}: ${uniqueSorted(leagues).join(', ')}.`)
+    .join('\n');
+}
+
+function buildLocalStatsCoverage(): string {
+  const lines = LOCAL_STATS_SETS.map((set) => {
+    const teams = uniqueSorted(set.stats.map((item) => item.team));
+    return `- ${set.label}: ${teams.length} times com médias de escanteios (${teams.slice(0, 12).join(', ')}${teams.length > 12 ? '...' : ''}).`;
+  });
+  return lines.join('\n');
+}
+
+function questionMentionsLeague(normalized: string, league: string): boolean {
+  const leagueNorm = normalizeQuestion(league);
+  if (normalized.includes(leagueNorm)) return true;
+  const aliases: Record<string, string[]> = {
+    'brasileirao serie a': ['brasileirao', 'serie a'],
+    'brasileirao serie b': ['serie b'],
+    'copa libertadores': ['libertadores'],
+    'copa sul-americana': ['sul americana', 'sudamericana'],
+    'champions league': ['champions'],
+    'europa league': ['europa league'],
+    'conference league': ['conference'],
+    'copa do brasil': ['copa do brasil'],
+  };
+  return (aliases[leagueNorm] ?? []).some((alias) => normalized.includes(alias));
+}
+
+function detectHalfRequest(normalizedQuestion: string): 'first' | 'second' | null {
+  if (
+    normalizedQuestion.includes('primeiro tempo') ||
+    normalizedQuestion.includes('1o tempo') ||
+    normalizedQuestion.includes('1 tempo') ||
+    normalizedQuestion.includes('1t') ||
+    normalizedQuestion.includes('so no primeiro')
+  ) {
+    return 'first';
+  }
+  if (
+    normalizedQuestion.includes('segundo tempo') ||
+    normalizedQuestion.includes('2o tempo') ||
+    normalizedQuestion.includes('2 tempo') ||
+    normalizedQuestion.includes('2t') ||
+    normalizedQuestion.includes('so no segundo')
+  ) {
+    return 'second';
+  }
+  return null;
+}
+
+function formatTeamStats(team: SimpleTeamStats, league: string, halfOnly: 'first' | 'second' | null): string {
+  const firstHalf = team.avgCornersFirstHalf;
+  const secondHalf = team.avgCornersSecondHalf;
+
+  if (halfOnly === 'first' && firstHalf !== undefined) {
+    return `${team.team} na ${league}, somente no 1o tempo:\n\n- Media a favor no 1o tempo: ${firstHalf} escanteios.\n- Media total do jogo: ${team.avgTotalCorners} escanteios.\n- Media a favor no jogo: ${team.avgCornersFor}.\n- Media contra no jogo: ${team.avgCornersAgainst}.\n- Amostra: ${team.gamesPlayed} jogos analisados.`;
+  }
+
+  if (halfOnly === 'second' && secondHalf !== undefined) {
+    return `${team.team} na ${league}, somente no 2o tempo:\n\n- Media a favor no 2o tempo: ${secondHalf} escanteios.\n- Media total do jogo: ${team.avgTotalCorners} escanteios.\n- Media a favor no jogo: ${team.avgCornersFor}.\n- Media contra no jogo: ${team.avgCornersAgainst}.\n- Amostra: ${team.gamesPlayed} jogos analisados.`;
+  }
+
+  const byHalf =
+    firstHalf !== undefined && secondHalf !== undefined
+      ? `\n- Por tempo: ${firstHalf} no 1o tempo e ${secondHalf} no 2o tempo.`
+      : '';
+  const homeAway =
+    team.avgCornersHome !== undefined && team.avgCornersAway !== undefined
+      ? `\n- Casa/fora: ${team.avgCornersHome} em casa e ${team.avgCornersAway} fora.`
+      : '';
+  const last5 =
+    team.avgLast5 !== undefined && team.last5Games
+      ? `\n- Ultimos 5 jogos: media ${team.avgLast5} (${team.last5Games.join(', ')}).`
+      : '';
+
+  return `${team.team} na ${league}:\n\n- Media a favor: ${team.avgCornersFor} escanteios por jogo.\n- Media contra: ${team.avgCornersAgainst} escanteios cedidos por jogo.\n- Total medio nos jogos: ${team.avgTotalCorners} escanteios.${byHalf}${homeAway}${last5}\n- Over 8.5: ${team.over85Pct}% | Over 9.5: ${team.over95Pct}% | Over 10.5: ${team.over105Pct}%.\n- Amostra: ${team.gamesPlayed} jogos analisados.`;
+}
+
+function buildDetailedTeamStatsAnswer(question: string, context: string): string | null {
+  const normalizedQuestion = normalizeQuestion(question);
+  const combined = normalizeQuestion(`${context} ${question}`);
+  const halfOnly = detectHalfRequest(normalizedQuestion);
+
+  const asksStats =
+    combined.includes('escanteio') ||
+    combined.includes('canto') ||
+    combined.includes('corner') ||
+    combined.includes('media') ||
+    halfOnly !== null;
+
+  if (!asksStats) return null;
+
+  for (const set of LOCAL_STATS_SETS) {
+    const matches = set.stats.filter((team) => combined.includes(normalizeQuestion(team.team)));
+    if (matches.length === 0) continue;
+
+    const selected =
+      matches.find((item) => item.league && questionMentionsLeague(combined, item.league)) ??
+      matches.find((item) => questionMentionsLeague(combined, set.label)) ??
+      matches[0];
+    const league = selected.league ?? set.label;
+    return formatTeamStats(selected, league, halfOnly);
+  }
+
+  return null;
+}
+
+function buildLocalStatsAnswer(question: string, context: string): string | null {
+  const detailedAnswer = buildDetailedTeamStatsAnswer(question, context);
+  if (detailedAnswer) return detailedAnswer;
+
+  const combined = normalizeQuestion(`${context} ${question}`);
+  if (
+    !combined.includes('escanteio') &&
+    !combined.includes('canto') &&
+    !combined.includes('corner') &&
+    !combined.includes('media')
+  ) {
+    return null;
+  }
+
+  for (const set of LOCAL_STATS_SETS) {
+    const team = set.stats.find((item) => combined.includes(normalizeQuestion(item.team)));
+    if (!team) continue;
+    return formatTeamStats(team, team.league ?? set.label, null);
+  }
+
+  return null;
+}
+
+function buildLocalInventoryAnswer(question: string): string | null {
+  const normalized = normalizeQuestion(question);
+  const asksLocalData =
+    (normalized.includes('dados') && (normalized.includes('local') || normalized.includes('temos'))) ||
+    normalized.includes('base local') ||
+    normalized.includes('temos local') ||
+    normalized.includes('quais dados');
+
+  if (!asksLocalData) return null;
+
+  return `Hoje eu consigo responder primeiro pela base local, sem gastar Gemini, sobre:\n\n${buildLocalStatsCoverage()}\n\nTambem tenho o catalogo de ligas do app:\n${buildSupportedLeagueCatalog()}\n\nQuando a pergunta bate nesses dados locais, eu respondo direto por eles. So uso o Gemini para interpretacoes abertas ou para dados que nao encontrei localmente.`;
+}
+
+function buildLocalLeagueAnswer(question: string): string | null {
+  const normalized = normalizeQuestion(question);
+  if (!normalized.includes('liga') && !normalized.includes('competicao') && !normalized.includes('campeonato')) return null;
+
+  return `Ligas e competicoes disponiveis no app:\n\n${buildSupportedLeagueCatalog()}\n\nNas estatisticas locais de escanteios, a cobertura mais completa hoje esta em:\n${buildLocalStatsCoverage()}\n\nPara medias de escanteios por time e por tempo, eu tento responder primeiro pela base local.`;
+}
+
+function buildLocalFirstReply(question: string, context: string): string | null {
+  return buildLocalStatsAnswer(question, context) ?? buildLocalInventoryAnswer(question) ?? buildLocalLeagueAnswer(question);
+}
+
+function buildLocalAssistantReply(question: string, context: string): string {
+  const statsAnswer = buildLocalFirstReply(question, context);
+  if (statsAnswer) return statsAnswer;
+
+  const normalized = normalizeQuestion(question);
+  if (normalized.includes('over') || normalized.includes('escanteio')) {
+    return `Quando o Gemini nao estiver disponivel, ainda consigo explicar a leitura basica com os dados locais:\n\n- Over 8.5 significa precisar de 9 ou mais escanteios no jogo.\n- Over 9.5 significa 10 ou mais escanteios.\n- Para analisar uma partida, compare media total dos dois times, media a favor, media contra, casa/fora, recorte por tempo e ultimos jogos.\n- Se voce citar o time e a competicao, eu tento responder direto pela base local antes de usar Gemini.`;
+  }
+
+  return `O Gemini nao foi necessario ou nao esta disponivel agora. Posso responder com dados locais sobre ligas, competicoes, medias de escanteios por time, 1o tempo, 2o tempo, casa/fora e linhas de over quando esses dados estao cadastrados no app.`;
+}
+
 async function trackQuestion(question: string) {
   try {
     const normalized = question.trim().toLowerCase().slice(0, 300);
@@ -130,10 +355,6 @@ async function trackQuestion(question: string) {
     console.error('FAQ tracking error:', e);
   }
 }
-
-// ──────────────────────────────────────────────────────────────────────────────
-// 365Scores live data fetcher — LEAN version (max 4 leagues, 6 matches each)
-// ──────────────────────────────────────────────────────────────────────────────
 
 interface Live365Match {
   home: string;
@@ -242,9 +463,8 @@ function format365Matches(matches: Live365Match[], isResult: boolean): string {
     .join('\n');
 }
 
-// Only fetch 4 most-requested leagues to keep prompt small and avoid 429
 async function buildLive365ScoresSection(): Promise<string> {
-  const KEY_LEAGUES: Array<{ key: string; label: string }> = [
+  const keyLeagues: Array<{ key: string; label: string }> = [
     { key: 'brasileirao_a', label: 'Brasileirão Série A' },
     { key: 'brasileirao_b', label: 'Série B' },
     { key: 'copa_do_brasil', label: 'Copa do Brasil' },
@@ -261,50 +481,33 @@ async function buildLive365ScoresSection(): Promise<string> {
   ];
 
   const [resSettled, upSettled] = await Promise.all([
-    Promise.allSettled(KEY_LEAGUES.map((l) => fetch365Results(l.key))),
-    Promise.allSettled(KEY_LEAGUES.map((l) => fetch365Upcoming(l.key))),
+    Promise.allSettled(keyLeagues.map((l) => fetch365Results(l.key))),
+    Promise.allSettled(keyLeagues.map((l) => fetch365Upcoming(l.key))),
   ]);
 
   const sections: string[] = [];
-  for (let i = 0; i < KEY_LEAGUES.length; i++) {
-    const label = KEY_LEAGUES[i].label;
+  for (let i = 0; i < keyLeagues.length; i++) {
+    const label = keyLeagues[i].label;
     const resultSettled = resSettled[i];
     const upcomingSettled = upSettled[i];
     const results = resultSettled.status === 'fulfilled' ? resultSettled.value : [];
     const upcoming = upcomingSettled.status === 'fulfilled' ? upcomingSettled.value : [];
     if (results.length === 0 && upcoming.length === 0) continue;
-    sections.push(`  ── ${label} ──`);
+    sections.push(`  -- ${label} --`);
     if (results.length > 0) sections.push(`  Resultados:\n${format365Matches(results, true)}`);
-    if (upcoming.length > 0) sections.push(`  Próximos:\n${format365Matches(upcoming, false)}`);
+    if (upcoming.length > 0) sections.push(`  Proximos:\n${format365Matches(upcoming, false)}`);
   }
-  return sections.length > 0 ? sections.join('\n') : '  (dados ao vivo indisponíveis agora)';
+  return sections.length > 0 ? sections.join('\n') : '  (dados ao vivo indisponiveis agora)';
 }
 
-// ──────────────────────────────────────────────────────────────────────────────
-// Static data helpers
-// ──────────────────────────────────────────────────────────────────────────────
-
 function buildStaticBrazilianStats(): string {
-  if (!teamStats || teamStats.length === 0) return '  (nenhum time no arquivo de estatísticas)';
+  if (!teamStats || teamStats.length === 0) return '  (nenhum time no arquivo de estatisticas)';
   return teamStats
     .map(
       (t) =>
-        `  - ${t.team} (${t.league}): méd.total ${t.avgTotalCorners} | a favor ${t.avgCornersFor} | contra ${t.avgCornersAgainst} | casa ${t.avgCornersHome} | fora ${t.avgCornersAway} | 1ºT a fav ${t.avgCornersFirstHalf} | 2ºT a fav ${t.avgCornersSecondHalf} | Over 8.5: ${t.over85Pct}% | Over 9.5: ${t.over95Pct}% | Over 10.5: ${t.over105Pct}% | últ.5: [${t.last5Games.join(',')}] méd=${t.avgLast5} | ganhando: ${t.avgCornersWinning} | emp: ${t.avgCornersDrawing} | perd: ${t.avgCornersLosing}`
+        `  - ${t.team} (${t.league}): med.total ${t.avgTotalCorners} | a favor ${t.avgCornersFor} | contra ${t.avgCornersAgainst} | casa ${t.avgCornersHome} | fora ${t.avgCornersAway} | 1oT a fav ${t.avgCornersFirstHalf} | 2oT a fav ${t.avgCornersSecondHalf} | Over 8.5: ${t.over85Pct}% | Over 9.5: ${t.over95Pct}% | Over 10.5: ${t.over105Pct}% | ult.5: [${t.last5Games.join(',')}] med=${t.avgLast5}`
     )
     .join('\n');
-}
-
-function buildStaticHalftimeStats(): string {
-  if (!teamStats || teamStats.length === 0) return '  (sem dados de tempo)';
-  const serieA = teamStats.filter((t) => t.league === 'Brasileirão Série A');
-  const serieB = teamStats.filter((t) => t.league === 'Brasileirão Série B');
-  const libertadores = teamStats.filter((t) => t.league === 'Copa Libertadores');
-  const fmt = (t: (typeof teamStats)[0]) =>
-    `    - ${t.team}: 1ºT a favor ${t.avgCornersFirstHalf} | 2ºT a favor ${t.avgCornersSecondHalf} | total/jogo ${t.avgTotalCorners}`;
-  const linesA = serieA.length ? serieA.map(fmt).join('\n') : '    (nenhum)';
-  const linesB = serieB.length ? serieB.map(fmt).join('\n') : '    (nenhum)';
-  const linesLib = libertadores.length ? libertadores.map(fmt).join('\n') : '    (nenhum)';
-  return `  SÉRIE A:\n${linesA}\n\n  SÉRIE B:\n${linesB}\n\n  COPA LIBERTADORES:\n${linesLib}`;
 }
 
 function buildStaticH2H(): string {
@@ -312,7 +515,7 @@ function buildStaticH2H(): string {
   return headToHeadData
     .map(
       (h) =>
-        `  - ${h.homeTeam} x ${h.awayTeam}: méd. ${h.avgTotalCorners} escanteios | ${h.matches.length} confrontos | casa méd ${h.avgHomeCorners} | fora méd ${h.avgAwayCorners} | último: ${h.matches[0]?.date ?? 'N/A'}`
+        `  - ${h.homeTeam} x ${h.awayTeam}: med. ${h.avgTotalCorners} escanteios | ${h.matches.length} confrontos | casa med ${h.avgHomeCorners} | fora med ${h.avgAwayCorners} | ultimo: ${h.matches[0]?.date ?? 'N/A'}`
     )
     .join('\n');
 }
@@ -324,7 +527,7 @@ function buildStaticUpcomingMatches(today: string): string {
   return futureMatches
     .map(
       (m) =>
-        `  - ${m.homeTeam} x ${m.awayTeam} | ${m.date} | ${m.competition} | previsão: ${m.predictedCorners} escanteios`
+        `  - ${m.homeTeam} x ${m.awayTeam} | ${m.date} | ${m.competition} | previsao: ${m.predictedCorners} escanteios`
     )
     .join('\n');
 }
@@ -338,7 +541,7 @@ function buildConmebolStats(): string {
     (t) =>
       `  - ${t.team}: a favor ${t.avgCornersFor} | contra ${t.avgCornersAgainst} | total ${t.avgTotalCorners} | Over 8.5: ${t.over85Pct}% | Over 9.5: ${t.over95Pct}% | Over 10.5: ${t.over105Pct}% | jogos: ${t.gamesPlayed}`
   );
-  return `COPA LIBERTADORES 2026 (fase de grupos — médias por jogo):\n${libLines.join('\n')}\n\nCOPA SUL-AMERICANA 2026 (fase de grupos — médias por jogo):\n${sulLines.join('\n')}`;
+  return `COPA LIBERTADORES 2026:\n${libLines.join('\n')}\n\nCOPA SUL-AMERICANA 2026:\n${sulLines.join('\n')}`;
 }
 
 function buildUefaStats(): string {
@@ -354,68 +557,53 @@ function buildUefaStats(): string {
     (t) =>
       `  - ${t.team}: a favor ${t.avgCornersFor} | contra ${t.avgCornersAgainst} | total ${t.avgTotalCorners} | Over 8.5: ${t.over85Pct}% | Over 9.5: ${t.over95Pct}% | Over 10.5: ${t.over105Pct}% | jogos: ${t.gamesPlayed}`
   );
-  return `CHAMPIONS LEAGUE 2024/25 (escanteios por time):\n${clLines.join('\n')}\n\nEUROPA LEAGUE 2024/25 (escanteios por time):\n${elLines.join('\n')}\n\nCONFERENCE LEAGUE 2024/25 (escanteios por time):\n${confLines.join('\n')}`;
+  return `CHAMPIONS LEAGUE:\n${clLines.join('\n')}\n\nEUROPA LEAGUE:\n${elLines.join('\n')}\n\nCONFERENCE LEAGUE:\n${confLines.join('\n')}`;
 }
 
-// ──────────────────────────────────────────────────────────────────────────────
-// Build the full system prompt — all DB + API queries run in PARALLEL
-// ──────────────────────────────────────────────────────────────────────────────
 async function buildSystemPrompt(): Promise<string> {
-  const today = new Date().toISOString().split('T')[0];
+  const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(Date.now());
 
-  // Run all async operations in parallel — NO SofaScore calls here (too slow/blocked)
-  const [
-    live365ScoresResult,
-    leaguesResult,
-    teamsResult,
-    matchesResult,
-    statsResult,
-    h2hResult,
-    completedResult,
-  ] = await Promise.allSettled([
-    buildLive365ScoresSection(),
-    sql`SELECT DISTINCT league FROM teams ORDER BY league`,
-    sql`SELECT name, league FROM teams ORDER BY league, name`,
-    sql`
-      SELECT home_team, away_team, match_date, match_time, league, round
-      FROM upcoming_matches
-      WHERE match_date >= ${today} AND (is_completed = 0 OR is_completed IS NULL)
-      ORDER BY match_date, match_time
-      LIMIT 30
-    `,
-    sql`
-      SELECT t.name, t.league, ts.games_played, ts.avg_corners, ts.home_avg, ts.away_avg,
-             ts.over_85_pct, ts.over_95_pct, ts.over_105_pct, ts.last_5_avg
-      FROM team_stats ts
-      JOIN teams t ON t.id = ts.team_id
-      ORDER BY t.league, t.name
-    `,
-    sql`
-      SELECT team1, team2, total_matches, avg_corners, last_match_date, last_match_corners
-      FROM head_to_head
-      ORDER BY team1, team2
-    `,
-    sql`
-      SELECT home_team, away_team, match_date, league, round, home_corners, away_corners
-      FROM upcoming_matches
-      WHERE is_completed = 1
-      ORDER BY match_date DESC
-      LIMIT 30
-    `,
-  ]);
+  const [live365ScoresResult, leaguesResult, teamsResult, matchesResult, statsResult, h2hResult, completedResult] =
+    await Promise.allSettled([
+      buildLive365ScoresSection(),
+      sql`SELECT DISTINCT league FROM teams ORDER BY league`,
+      sql`SELECT name, league FROM teams ORDER BY league, name`,
+      sql`
+        SELECT home_team, away_team, match_date, match_time, league, round
+        FROM upcoming_matches
+        WHERE match_date >= ${today} AND (is_completed = 0 OR is_completed IS NULL)
+        ORDER BY match_date, match_time
+        LIMIT 200
+      `,
+      sql`
+        SELECT t.name, t.league, ts.games_played, ts.avg_corners, ts.home_avg, ts.away_avg,
+               ts.over_85_pct, ts.over_95_pct, ts.over_105_pct, ts.last_5_avg
+        FROM team_stats ts
+        JOIN teams t ON t.id = ts.team_id
+        ORDER BY t.league, t.name
+      `,
+      sql`
+        SELECT team1, team2, total_matches, avg_corners, last_match_date, last_match_corners
+        FROM head_to_head
+        ORDER BY team1, team2
+      `,
+      sql`
+        SELECT home_team, away_team, match_date, league, round, home_corners, away_corners
+        FROM upcoming_matches
+        WHERE is_completed = 1
+        ORDER BY match_date DESC
+        LIMIT 50
+      `,
+    ]);
 
-  // Extract results safely
   const live365Section =
     live365ScoresResult.status === 'fulfilled'
       ? live365ScoresResult.value
-      : '  (dados ao vivo indisponíveis agora)';
+      : '  (dados ao vivo indisponiveis agora)';
 
-  const leagues =
-    leaguesResult.status === 'fulfilled' ? (leaguesResult.value as Array<{ league: string }>) : [];
+  const leagues = leaguesResult.status === 'fulfilled' ? (leaguesResult.value as Array<{ league: string }>) : [];
   const teamsData =
-    teamsResult.status === 'fulfilled'
-      ? (teamsResult.value as Array<{ name: string; league: string }>)
-      : [];
+    teamsResult.status === 'fulfilled' ? (teamsResult.value as Array<{ name: string; league: string }>) : [];
   const matchesData =
     matchesResult.status === 'fulfilled'
       ? (matchesResult.value as Array<{
@@ -466,336 +654,150 @@ async function buildSystemPrompt(): Promise<string> {
         }>)
       : [];
 
-  // Build leagues text
-  const allSupportedLeagues = Object.entries(LEAGUE_NAMES)
-    .map(([, info]) => `  - ${info.name} (${info.country})`)
-    .join('\n');
+  const leaguesText =
+    leagues.length > 0
+      ? leagues.map((l) => `  - ${leagueDisplay(l.league)}`).join('\n')
+      : buildSupportedLeagueCatalog();
 
-  let leaguesText = '';
-  let teamsByLeague = 'Nenhum time cadastrado ainda.';
-
-  if (leagues.length > 0) {
-    const dbLeagueKeys = leagues.map((l) => l.league);
-    const withDataList = dbLeagueKeys.map((k) => `  - ${leagueDisplay(k)} ✅`).join('\n');
-    leaguesText = `LIGAS COM DADOS NO BANCO:\n${withDataList || '  (nenhuma ainda)'}`;
-    const grouped: Record<string, string[]> = {};
-    for (const t of teamsData) {
-      if (!grouped[t.league]) grouped[t.league] = [];
-      grouped[t.league].push(t.name);
-    }
-    teamsByLeague = Object.entries(grouped)
-      .map(([league, teams]) => `  ${league}:\n${teams.map((t) => `    - ${t}`).join('\n')}`)
-      .join('\n');
-  } else {
-    leaguesText = `LIGAS SUPORTADAS (sem dados no banco ainda):\n${allSupportedLeagues}`;
-  }
-
-  // Build matches text (DB)
-  let matchesText = 'Nenhum jogo no banco de dados.';
-  if (matchesData.length > 0) {
-    matchesText = matchesData
-      .map(
-        (m) =>
-          `  - ${m.home_team} x ${m.away_team} | ${m.match_date}${m.match_time ? ' ' + m.match_time : ''} | ${leagueDisplay(m.league)}${m.round ? ' - ' + m.round : ''}`
+  const teamsByLeague = teamsData.length
+    ? Object.entries(
+        teamsData.reduce<Record<string, string[]>>((acc, t) => {
+          (acc[t.league] ??= []).push(t.name);
+          return acc;
+        }, {})
       )
-      .join('\n');
-  }
+        .map(([league, teams]) => `  ${league}:\n${teams.map((t) => `    - ${t}`).join('\n')}`)
+        .join('\n')
+    : 'Nenhum time cadastrado no banco.';
 
-  // Build stats text (DB)
-  let statsText = 'Estatísticas não disponíveis no banco ainda.';
-  if (statsData.length > 0) {
-    statsText = statsData
-      .map(
-        (s) =>
-          `  - ${s.name} (${s.league}): méd.total ${s.avg_corners ?? 'N/A'} | casa ${s.home_avg ?? 'N/A'} | fora ${s.away_avg ?? 'N/A'} | Over8.5: ${s.over_85_pct ?? 'N/A'}% | Over9.5: ${s.over_95_pct ?? 'N/A'}% | Over10.5: ${s.over_105_pct ?? 'N/A'}%`
-      )
-      .join('\n');
-  }
+  const matchesText = matchesData.length
+    ? matchesData
+        .map(
+          (m) =>
+            `  - ${m.home_team} x ${m.away_team} | ${m.match_date}${m.match_time ? ' ' + m.match_time : ''} | ${leagueDisplay(m.league)}${m.round ? ' - ' + m.round : ''}`
+        )
+        .join('\n')
+    : 'Nenhum jogo futuro no banco.';
 
-  // Build H2H text (DB)
-  let h2hText = 'H2H não disponível ainda.';
-  if (h2hData.length > 0) {
-    h2hText = h2hData
-      .map(
-        (h) =>
-          `  - ${h.team1} x ${h.team2}: méd. ${h.avg_corners ?? 'N/A'} cant. | ${h.total_matches ?? 0} jogos | último: ${h.last_match_date ?? 'N/A'} (${h.last_match_corners ?? 'N/A'})`
-      )
-      .join('\n');
-  }
+  const statsText = statsData.length
+    ? statsData
+        .map(
+          (s) =>
+            `  - ${s.name} (${s.league}): med.total ${s.avg_corners ?? 'N/A'} | casa ${s.home_avg ?? 'N/A'} | fora ${s.away_avg ?? 'N/A'} | Over8.5 ${s.over_85_pct ?? 'N/A'}% | Over9.5 ${s.over_95_pct ?? 'N/A'}% | Over10.5 ${s.over_105_pct ?? 'N/A'}%`
+        )
+        .join('\n')
+    : 'Estatisticas do banco indisponiveis.';
 
-  // Build completed matches text (DB)
-  let completedText = 'Sem resultados no banco ainda.';
-  if (completedData.length > 0) {
-    completedText = completedData
-      .map((m) => {
-        const corners =
-          m.home_corners !== null && m.away_corners !== null
-            ? ` | Cant: ${m.home_corners}-${m.away_corners} (total ${m.home_corners + m.away_corners})`
-            : '';
-        return `  - ${m.home_team} x ${m.away_team} | ${m.match_date} | ${leagueDisplay(m.league)}${m.round ? ' - ' + m.round : ''}${corners}`;
-      })
-      .join('\n');
-  }
+  const h2hText = h2hData.length
+    ? h2hData
+        .map(
+          (h) =>
+            `  - ${h.team1} x ${h.team2}: med. ${h.avg_corners ?? 'N/A'} cant. | ${h.total_matches ?? 0} jogos | ultimo: ${h.last_match_date ?? 'N/A'} (${h.last_match_corners ?? 'N/A'})`
+        )
+        .join('\n')
+    : 'H2H nao disponivel.';
 
-  return `Você é a IA da Cantos — especialista em estatísticas de escanteios de futebol.
-Hoje: ${today}. Responda SEMPRE em português brasileiro. NUNCA invente dados.
+  const completedText = completedData.length
+    ? completedData
+        .map((m) => {
+          const corners =
+            m.home_corners !== null && m.away_corners !== null
+              ? ` | Cant: ${m.home_corners}-${m.away_corners} (total ${m.home_corners + m.away_corners})`
+              : '';
+          return `  - ${m.home_team} x ${m.away_team} | ${m.match_date} | ${leagueDisplay(m.league)}${m.round ? ' - ' + m.round : ''}${corners}`;
+        })
+        .join('\n')
+    : 'Sem resultados no banco.';
 
-=== DADOS AO VIVO 365SCORES (Brasileirão + Libertadores) ===
+  return `Voce e a IA da Cantos, especialista em estatisticas de escanteios de futebol.
+Hoje: ${today}. Responda sempre em portugues brasileiro. Nao invente dados.
+Prioridade: use primeiro os dados locais abaixo. Use o Gemini apenas para organizar, explicar ou inferir quando os dados locais nao tiverem a resposta direta.
+
+=== COBERTURA LOCAL DE ESTATISTICAS ===
+${buildLocalStatsCoverage()}
+
+=== CATALOGO DE LIGAS DO APP ===
+${buildSupportedLeagueCatalog()}
+
+=== DADOS AO VIVO 365SCORES ===
 ${live365Section}
 
-=== RESULTADOS DO BANCO (admin importou) ===
+=== RESULTADOS DO BANCO ===
 ${completedText}
 
-=== PRÓXIMOS JOGOS DO BANCO ===
+=== PROXIMOS JOGOS DO BANCO ===
 ${matchesText}
 
-=== LIGAS / TIMES CADASTRADOS ===
+=== LIGAS / TIMES CADASTRADOS NO BANCO ===
 ${leaguesText}
 ${teamsByLeague}
 
-=== ESTATÍSTICAS DO BANCO (times/ligas) ===
+=== ESTATISTICAS DO BANCO ===
 ${statsText}
 
-=== CONFRONTOS DIRETOS DO BANCO (H2H) ===
+=== CONFRONTOS DIRETOS DO BANCO ===
 ${h2hText}
 
-=== ESTATÍSTICAS ESTÁTICAS — Brasileirão + Ligas Brasileiras 2026 ===
-Formato: time (liga): méd.total | a favor | contra | casa | fora | 1ºT | 2ºT | Over8.5% | Over9.5% | Over10.5% | últ.5 | ganhando | empatando | perdendo
+=== ESTATISTICAS LOCAIS DETALHADAS ===
 ${buildStaticBrazilianStats()}
 
-=== H2H ARQUIVO (confrontos históricos brasileiros) ===
+=== H2H LOCAL ===
 ${buildStaticH2H()}
 
-=== ESCANTEIOS POR TEMPO (1º e 2º T) ===
-${buildStaticHalftimeStats()}
-
-=== CONMEBOL — Libertadores + Sul-Americana 2026 ===
+=== CONMEBOL ===
 ${buildConmebolStats()}
 
-=== UEFA — Champions, Europa, Conference League 2024/25 ===
+=== UEFA ===
 ${buildUefaStats()}
 
-=== PRÓXIMOS JOGOS (arquivo do app) ===
+=== PROXIMOS JOGOS LOCAIS ===
 ${buildStaticUpcomingMatches(today)}
 
-=== INSTRUÇÕES ===
-- Para resultados recentes e próximos jogos: use a seção "DADOS AO VIVO 365SCORES" primeiro, depois o banco.
-- Para análise de escanteios de um jogo: combine as médias dos dois times + H2H + tendência últimos 5 jogos.
-- Se o jogo não estiver nos dados, diga que não está disponível e oriente o usuário a verificar as abas no app.
-- Para Over/Under: calcule a soma das médias totais dos dois times e compare com a linha desejada.
-- Responda de forma objetiva, usando os números disponíveis.
+Instrucoes:
+- Para media por tempo, cite 1o tempo e 2o tempo quando existirem.
+- Para pergunta de um time especifico, responda com numeros locais antes de qualquer analise aberta.
+- Para jogos futuros, combine media dos dois times, casa/fora, por tempo e H2H quando houver.
+- Se nao encontrar o dado, diga exatamente que ele nao esta na base local.
 `;
-}
-
-function normalizeQuestion(question: string): string {
-  return question
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '');
-}
-
-function questionMentionsLeague(normalized: string, league: string): boolean {
-  const leagueNorm = normalizeQuestion(league);
-  if (normalized.includes(leagueNorm)) return true;
-  const aliases: Record<string, string[]> = {
-    'brasileirao serie a': ['brasileirao', 'serie a'],
-    'brasileirao serie b': ['serie b'],
-    'copa libertadores': ['libertadores'],
-    'copa sul-americana': ['sul americana', 'sudamericana'],
-    'champions league': ['champions'],
-    'europa league': ['europa league'],
-    'conference league': ['conference'],
-    'copa do brasil': ['copa do brasil'],
-  };
-  return (aliases[leagueNorm] ?? []).some((alias) => normalized.includes(alias));
-}
-
-function buildDetailedTeamStatsAnswer(question: string): string | null {
-  const normalized = normalizeQuestion(question);
-  const matches = teamStats.filter((team) => normalized.includes(normalizeQuestion(team.team)));
-  if (matches.length === 0) return null;
-
-  const team = matches.find((item) => questionMentionsLeague(normalized, item.league)) ?? matches[0];
-
-  return `${team.team} na ${team.league}:
-
-- Media a favor: ${team.avgCornersFor} escanteios por jogo.
-- Media contra: ${team.avgCornersAgainst} escanteios cedidos por jogo.
-- Total medio nos jogos: ${team.avgTotalCorners} escanteios.
-- Por tempo: ${team.avgCornersFirstHalf} no 1o tempo e ${team.avgCornersSecondHalf} no 2o tempo.
-- Casa/fora: ${team.avgCornersHome} em casa e ${team.avgCornersAway} fora.
-- Ultimos 5 jogos: media ${team.avgLast5} (${team.last5Games.join(', ')}).
-- Over 8.5: ${team.over85Pct}% | Over 9.5: ${team.over95Pct}% | Over 10.5: ${team.over105Pct}%.
-- Amostra: ${team.gamesPlayed} jogos analisados.`;
-}
-
-const LOCAL_STATS_SETS = [
-  { label: 'Libertadores', stats: libertadoresTeamStats },
-  { label: 'Sul-Americana', stats: sulAmericanaTeamStats },
-  { label: 'Champions League', stats: championsLeagueTeamStats },
-  { label: 'Europa League', stats: europaLeagueTeamStats },
-  { label: 'Conference League', stats: conferenceLeagueTeamStats },
-  { label: 'Brasileirao', stats: teamStats },
-];
-
-function buildLocalStatsAnswer(question: string): string | null {
-  const normalized = normalizeQuestion(question);
-  if (
-    !normalized.includes('escanteio') &&
-    !normalized.includes('canto') &&
-    !normalized.includes('corner') &&
-    !normalized.includes('media')
-  )
-    return null;
-
-  const detailedAnswer = buildDetailedTeamStatsAnswer(question);
-  if (detailedAnswer) return detailedAnswer;
-
-  const preferredSets = LOCAL_STATS_SETS.filter((set) =>
-    normalizeQuestion(set.label)
-      .split(' ')
-      .some((term) => term && normalized.includes(term))
-  );
-  const sets = preferredSets.length > 0 ? preferredSets : LOCAL_STATS_SETS;
-
-  for (const set of sets) {
-    const team = set.stats.find((item) => normalized.includes(normalizeQuestion(item.team)));
-    if (!team) continue;
-
-    return `${team.team} na ${set.label}:
-
-- Media a favor: ${team.avgCornersFor} escanteios por jogo.
-- Media contra: ${team.avgCornersAgainst} escanteios cedidos por jogo.
-- Total medio nos jogos: ${team.avgTotalCorners} escanteios.
-- Over 8.5: ${team.over85Pct}% | Over 9.5: ${team.over95Pct}% | Over 10.5: ${team.over105Pct}%.
-- Amostra: ${team.gamesPlayed} jogos analisados.`;
-  }
-
-  return null;
-}
-
-function buildLocalInventoryAnswer(question: string): string | null {
-  const normalized = normalizeQuestion(question);
-  const asksLocalData =
-    (normalized.includes('dados') && normalized.includes('local')) ||
-    normalized.includes('base local') ||
-    normalized.includes('temos local');
-
-  if (!asksLocalData) return null;
-
-  return `Hoje eu consigo responder localmente, sem gastar Gemini, sobre:
-
-- Escanteios por time: Brasileirao Serie A, Serie B, Copa do Brasil, Libertadores, Sul-Americana, Champions, Europa League e Conference League.
-- Medias por tempo: 1o tempo e 2o tempo para a base detalhada brasileira e Libertadores.
-- Recortes por contexto: casa/fora, ultimos 5 jogos, primeiro escanteio e linhas Over 8.5, 9.5 e 10.5.
-- Jogos e competicoes: proximos jogos/resultados quando a fonte 365Scores ou os arquivos locais retornam dados.
-- Cartoes: estatisticas locais de times brasileiros e alguns arbitros cadastrados.
-
-Quando a pergunta bate nessa base local, eu respondo direto por ela. So uso o Gemini para interpretacoes abertas ou dados que nao encontrei localmente.`;
-}
-
-function buildLocalLeagueAnswer(question: string): string | null {
-  const normalized = normalizeQuestion(question);
-  if (!normalized.includes('liga') && !normalized.includes('competicao')) return null;
-
-  return `Ligas e competicoes principais disponiveis no app:
-
-- Brasil: Brasileirao Serie A, Serie B, Copa do Brasil e estaduais.
-- America do Sul: Libertadores, Sul-Americana, Copa America, Argentina e outras ligas sul-americanas.
-- Europa: Champions League, Europa League, Conference League, Premier League, La Liga, Serie A, Bundesliga, Ligue 1, Portugal, Holanda, Escocia, Belgica, Turquia e outras.
-- Mundo: Copa do Mundo, MLS, Liga MX, competicoes da CAF e AFC.
-
-Para perguntas de medias de escanteios por time, eu tento responder primeiro pela base local.`;
-}
-
-function buildLocalFirstReply(question: string): string | null {
-  return (
-    buildLocalStatsAnswer(question) ??
-    buildLocalInventoryAnswer(question) ??
-    buildLocalLeagueAnswer(question)
-  );
-}
-
-function buildLocalAssistantReply(question: string): string {
-  const normalized = normalizeQuestion(question);
-  const statsAnswer = buildLocalFirstReply(question);
-
-  if (statsAnswer) return statsAnswer;
-
-  if (normalized.includes('liga') || normalized.includes('competicao')) {
-    return `Quando nao consigo consultar o Gemini, respondo pelo guia local do app.
-
-Ligas e competições principais disponíveis:
-
-- Brasil: Brasileirão Série A, Série B, Copa do Brasil e estaduais.
-- América do Sul: Libertadores, Sul-Americana, Copa América, Argentina e outras ligas sul-americanas.
-- Europa: Champions League, Europa League, Conference League, Premier League, La Liga, Serie A, Bundesliga, Ligue 1, Portugal, Holanda, Escócia, Bélgica, Turquia e outras.
-- Mundo: Copa do Mundo, MLS, Liga MX, competições da CAF e AFC.
-
-Para ativar respostas completas com análise de dados, configure GEMINI_API_KEY no arquivo .env.local.`;
-  }
-
-  if (normalized.includes('over') || normalized.includes('escanteio')) {
-    return `Quando nao consigo consultar o Gemini, ainda posso explicar a leitura basica:
-
-- Over 8.5 significa precisar de 9 ou mais escanteios no jogo.
-- Over 9.5 significa 10 ou mais escanteios.
-- Para analisar uma partida, compare a média total dos dois times, a média a favor, a média contra, casa/fora e os últimos 5 jogos.
-- Se os dois times somam médias altas e costumam sofrer escanteios, a linha de over fica mais interessante.`;
-  }
-
-  return `A IA completa ainda precisa da chave do Gemini para responder livremente.
-
-Configure GEMINI_API_KEY em .env.local e reinicie o servidor. Enquanto isso, consigo responder perguntas básicas sobre ligas disponíveis, uso do app e interpretação de linhas de escanteios.`;
 }
 
 export async function POST(request: NextRequest) {
   try {
-    const { messages } = (await request.json()) as {
-      messages: Array<{ role: 'user' | 'assistant'; content: string }>;
-    };
+    const { messages } = (await request.json()) as { messages: ChatMessage[] };
 
     if (!messages || messages.length === 0) {
-      return NextResponse.json({ error: 'Mensagens obrigatórias' }, { status: 400 });
+      return NextResponse.json({ error: 'Mensagens obrigatorias' }, { status: 400 });
     }
 
-    // Track the last user question for FAQ (non-blocking)
     const lastUserMessage = [...messages].reverse().find((m) => m.role === 'user');
+    const localContext = buildConversationContext(messages);
+
     if (lastUserMessage) {
       trackQuestion(lastUserMessage.content).catch(() => {});
     }
 
-    const localFirstReply = lastUserMessage ? buildLocalFirstReply(lastUserMessage.content) : null;
+    const localFirstReply = lastUserMessage ? buildLocalFirstReply(lastUserMessage.content, localContext) : null;
     if (localFirstReply) {
-      return NextResponse.json({
-        reply: localFirstReply,
-        provider: 'local-first',
-      });
+      return NextResponse.json({ reply: localFirstReply, provider: 'local-first' });
     }
 
-    // Build dynamic system prompt — wrap so a failure doesn't crash the whole handler
     let systemPrompt = '';
     try {
       systemPrompt = await buildSystemPrompt();
     } catch (promptErr) {
       console.error('buildSystemPrompt error:', promptErr);
-      const today = new Date().toISOString().split('T')[0];
-      systemPrompt = `Você é a IA da Cantos — assistente de estatísticas de escanteios de futebol.
-Responda sempre em português brasileiro. Não invente dados.
-A data de hoje é ${today}.
-${buildStaticBrazilianStats()}
-${buildConmebolStats()}`;
+      const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(Date.now());
+      systemPrompt = `Voce e a IA da Cantos. Responda em portugues brasileiro e nao invente dados. Hoje: ${today}.\n${buildLocalStatsCoverage()}\n${buildStaticBrazilianStats()}\n${buildConmebolStats()}`;
     }
 
     const geminiApiKey = process.env.GEMINI_API_KEY;
     if (!geminiApiKey) {
       return NextResponse.json({
-        reply: buildLocalAssistantReply(lastUserMessage?.content ?? ''),
+        reply: buildLocalAssistantReply(lastUserMessage?.content ?? '', localContext),
         provider: 'local-fallback',
       });
     }
 
-    // Gemini requires conversation to start with a user message
     const validMessages = messages.filter((m, i) => {
       if (i === 0) return m.role === 'user';
       return true;
@@ -804,10 +806,9 @@ ${buildConmebolStats()}`;
     const trimmedMessages = firstUserIdx >= 0 ? validMessages.slice(firstUserIdx) : validMessages;
 
     if (trimmedMessages.length === 0) {
-      return NextResponse.json({ error: 'Nenhuma mensagem válida encontrada' }, { status: 400 });
+      return NextResponse.json({ error: 'Nenhuma mensagem valida encontrada' }, { status: 400 });
     }
 
-    // Convert to Gemini format (role "assistant" → "model")
     const geminiContents = trimmedMessages.map((m) => ({
       role: m.role === 'assistant' ? 'model' : 'user',
       parts: [{ text: m.content }],
@@ -819,14 +820,9 @@ ${buildConmebolStats()}`;
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          system_instruction: {
-            parts: [{ text: systemPrompt }],
-          },
+          system_instruction: { parts: [{ text: systemPrompt }] },
           contents: geminiContents,
-          generationConfig: {
-            maxOutputTokens: 4096,
-            temperature: 0.7,
-          },
+          generationConfig: { maxOutputTokens: 4096, temperature: 0.7 },
         }),
       }
     );
@@ -834,18 +830,13 @@ ${buildConmebolStats()}`;
     if (!res.ok) {
       const errText = await res.text();
       console.error(`Gemini API error [HTTP ${res.status}]:`, errText);
-      const localReply =
-        buildLocalFirstReply(lastUserMessage?.content ?? '') ??
-        buildLocalAssistantReply(lastUserMessage?.content ?? '');
+      const localReply = buildLocalAssistantReply(lastUserMessage?.content ?? '', localContext);
       const prefix =
         res.status === 429
           ? 'O Gemini gratuito atingiu o limite de uso agora, entao respondi com os dados locais do app.'
           : `O Gemini retornou erro ${res.status}, entao respondi com os dados locais do app.`;
 
-      return NextResponse.json({
-        reply: `${prefix}\n\n${localReply}`,
-        provider: 'local-fallback',
-      });
+      return NextResponse.json({ reply: `${prefix}\n\n${localReply}`, provider: 'local-fallback' });
     }
 
     const data = (await res.json()) as {
@@ -855,14 +846,17 @@ ${buildConmebolStats()}`;
 
     if (data.error) {
       console.error('Gemini API returned error body:', data.error);
-      return NextResponse.json({ error: 'Erro da IA: ' + data.error.message }, { status: 500 });
+      return NextResponse.json({
+        reply: buildLocalAssistantReply(lastUserMessage?.content ?? '', localContext),
+        provider: 'local-fallback',
+      });
     }
 
     const reply =
       data.candidates?.[0]?.content?.parts?.[0]?.text ??
-      'Não consegui gerar uma resposta. Tente novamente.';
+      buildLocalAssistantReply(lastUserMessage?.content ?? '', localContext);
 
-    return NextResponse.json({ reply });
+    return NextResponse.json({ reply, provider: 'gemini' });
   } catch (error) {
     console.error('AI chat error:', error);
     return NextResponse.json({ error: 'Erro interno. Tente novamente.' }, { status: 500 });
