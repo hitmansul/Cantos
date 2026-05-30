@@ -24,7 +24,7 @@ import {
 import { internationalFixtures, type InternationalMatch } from '@/data/internationalFixtures';
 import { FutureMatchPrediction } from '@/components/FutureMatchPrediction';
 
-// ─── Static team stats ────────────────────────────────────────────────────────
+// ─── Static team stats ─────────────────────────────────────────
 
 interface TeamStatsWithHalf {
   avgCornersFor: number;
@@ -203,6 +203,20 @@ const internationalTeamStats: Record<string, TeamStatsWithHalf> = {
     avgCornersSecondHalf: 3.0,
     league: 'Ligue 1',
   },
+  Nice: {
+    avgCornersFor: 5.4,
+    avgCornersAgainst: 4.4,
+    avgCornersFirstHalf: 2.4,
+    avgCornersSecondHalf: 3.0,
+    league: 'Ligue 1',
+  },
+  'Saint-Etienne': {
+    avgCornersFor: 4.7,
+    avgCornersAgainst: 5.2,
+    avgCornersFirstHalf: 2.1,
+    avgCornersSecondHalf: 2.6,
+    league: 'Ligue 1',
+  },
 };
 
 const defaultTeamStats: TeamStatsWithHalf = {
@@ -217,13 +231,31 @@ const LEAGUE_NAMES: Record<string, string> = {
   'Série A': '🇧🇷 Brasileirão Série A',
   'Série B': '🇧🇷 Brasileirão Série B',
   'Copa do Brasil': '🇧🇷 Copa do Brasil',
-  premier_league: '🏴󠁧󠁢󠁥󠁮󠁧󠁿 Premier League',
+  brasileirao_a: '🇧🇷 Brasileirão Série A',
+  brasileirao_b: '🇧🇷 Brasileirão Série B',
+  copa_do_brasil: '🇧🇷 Copa do Brasil',
+  BR1: '🇧🇷 Brasileirão Série A',
+  BR2: '🇧🇷 Brasileirão Série B',
+  premier_league: '🏴 Premier League',
+  championship: '🏴 Championship',
+  E0: '🏴 Premier League',
+  E1: '🏴 Championship',
   la_liga: '🇪🇸 La Liga',
+  SP1: '🇪🇸 La Liga',
   serie_a: '🇮🇹 Serie A',
+  I1: '🇮🇹 Serie A',
   bundesliga: '🇩🇪 Bundesliga',
+  D1: '🇩🇪 Bundesliga',
   ligue_1: '🇫🇷 Ligue 1',
+  F1: '🇫🇷 Ligue 1',
   champions_league: '🏆 Champions League',
+  UCL: '🏆 Champions League',
   europa_league: '🏆 Europa League',
+  UEL: '🏆 Europa League',
+  conference_league: '🏆 Conference League',
+  libertadores: '🏆 Copa Libertadores',
+  sudamericana: '🏆 Copa Sul-Americana',
+  sul_americana: '🏆 Copa Sul-Americana',
 };
 
 // ─── Pure date helpers — NO `new Date()` calls ────────────────────────────────
@@ -277,7 +309,7 @@ function isInRange(
   return true;
 }
 
-// ─── Prediction logic ─────────────────────────────────────────────────────────
+// ─── Prediction logic ─────────────────────────────────────────
 
 function getTeamStats(teamName: string): TeamStatsWithHalf {
   const br = findTeamByName(teamName);
@@ -316,7 +348,7 @@ function predict(homeTeam: string, awayTeam: string) {
   };
 }
 
-// ─── Types ────────────────────────────────────────────────────────────────────
+// ─── Types ───────────────────────────────────────────────────
 
 interface SearchResult {
   homeTeam: string;
@@ -342,8 +374,33 @@ interface TeamRow {
   avgCornersSecondHalf: number;
 }
 
+interface DatabaseMatch {
+  home_team?: string | null;
+  away_team?: string | null;
+  match_date?: string | null;
+  match_time?: string | null;
+  league?: string | null;
+  competition?: string | null;
+}
+
 function matchKey(match: SearchResult): string {
   return `${match.leagueKey}-${match.homeTeam}-${match.awayTeam}-${match.rawMs}`;
+}
+
+function compactMatchKey(homeTeam: string, awayTeam: string, rawMs: number): string {
+  return `${homeTeam.trim().toLowerCase()}-${awayTeam.trim().toLowerCase()}-${dayIndex(rawMs)}`;
+}
+
+function displayLeagueName(key: string | null | undefined): string {
+  if (!key) return 'Banco de jogos';
+  return LEAGUE_NAMES[key] ?? key.replaceAll('_', ' ');
+}
+
+function buildDbDateString(match: DatabaseMatch): string | null {
+  if (!match.match_date) return null;
+  const day = String(match.match_date).slice(0, 10);
+  const rawTime = match.match_time ? String(match.match_time).slice(0, 5) : '12:00';
+  return `${day} ${rawTime}`;
 }
 
 type DateOption = 'today' | 'tomorrow' | 'week' | 'custom';
@@ -351,7 +408,7 @@ type Threshold = 3.5 | 4.5 | 5.5 | 6.5 | 7.5 | 8.5 | 9.5 | 10.5 | 11.5;
 type HalfFilter = 'total' | '1st' | '2nd';
 const THRESHOLDS: Threshold[] = [3.5, 4.5, 5.5, 6.5, 7.5, 8.5, 9.5, 10.5, 11.5];
 
-// ─── Component ────────────────────────────────────────────────────────────────
+// ─── Component ────────────────────────────────────────────────
 
 export function GlobalCornerSearch() {
   const [dateOption, setDateOption] = useState<DateOption>('tomorrow');
@@ -363,6 +420,8 @@ export function GlobalCornerSearch() {
   const [selectedMatchKey, setSelectedMatchKey] = useState<string | null>(null);
   const [searchTeam, setSearchTeam] = useState('');
   const [tab, setTab] = useState<'matches' | 'teams'>('matches');
+  const [databaseMatches, setDatabaseMatches] = useState<DatabaseMatch[]>([]);
+  const [databaseLoading, setDatabaseLoading] = useState(false);
 
   // Stable "today" timestamp — set in useEffect so it's only client-side
   const [todayMs, setTodayMs] = useState(0);
@@ -373,6 +432,26 @@ export function GlobalCornerSearch() {
       timeZone: 'America/Sao_Paulo',
     }).format(nowMs); // "YYYY-MM-DD"
     setTodayMs(Date.parse(dayStr + 'T00:00:00'));
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    setDatabaseLoading(true);
+    fetch('/api/stats/matches?limit=500')
+      .then((res) => (res.ok ? res.json() : []))
+      .then((data) => {
+        if (!cancelled) setDatabaseMatches(Array.isArray(data) ? data : []);
+      })
+      .catch(() => {
+        if (!cancelled) setDatabaseMatches([]);
+      })
+      .finally(() => {
+        if (!cancelled) setDatabaseLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   // Build all teams list (static data, no date calls)
@@ -423,11 +502,20 @@ export function GlobalCornerSearch() {
   // Build all matches — uses parseDateMs (Date.parse, no new Date())
   const allMatches = useMemo((): SearchResult[] => {
     const out: SearchResult[] = [];
+    const seen = new Set<string>();
+
+    const addMatch = (match: SearchResult) => {
+      const key = compactMatchKey(match.homeTeam, match.awayTeam, match.rawMs);
+      if (seen.has(key)) return;
+      seen.add(key);
+      out.push(match);
+    };
+
     upcomingMatches.forEach((m) => {
       const rawMs = parseDateMs(m.date);
       const { date, time } = formatMsToDisplay(rawMs);
       const p = predict(m.homeTeam, m.awayTeam);
-      out.push({
+      addMatch({
         homeTeam: m.homeTeam,
         awayTeam: m.awayTeam,
         date,
@@ -443,12 +531,13 @@ export function GlobalCornerSearch() {
         rawMs,
       });
     });
+
     Object.entries(internationalFixtures).forEach(([key, matches]) => {
       matches.forEach((m: InternationalMatch) => {
         const rawMs = parseDateMs(m.date);
         const { date, time } = formatMsToDisplay(rawMs);
         const p = predict(m.homeTeam, m.awayTeam);
-        out.push({
+        addMatch({
           homeTeam: m.homeTeam,
           awayTeam: m.awayTeam,
           date,
@@ -465,8 +554,35 @@ export function GlobalCornerSearch() {
         });
       });
     });
+
+    databaseMatches.forEach((m) => {
+      if (!m.home_team || !m.away_team) return;
+      const dateString = buildDbDateString(m);
+      if (!dateString) return;
+      const rawMs = parseDateMs(dateString);
+      if (!Number.isFinite(rawMs)) return;
+      const { date, time } = formatMsToDisplay(rawMs);
+      const leagueKey = m.league ?? m.competition ?? 'database';
+      const p = predict(m.home_team, m.away_team);
+      addMatch({
+        homeTeam: m.home_team,
+        awayTeam: m.away_team,
+        date,
+        time,
+        league: displayLeagueName(leagueKey),
+        leagueKey,
+        predictedCorners: p.total,
+        homeCorners: p.home,
+        awayCorners: p.away,
+        predicted1stHalf: p.firstHalf,
+        predicted2ndHalf: p.secondHalf,
+        confidence: p.confidence,
+        rawMs,
+      });
+    });
+
     return out;
-  }, []);
+  }, [databaseMatches]);
 
   const filteredMatches = useMemo(() => {
     const getCorners = (m: SearchResult) =>
@@ -651,6 +767,9 @@ export function GlobalCornerSearch() {
             Over {threshold}
           </Badge>
           <Badge variant="outline">{halfLabel}</Badge>
+          <Badge variant="outline">
+            Banco: {databaseLoading ? 'carregando' : `${databaseMatches.length} jogos futuros`}
+          </Badge>
           {searchTeam && (
             <Badge variant="secondary">
               <Search className="w-3 h-3 mr-1" />
