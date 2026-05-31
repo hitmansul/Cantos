@@ -8,9 +8,11 @@ import {
   Scores365League,
   LEAGUE_CONFIG,
   type TeamStanding,
+  type UpcomingMatch,
 } from '@/hooks/use365Scores';
 import { Loader2, Calendar, Trophy, TrendingUp } from 'lucide-react';
 import { FutureMatchPrediction } from '@/components/FutureMatchPrediction';
+import { currentUpcomingMatches, type CurrentFixture } from '@/data/currentFixtures';
 
 interface Props {
   league: Scores365League;
@@ -32,6 +34,36 @@ function formatShortDate(dateStr: string): string {
   if (!match) return dateStr;
   const [, , month, day] = match;
   return `${day}/${month}`;
+}
+
+type UpcomingDisplayMatch = UpcomingMatch & {
+  referee?: string | null;
+  source?: string;
+  dateLabel?: string;
+  returnLeg?: CurrentFixture['returnLeg'];
+  bracketNote?: string;
+};
+
+function localFixtureMs(date: string): number {
+  const iso = date.includes(' ') ? `${date.replace(' ', 'T')}:00-03:00` : `${date}T12:00:00-03:00`;
+  const ms = Date.parse(iso);
+  return Number.isFinite(ms) ? ms : 0;
+}
+
+function localFixtureToUpcoming(match: CurrentFixture, index: number): UpcomingDisplayMatch {
+  const ms = localFixtureMs(match.date);
+  return {
+    id: 900000 + index,
+    startTime: ms ? new Date(ms).toISOString() : match.date,
+    roundName: match.round,
+    homeTeam: { id: 0, name: match.homeTeam },
+    awayTeam: { id: 0, name: match.awayTeam },
+    referee: match.referee ?? null,
+    source: match.source,
+    dateLabel: match.dateLabel,
+    returnLeg: match.returnLeg,
+    bracketNote: match.bracketNote,
+  };
 }
 
 function FormBadge({ result }: { result: number }) {
@@ -308,6 +340,14 @@ export function Scores365UpcomingMatches({ league, onMatchClick }: Props) {
   const { matches, loading, error } = use365Upcoming(league);
   const config = LEAGUE_CONFIG[league];
   const [selectedMatchId, setSelectedMatchId] = useState<number | null>(null);
+  const localMatches: UpcomingDisplayMatch[] = currentUpcomingMatches
+    .filter((match) => match.leagueKey === league)
+    .filter((match) => localFixtureMs(match.date) >= Date.now() - 6 * 60 * 60 * 1000)
+    .sort((a, b) => localFixtureMs(a.date) - localFixtureMs(b.date))
+    .map(localFixtureToUpcoming);
+  const visibleMatches: UpcomingDisplayMatch[] =
+    matches.length > 0 ? (matches as UpcomingDisplayMatch[]) : localMatches;
+  const sourceLabel = matches.length > 0 ? '365Scores' : 'Base local';
 
   if (loading) {
     return (
@@ -318,7 +358,7 @@ export function Scores365UpcomingMatches({ league, onMatchClick }: Props) {
     );
   }
 
-  if (error || matches.length === 0) {
+  if ((error || matches.length === 0) && visibleMatches.length === 0) {
     return (
       <div className="text-center py-6 text-gray-400 text-sm">
         {error || 'Nenhum jogo agendado'}
@@ -327,14 +367,14 @@ export function Scores365UpcomingMatches({ league, onMatchClick }: Props) {
   }
 
   // Group by roundName (cups) or round number (leagues)
-  const byRound = matches.reduce(
+  const byRound = visibleMatches.reduce(
     (acc, match) => {
       const key = match.roundName || (match.round ? `Rodada ${match.round}` : 'Jogos');
       if (!acc[key]) acc[key] = [];
       acc[key].push(match);
       return acc;
     },
-    {} as Record<string, typeof matches>
+    {} as Record<string, typeof visibleMatches>
   );
 
   return (
@@ -344,7 +384,7 @@ export function Scores365UpcomingMatches({ league, onMatchClick }: Props) {
         <span className="text-sm font-medium">
           Próximos Jogos — {config.flag} {config.name}
         </span>
-        <span className="text-xs text-emerald-500/60 ml-auto">365Scores</span>
+        <span className="text-xs text-emerald-500/60 ml-auto">{sourceLabel}</span>
       </div>
       {Object.entries(byRound).map(([roundLabel, roundMatches]) => (
         <div key={roundLabel} className="space-y-2">
@@ -365,19 +405,34 @@ export function Scores365UpcomingMatches({ league, onMatchClick }: Props) {
                     <span className="text-white font-medium text-sm">{match.homeTeam.name}</span>
                   </div>
                   <div className="px-4 flex flex-col items-center">
-                    <span className="text-gray-500 text-xs">{formatDate(match.startTime)}</span>
+                    <span className="text-gray-500 text-xs">
+                      {match.dateLabel ?? formatDate(match.startTime)}
+                    </span>
                     <span className="text-emerald-500 font-bold">vs</span>
                   </div>
                   <div className="flex-1 text-left">
                     <span className="text-white font-medium text-sm">{match.awayTeam.name}</span>
                   </div>
                 </div>
+                {(match.returnLeg || match.bracketNote) && (
+                  <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/5 px-3 py-2 text-xs text-emerald-100/80">
+                    {match.returnLeg && (
+                      <p>
+                        Volta: {match.returnLeg.homeTeam} x {match.returnLeg.awayTeam} (
+                        {match.returnLeg.dateLabel})
+                      </p>
+                    )}
+                    {match.bracketNote && <p>{match.bracketNote}</p>}
+                  </div>
+                )}
                 {selectedMatchId === match.id && (
                   <FutureMatchPrediction
                     homeTeam={match.homeTeam.name}
                     awayTeam={match.awayTeam.name}
                     league={config.name}
                     kickoff={match.startTime}
+                    kickoffLabel={match.dateLabel}
+                    referee={match.referee}
                     onClose={() => setSelectedMatchId(null)}
                   />
                 )}

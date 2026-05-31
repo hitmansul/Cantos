@@ -17,6 +17,9 @@ echo.
 set NODE_EXE=node
 if exist "C:\Program Files\nodejs\node.exe" set "NODE_EXE=C:\Program Files\nodejs\node.exe"
 
-"%NODE_EXE%" ".\node_modules\next\dist\bin\next" dev --port 4000
+set "NEXT_BIN=.\node_modules\next\dist\bin\next"
+if not exist "%NEXT_BIN%" set "NEXT_BIN=..\..\node_modules\next\dist\bin\next"
+
+"%NODE_EXE%" "%NEXT_BIN%" dev --port 4000
 
 pause

@@ -10,6 +10,7 @@ import {
   teamStats,
   type DetailedTeamStats,
 } from '@/data/teamCornerStats';
+import { currentUpcomingMatches } from '@/data/currentFixtures';
 import {
   brazilianTeamStats,
   championsLeagueTeamStats,
@@ -248,6 +249,27 @@ function teamCardAverage(teamCard?: TeamCardStats): number {
   return teamCard?.avgCardsPerMatch ?? 2.1;
 }
 
+function findLocalFixtureReferee(
+  homeTeam: string,
+  awayTeam: string,
+  league?: string
+): string | null {
+  const normalizedLeague = league ? normalizeText(league) : '';
+  const direct = currentUpcomingMatches.find((match) => {
+    const samePair =
+      teamNamesMatch(match.homeTeam, homeTeam) &&
+      teamNamesMatch(match.awayTeam, awayTeam);
+    if (!samePair) return false;
+    if (!normalizedLeague) return true;
+    return (
+      normalizeText(match.competition).includes(normalizedLeague) ||
+      normalizedLeague.includes(normalizeText(match.competition)) ||
+      normalizeText(match.leagueKey).includes(normalizedLeague)
+    );
+  });
+  return direct?.referee ?? null;
+}
+
 export function FutureMatchPrediction({
   homeTeam,
   awayTeam,
@@ -288,7 +310,8 @@ export function FutureMatchPrediction({
 
     const homeCards = findTeamCardStats(homeTeam);
     const awayCards = findTeamCardStats(awayTeam);
-    const refereeStats = referee ? findReferee(referee) : null;
+    const resolvedReferee = referee ?? findLocalFixtureReferee(homeTeam, awayTeam, league);
+    const refereeStats = resolvedReferee ? findReferee(resolvedReferee) : null;
     const refereeSummary = refereeStats ? getRefereeStatsSummary(refereeStats) : null;
     const teamCardsTotal =
       homeCards || awayCards ? teamCardAverage(homeCards) + teamCardAverage(awayCards) : null;
@@ -331,6 +354,7 @@ export function FutureMatchPrediction({
         { label: '2T Over 5.5', probability: calcOverProbability(secondHalf, 5.5, 1.7) },
       ],
       cards: {
+        refereeName: resolvedReferee,
         refereeStats,
         refereeSummary,
         homeCards,
@@ -467,7 +491,9 @@ export function FutureMatchPrediction({
           <p className="mt-2 text-xs text-muted-foreground">
             {prediction.cards.refereeStats
               ? `Arbitro: ${prediction.cards.refereeStats.name} (${prediction.cards.refereeStats.avgCardsPerMatch.toFixed(1)} cartoes/jogo).`
-              : 'Sem arbitro informado; usei as medias locais dos times quando disponiveis.'}
+              : prediction.cards.refereeName
+                ? `Arbitro: ${prediction.cards.refereeName} (sem historico detalhado local).`
+                : 'Arbitro ainda nao informado; usei as medias locais dos times quando disponiveis.'}
           </p>
         </div>
       </div>
