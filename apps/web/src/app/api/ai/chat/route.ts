@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import sql from '@/app/api/utils/sql';
 import { teamStats, headToHeadData, upcomingMatches } from '@/data/teamCornerStats';
+import { currentUpcomingMatches } from '@/data/currentFixtures';
+import { findReferee, getRefereeStatsSummary } from '@/data/brazilianReferees';
+import { findTeamCardStats } from '@/data/teamCardStats';
 import {
   libertadoresTeamStats,
   sulAmericanaTeamStats,
@@ -180,11 +183,10 @@ function buildLocalStatsCoverage(): string {
   return lines.join('\n');
 }
 
-function questionMentionsLeague(normalized: string, league: string): boolean {
+function leagueMentionTerms(league: string): string[] {
   const leagueNorm = normalizeQuestion(league);
-  if (normalized.includes(leagueNorm)) return true;
   const aliases: Record<string, string[]> = {
-    'brasileirao serie a': ['brasileirao', 'serie a'],
+    'brasileirao serie a': ['brasileirao', 'brasileiro', 'serie a'],
     'brasileirao serie b': ['serie b'],
     'copa libertadores': ['libertadores'],
     'copa sul-americana': ['sul americana', 'sudamericana'],
@@ -193,7 +195,15 @@ function questionMentionsLeague(normalized: string, league: string): boolean {
     'conference league': ['conference'],
     'copa do brasil': ['copa do brasil'],
   };
-  return (aliases[leagueNorm] ?? []).some((alias) => normalized.includes(alias));
+  return uniqueSorted([leagueNorm, ...(aliases[leagueNorm] ?? [])]).filter(Boolean);
+}
+
+function questionMentionsLeague(normalized: string, league: string): boolean {
+  return leagueMentionTerms(league).some((term) => normalized.includes(term));
+}
+
+function latestLeagueMentionPosition(normalized: string, league: string): number {
+  return leagueMentionTerms(league).reduce((latest, term) => Math.max(latest, normalized.lastIndexOf(term)), -1);
 }
 
 function detectHalfRequest(normalizedQuestion: string): 'first' | 'second' | null {
@@ -218,22 +228,31 @@ function detectHalfRequest(normalizedQuestion: string): 'first' | 'second' | nul
   return null;
 }
 
-function formatTeamStats(team: SimpleTeamStats, league: string, halfOnly: 'first' | 'second' | null): string {
-  const firstHalf = team.avgCornersFirstHalf;
-  const secondHalf = team.avgCornersSecondHalf;
+function oneDecimal(value: number): number {
+  return Math.round(value * 10) / 10;
+}
 
-  if (halfOnly === 'first' && firstHalf !== undefined) {
+function firstHalfAverage(team: SimpleTeamStats): number {
+  return team.avgCornersFirstHalf ?? oneDecimal(team.avgCornersFor * 0.46);
+}
+
+function secondHalfAverage(team: SimpleTeamStats): number {
+  return team.avgCornersSecondHalf ?? oneDecimal(team.avgCornersFor * 0.54);
+}
+
+function formatTeamStats(team: SimpleTeamStats, league: string, halfOnly: 'first' | 'second' | null): string {
+  const firstHalf = firstHalfAverage(team);
+  const secondHalf = secondHalfAverage(team);
+
+  if (halfOnly === 'first') {
     return `${team.team} na ${league}, somente no 1o tempo:\n\n- Media a favor no 1o tempo: ${firstHalf} escanteios.\n- Media total do jogo: ${team.avgTotalCorners} escanteios.\n- Media a favor no jogo: ${team.avgCornersFor}.\n- Media contra no jogo: ${team.avgCornersAgainst}.\n- Amostra: ${team.gamesPlayed} jogos analisados.`;
   }
 
-  if (halfOnly === 'second' && secondHalf !== undefined) {
+  if (halfOnly === 'second') {
     return `${team.team} na ${league}, somente no 2o tempo:\n\n- Media a favor no 2o tempo: ${secondHalf} escanteios.\n- Media total do jogo: ${team.avgTotalCorners} escanteios.\n- Media a favor no jogo: ${team.avgCornersFor}.\n- Media contra no jogo: ${team.avgCornersAgainst}.\n- Amostra: ${team.gamesPlayed} jogos analisados.`;
   }
 
-  const byHalf =
-    firstHalf !== undefined && secondHalf !== undefined
-      ? `\n- Por tempo: ${firstHalf} no 1o tempo e ${secondHalf} no 2o tempo.`
-      : '';
+  const byHalf = `\n- Por tempo: ${firstHalf} no 1o tempo e ${secondHalf} no 2o tempo.`;
   const homeAway =
     team.avgCornersHome !== undefined && team.avgCornersAway !== undefined
       ? `\n- Casa/fora: ${team.avgCornersHome} em casa e ${team.avgCornersAway} fora.`
@@ -260,19 +279,45 @@ function buildDetailedTeamStatsAnswer(question: string, context: string): string
 
   if (!asksStats) return null;
 
-  for (const set of LOCAL_STATS_SETS) {
-    const matches = set.stats.filter((team) => combined.includes(normalizeQuestion(team.team)));
-    if (matches.length === 0) continue;
+  const candidates = LOCAL_STATS_SETS.flatMap((set) =>
+    set.stats
+      .filter((team) => combined.includes(normalizeQuestion(team.team)))
+      .map((team) => ({ team, setLabel: set.label }))
+  );
+  if (candidates.length === 0) return null;
 
-    const selected =
-      matches.find((item) => item.league && questionMentionsLeague(combined, item.league)) ??
-      matches.find((item) => questionMentionsLeague(combined, set.label)) ??
-      matches[0];
-    const league = selected.league ?? set.label;
-    return formatTeamStats(selected, league, halfOnly);
-  }
+  const latestMentionPosition = Math.max(
+    ...candidates.map((candidate) => {
+      const league = candidate.team.league ?? candidate.setLabel;
+      return Math.max(
+        latestLeagueMentionPosition(combined, league),
+        latestLeagueMentionPosition(combined, candidate.setLabel)
+      );
+    })
+  );
 
-  return null;
+  const scoreCandidate = (candidate: { team: SimpleTeamStats; setLabel: string }) => {
+    const teamName = normalizeQuestion(candidate.team.team);
+    const league = candidate.team.league ?? candidate.setLabel;
+    const latestLeaguePosition = Math.max(
+      latestLeagueMentionPosition(combined, league),
+      latestLeagueMentionPosition(combined, candidate.setLabel)
+    );
+    let score = 0;
+    if (normalizedQuestion.includes(teamName)) score += 500;
+    if (combined.includes(teamName)) score += 50;
+    if (questionMentionsLeague(normalizedQuestion, league)) score += 1000;
+    if (questionMentionsLeague(normalizedQuestion, candidate.setLabel)) score += 900;
+    if (questionMentionsLeague(combined, league)) score += 100;
+    if (questionMentionsLeague(combined, candidate.setLabel)) score += 80;
+    if (latestLeaguePosition >= 0 && latestLeaguePosition === latestMentionPosition) score += 650;
+    else if (latestLeaguePosition >= 0) score += 100;
+    return score;
+  };
+
+  const selected = candidates.sort((a, b) => scoreCandidate(b) - scoreCandidate(a))[0];
+  const league = selected.team.league ?? selected.setLabel;
+  return formatTeamStats(selected.team, league, halfOnly);
 }
 
 function questionMentionsAnyDetailedTeam(normalized: string): boolean {
@@ -326,13 +371,21 @@ function pickStatsGroupForAggregate(question: string, context: string): { label:
   const explicitSet = LOCAL_STATS_SETS.find((set) => questionMentionsLeague(normalizedQuestion, set.label));
   if (explicitSet) return { label: explicitSet.label, teams: explicitSet.stats };
 
-  const contextualLeague = leagues.find((league) => questionMentionsLeague(normalizedContext, league));
+  const contextualLeague = leagues
+    .map((league) => ({ league, position: latestLeagueMentionPosition(normalizedContext, league) }))
+    .filter((item) => item.position >= 0)
+    .sort((a, b) => b.position - a.position)[0]?.league;
   if (contextualLeague) {
     const teams = allTeams.filter((team) => team.league === contextualLeague);
     if (teams.length > 0) return { label: contextualLeague, teams };
   }
 
-  const contextualSet = LOCAL_STATS_SETS.find((set) => questionMentionsLeague(normalizedContext, set.label));
+  const contextualSet = LOCAL_STATS_SETS.map((set) => ({
+    set,
+    position: latestLeagueMentionPosition(normalizedContext, set.label),
+  }))
+    .filter((item) => item.position >= 0)
+    .sort((a, b) => b.position - a.position)[0]?.set;
   if (contextualSet) return { label: contextualSet.label, teams: contextualSet.stats };
 
   const fallbackSet = LOCAL_STATS_SETS[0];
@@ -348,14 +401,81 @@ function buildCompetitionAverageAnswer(question: string, context: string): strin
   const halfOnly = detectHalfRequest(normalizeQuestion(question));
 
   if (halfOnly === 'first') {
-    return `${group.label}, media local dos times no 1o tempo:\n\n- Media a favor no 1o tempo: ${rounded(average(group.teams.map((team) => team.avgCornersFirstHalf)))} escanteios por time/jogo.\n- Media total a favor no jogo: ${rounded(average(group.teams.map((team) => team.avgCornersFor)))} escanteios por time/jogo.\n- Amostra: ${group.teams.length} times cadastrados na base local.`;
+    return `${group.label}, media local dos times no 1o tempo:\n\n- Media a favor no 1o tempo: ${rounded(average(group.teams.map(firstHalfAverage)))} escanteios por time/jogo.\n- Media total a favor no jogo: ${rounded(average(group.teams.map((team) => team.avgCornersFor)))} escanteios por time/jogo.\n- Amostra: ${group.teams.length} times cadastrados na base local.`;
   }
 
   if (halfOnly === 'second') {
-    return `${group.label}, media local dos times no 2o tempo:\n\n- Media a favor no 2o tempo: ${rounded(average(group.teams.map((team) => team.avgCornersSecondHalf)))} escanteios por time/jogo.\n- Media total a favor no jogo: ${rounded(average(group.teams.map((team) => team.avgCornersFor)))} escanteios por time/jogo.\n- Amostra: ${group.teams.length} times cadastrados na base local.`;
+    return `${group.label}, media local dos times no 2o tempo:\n\n- Media a favor no 2o tempo: ${rounded(average(group.teams.map(secondHalfAverage)))} escanteios por time/jogo.\n- Media total a favor no jogo: ${rounded(average(group.teams.map((team) => team.avgCornersFor)))} escanteios por time/jogo.\n- Amostra: ${group.teams.length} times cadastrados na base local.`;
   }
 
-  return `${group.label}, media local geral:\n\n- Media a favor por time: ${rounded(average(group.teams.map((team) => team.avgCornersFor)))} escanteios por jogo.\n- Media contra por time: ${rounded(average(group.teams.map((team) => team.avgCornersAgainst)))} escanteios cedidos por jogo.\n- Media total nos jogos: ${rounded(average(group.teams.map((team) => team.avgTotalCorners)))} escanteios.\n- Por tempo: ${rounded(average(group.teams.map((team) => team.avgCornersFirstHalf)))} no 1o tempo e ${rounded(average(group.teams.map((team) => team.avgCornersSecondHalf)))} no 2o tempo.\n- Amostra: ${group.teams.length} times cadastrados na base local.`;
+  return `${group.label}, media local geral:\n\n- Media a favor por time: ${rounded(average(group.teams.map((team) => team.avgCornersFor)))} escanteios por jogo.\n- Media contra por time: ${rounded(average(group.teams.map((team) => team.avgCornersAgainst)))} escanteios cedidos por jogo.\n- Media total nos jogos: ${rounded(average(group.teams.map((team) => team.avgTotalCorners)))} escanteios.\n- Por tempo: ${rounded(average(group.teams.map(firstHalfAverage)))} no 1o tempo e ${rounded(average(group.teams.map(secondHalfAverage)))} no 2o tempo.\n- Amostra: ${group.teams.length} times cadastrados na base local.`;
+}
+
+function expectedCardsForMatch(match: { homeTeam: string; awayTeam: string; referee?: string | null }) {
+  const homeCards = findTeamCardStats(match.homeTeam);
+  const awayCards = findTeamCardStats(match.awayTeam);
+  const refereeStats = match.referee ? findReferee(match.referee) : null;
+  const teamCardsTotal =
+    homeCards || awayCards
+      ? (homeCards?.avgCardsPerMatch ?? 2.1) + (awayCards?.avgCardsPerMatch ?? 2.1)
+      : null;
+  const expectedTotal = refereeStats
+    ? teamCardsTotal
+      ? refereeStats.avgCardsPerMatch * 0.6 + teamCardsTotal * 0.4
+      : refereeStats.avgCardsPerMatch
+    : teamCardsTotal ?? 4.2;
+  const firstHalfPct = refereeStats?.halfDistribution.firstHalf ?? 40;
+
+  return {
+    refereeStats,
+    refereeSummary: refereeStats ? getRefereeStatsSummary(refereeStats) : null,
+    expectedTotal: oneDecimal(expectedTotal),
+    firstHalf: oneDecimal(expectedTotal * (firstHalfPct / 100)),
+    secondHalf: oneDecimal(expectedTotal * (1 - firstHalfPct / 100)),
+  };
+}
+
+function buildLocalCardsAnswer(question: string, context: string): string | null {
+  const normalizedQuestion = normalizeQuestion(question);
+  const combined = normalizeQuestion(`${context} ${question}`);
+  const asksCards =
+    normalizedQuestion.includes('cartao') ||
+    normalizedQuestion.includes('cartoes') ||
+    normalizedQuestion.includes('arbitro') ||
+    normalizedQuestion.includes('juiz');
+
+  if (!asksCards) return null;
+
+  const allMatches = [...currentUpcomingMatches, ...upcomingMatches];
+  const directMatches = allMatches.filter((match) => {
+    const home = normalizeQuestion(match.homeTeam);
+    const away = normalizeQuestion(match.awayTeam);
+    return (
+      normalizedQuestion.includes(home) ||
+      normalizedQuestion.includes(away) ||
+      (combined.includes(home) && combined.includes(away))
+    );
+  });
+
+  const selectedMatches = directMatches.length > 0 ? directMatches.slice(0, 3) : currentUpcomingMatches.slice(0, 8);
+
+  if (selectedMatches.length === 0) {
+    return 'Ainda nao encontrei jogos locais suficientes para estimar juiz e cartoes.';
+  }
+
+  const lines = selectedMatches.map((match) => {
+    const referee = 'referee' in match && typeof match.referee === 'string' ? match.referee : null;
+    const cards = expectedCardsForMatch({ ...match, referee });
+    const refereeLabel = referee
+      ? cards.refereeStats
+        ? `${cards.refereeStats.name} (${cards.refereeStats.avgCardsPerMatch.toFixed(1)} cartoes/jogo, perfil ${cards.refereeStats.tendency})`
+        : `${referee} (sem historico detalhado local)`
+      : 'arbitro ainda nao informado';
+
+    return `- ${match.homeTeam} x ${match.awayTeam} (${match.date}, ${match.competition}): juiz ${refereeLabel}; previsao ${cards.expectedTotal} cartoes no jogo, ${cards.firstHalf} no 1o tempo e ${cards.secondHalf} no 2o tempo.`;
+  });
+
+  return `Previsao local de cartoes e arbitragem:\n\n${lines.join('\n')}`;
 }
 
 function buildLocalStatsAnswer(question: string, context: string): string | null {
@@ -405,7 +525,12 @@ function buildLocalLeagueAnswer(question: string): string | null {
 }
 
 function buildLocalFirstReply(question: string, context: string): string | null {
-  return buildLocalStatsAnswer(question, context) ?? buildLocalInventoryAnswer(question) ?? buildLocalLeagueAnswer(question);
+  return (
+    buildLocalCardsAnswer(question, context) ??
+    buildLocalStatsAnswer(question, context) ??
+    buildLocalInventoryAnswer(question) ??
+    buildLocalLeagueAnswer(question)
+  );
 }
 
 function buildLocalAssistantReply(question: string, context: string): string {
@@ -607,13 +732,14 @@ function buildStaticH2H(): string {
 }
 
 function buildStaticUpcomingMatches(today: string): string {
-  if (!upcomingMatches || upcomingMatches.length === 0) return '  (sem jogos agendados no arquivo)';
-  const futureMatches = upcomingMatches.filter((m) => m.date >= today);
+  const allMatches = [...upcomingMatches, ...currentUpcomingMatches];
+  if (allMatches.length === 0) return '  (sem jogos agendados no arquivo)';
+  const futureMatches = allMatches.filter((m) => m.date >= today);
   if (futureMatches.length === 0) return '  (sem jogos futuros no arquivo)';
   return futureMatches
     .map(
       (m) =>
-        `  - ${m.homeTeam} x ${m.awayTeam} | ${m.date} | ${m.competition} | previsao: ${m.predictedCorners} escanteios`
+        `  - ${m.homeTeam} x ${m.awayTeam} | ${m.date} | ${m.competition} | previsao: ${m.predictedCorners} escanteios${'referee' in m && m.referee ? ` | arbitro: ${m.referee}` : ''}`
     )
     .join('\n');
 }

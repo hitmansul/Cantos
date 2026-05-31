@@ -351,11 +351,19 @@ const brazilianReferees: RefereeCardStats[] = [
 
 export function findReferee(name: string): RefereeCardStats | null {
   if (!name) return null;
-  const normalized = name.toLowerCase().trim();
+  const normalize = (value: string) =>
+    value
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .trim();
+  const normalized = normalize(name);
   return (
     brazilianReferees.find(
-      (ref) =>
-        ref.name.toLowerCase().includes(normalized) || normalized.includes(ref.name.toLowerCase())
+      (ref) => {
+        const refereeName = normalize(ref.name);
+        return refereeName.includes(normalized) || normalized.includes(refereeName);
+      }
     ) ?? null
   );
 }

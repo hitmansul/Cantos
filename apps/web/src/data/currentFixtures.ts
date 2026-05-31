@@ -3,6 +3,8 @@ import type { NextMatch } from '@/data/teamCornerStats';
 export interface CurrentFixture extends NextMatch {
   leagueKey: string;
   round?: string;
+  referee?: string;
+  venue?: string;
   source?: string;
 }
 
@@ -14,6 +16,7 @@ export const currentUpcomingMatches: CurrentFixture[] = [
     competition: 'Serie A',
     leagueKey: 'brasileirao_a',
     round: 'Rodada 9',
+    referee: 'Anderson Daronco',
     predictedCorners: 9.8,
     source: 'Sofascore',
   },
@@ -24,6 +27,7 @@ export const currentUpcomingMatches: CurrentFixture[] = [
     competition: 'Serie A',
     leagueKey: 'brasileirao_a',
     round: 'Rodada 9',
+    referee: 'Raphael Claus',
     predictedCorners: 10.4,
     source: 'Sofascore',
   },
@@ -34,6 +38,7 @@ export const currentUpcomingMatches: CurrentFixture[] = [
     competition: 'Serie A',
     leagueKey: 'brasileirao_a',
     round: 'Rodada 9',
+    referee: 'Wilton Pereira Sampaio',
     predictedCorners: 10.1,
     source: 'Sofascore',
   },
@@ -44,6 +49,7 @@ export const currentUpcomingMatches: CurrentFixture[] = [
     competition: 'Serie A',
     leagueKey: 'brasileirao_a',
     round: 'Rodada 9',
+    referee: 'Bruno Arleu de Araujo',
     predictedCorners: 9.9,
     source: 'Sofascore',
   },
@@ -54,6 +60,7 @@ export const currentUpcomingMatches: CurrentFixture[] = [
     competition: 'Serie A',
     leagueKey: 'brasileirao_a',
     round: 'Rodada 9',
+    referee: 'Marcelo de Lima Henrique',
     predictedCorners: 9.6,
     source: 'Sofascore',
   },
@@ -64,6 +71,7 @@ export const currentUpcomingMatches: CurrentFixture[] = [
     competition: 'Serie B',
     leagueKey: 'brasileirao_b',
     round: 'Rodada 10',
+    referee: 'Rodrigo Jose Pereira de Lima',
     predictedCorners: 9.5,
     source: 'Sofascore',
   },
@@ -74,6 +82,7 @@ export const currentUpcomingMatches: CurrentFixture[] = [
     competition: 'Serie B',
     leagueKey: 'brasileirao_b',
     round: 'Rodada 10',
+    referee: 'Flavio Rodrigues de Souza',
     predictedCorners: 9.3,
     source: 'Sofascore',
   },
@@ -84,6 +93,7 @@ export const currentUpcomingMatches: CurrentFixture[] = [
     competition: 'Serie B',
     leagueKey: 'brasileirao_b',
     round: 'Rodada 10',
+    referee: 'Anderson Daronco',
     predictedCorners: 9.1,
     source: 'Sofascore',
   },
@@ -94,6 +104,7 @@ export const currentUpcomingMatches: CurrentFixture[] = [
     competition: 'Serie B',
     leagueKey: 'brasileirao_b',
     round: 'Rodada 10',
+    referee: 'Raphael Claus',
     predictedCorners: 9.7,
     source: 'Sofascore',
   },
