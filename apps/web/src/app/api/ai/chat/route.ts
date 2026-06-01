@@ -158,16 +158,30 @@ function latestTeams(text: string, limit = 2): string[] {
 
 function askedCoverage(text: string): boolean {
   const normalized = normalize(text);
-  return ['quais ligas', 'ligas disponiveis', 'dados locais', 'base local', 'dados temos local'].some((term) =>
-    normalized.includes(term)
-  );
+  return [
+    'quais ligas',
+    'ligas disponiveis',
+    'dados locais',
+    'base local',
+    'dados temos local',
+    'dados que temos local',
+    'quais dados temos',
+    'o que temos local',
+  ].some((term) => normalized.includes(term));
 }
 
 function askedUpcoming(text: string): boolean {
   const normalized = normalize(text);
-  return ['proximo jogo', 'proximos jogos', 'agenda', 'jogos futuros', 'oitavas', 'chaveamento'].some((term) =>
-    normalized.includes(term)
-  );
+  return [
+    'proximo jogo',
+    'proximos jogos',
+    'proxima partida',
+    'proximas partidas',
+    'agenda',
+    'jogos futuros',
+    'oitavas',
+    'chaveamento',
+  ].some((term) => normalized.includes(term));
 }
 
 function askedStats(text: string): boolean {
@@ -204,11 +218,20 @@ function askedAddedTime(text: string): boolean {
   ].some((term) => normalized.includes(term)) || /acr[a-z]*scim/.test(compact);
 }
 
+function askedCornerMethod(text: string): boolean {
+  const normalized = normalize(text);
+  const methodTerms = ['como', 'logica', 'criterio', 'calcula', 'calculo', 'funciona', 'faz', 'formula', 'metodo'];
+  const cornerTerms = ['escanteio', 'corner', 'previsao'];
+  return methodTerms.some((term) => normalized.includes(term)) && cornerTerms.some((term) => normalized.includes(term));
+}
+
 function askedMatchPrediction(text: string): boolean {
   const normalized = normalize(text);
   if (askedAddedTime(text) || askedCards(text)) return false;
   return [
     'previsao do jogo',
+    'previsao de escanteios',
+    'previsao de corners',
     'previsao para o jogo',
     'previsao para o confronto',
     'previsao do confronto',
@@ -268,6 +291,10 @@ function coverageReply(): string {
   }).join('\n');
 
   return `Ligas integradas no app:\n\n${formatCatalog()}\n\nBases estatisticas carregadas:\n${statsLines}\n\nA IA tenta responder primeiro por esses dados locais. O Gemini so entra quando a pergunta pede interpretacao aberta ou quando o dado nao existe na base.`;
+}
+
+function cornerMethodReply(): string {
+  return `A previsao de escanteios e calculada primeiro com a base local do app.\n\n- Eu combino media a favor, media contra do adversario, casa/fora quando existe, ultimos 5 jogos e historico direto quando temos.\n- Para 1o e 2o tempo, eu uso as medias separadas por tempo da base local; quando falta alguma divisao, aplico a proporcao historica do time.\n- Depois transformo o total esperado em linhas como Over 8.5, 9.5 e 10.5.\n- Se faltar dado local para um time ou competicao, eu aviso em vez de inventar.\n\nExemplo que eu entendo: "previsao de escanteios para Flamengo x Palmeiras" ou "media do Fluminense na Libertadores no 1o tempo".`;
 }
 
 function formatStats(stats: LocalTeamStats, league: string, half: 'first' | 'second' | null): string {
@@ -387,7 +414,7 @@ function addedTimeReply(question: string, ctx: string): string | null {
   const teams = latestTeams(`${ctx} ${question}`, 2).reverse();
   const matchText = teams.length >= 2 ? ` para ${teams[0]} x ${teams[1]}` : '';
 
-  return `A previsao de acrescimo${matchText} agora aparece na aba Tempo Real quando a 365Scores/Sportradar entrega play-by-play com interrupcao e retomada do jogo.\n\nA regra local e: tempo total de bola parada identificado no play-by-play, e previsao de acrescimo = 80% desse tempo. Quando a fonte nao envia esses eventos, eu nao mostro numero inventado.\n\nNo chat, ainda nao busco esse dado ao vivo por partida; use a tela Tempo Real para ver os jogos que ja tem esse calculo disponivel.`;
+  return `A Previsao de Acrescimo${matchText} usa somente dado real de bola parada quando a 365Scores/Sportradar entrega play-by-play com interrupcao e retomada do jogo.\n\nA regra local e:\n- tempo total de bola parada = soma dos intervalos entre parada e retomada;\n- Previsao de Acrescimo = 80% desse tempo total parado;\n- quando a fonte nao envia esses eventos, eu nao invento numero.\n\nNa tela Tempo Real, esse campo aparece nos jogos que ja chegam com play-by-play suficiente para calcular.`;
 }
 
 function statsReply(question: string, ctx: string): string | null {
@@ -496,17 +523,19 @@ function cardsReply(question: string, ctx: string): string | null {
 
 function localReply(question: string, ctx: string): string | null {
   if (askedCoverage(question)) return coverageReply();
-  if (askedCards(question)) return cardsReply(question, ctx);
   if (askedAddedTime(question)) return addedTimeReply(question, ctx);
+  if (askedCards(question)) return cardsReply(question, ctx);
   if (askedUpcoming(question)) return upcomingReply(question, ctx);
+  if (askedCornerMethod(question)) return cornerMethodReply();
   if (askedMatchPrediction(question)) return matchPredictionReply(question, ctx);
   if (askedStats(question)) return statsReply(question, ctx);
 
   if (isFollowUpQuestion(question) && ctx) {
     const contextualQuestion = `${ctx} ${question}`;
-    if (askedCards(ctx)) return cardsReply(contextualQuestion, '');
     if (askedAddedTime(ctx)) return addedTimeReply(contextualQuestion, '');
+    if (askedCards(ctx)) return cardsReply(contextualQuestion, '');
     if (askedUpcoming(ctx)) return upcomingReply(contextualQuestion, '');
+    if (askedCornerMethod(ctx)) return cornerMethodReply();
     if (askedMatchPrediction(ctx)) return matchPredictionReply(contextualQuestion, '');
     if (askedStats(ctx)) return statsReply(contextualQuestion, '');
   }
@@ -517,14 +546,21 @@ function localReply(question: string, ctx: string): string | null {
 function fallbackReply(question: string, ctx: string): string {
   return (
     localReply(question, ctx) ??
-    `${coverageReply()}\n\nNao encontrei uma resposta direta na base local. Tente citar time e competicao, por exemplo: "media do Fluminense na Libertadores no 1o tempo" ou "proximo jogo do Fluminense na Libertadores".`
+    `Nao encontrei uma resposta direta na base local para essa pergunta.\n\nPara eu acertar melhor, cite time, competicao e periodo quando fizer sentido. Exemplos:\n- "media do Fluminense na Libertadores no 1o tempo"\n- "proximo jogo do Fluminense na Libertadores"\n- "previsao de cartoes para Sao Paulo x Palmeiras"`
   );
 }
 
-function geminiPrompt(): string {
+function geminiPrompt(question: string, ctx: string): string {
   return `Voce e a IA da Cantos Estatisticas. Responda em portugues brasileiro.
-Use primeiro os dados locais abaixo. Se o dado nao existir na base local, diga claramente.
-A pergunta mais recente do usuario sempre manda. Se ela mudar de assunto, ignore o assunto anterior e responda o novo tema.
+Responda sempre a PERGUNTA ATUAL. Use o historico apenas quando a pergunta atual for um complemento curto, como "e no primeiro tempo?".
+Nunca responda com catalogo de ligas a menos que a PERGUNTA ATUAL peca ligas disponiveis, dados locais ou base local.
+Use primeiro os dados locais abaixo. Se o dado nao existir na base local, diga claramente e nao invente numeros.
+
+PERGUNTA ATUAL:
+${question}
+
+HISTORICO ANTERIOR:
+${ctx || 'sem historico relevante'}
 
 ${coverageReply()}
 
@@ -555,11 +591,17 @@ export async function POST(request: NextRequest) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          system_instruction: { parts: [{ text: geminiPrompt() }] },
-          contents: messages.map((message) => ({
-            role: message.role === 'assistant' ? 'model' : 'user',
-            parts: [{ text: message.content }],
-          })),
+          system_instruction: { parts: [{ text: geminiPrompt(lastUser.content, ctx) }] },
+          contents: [
+            {
+              role: 'user',
+              parts: [
+                {
+                  text: `Historico anterior:\n${ctx || 'sem historico relevante'}\n\nPergunta atual:\n${lastUser.content}`,
+                },
+              ],
+            },
+          ],
           generationConfig: { maxOutputTokens: 2048, temperature: 0.35 },
         }),
       }

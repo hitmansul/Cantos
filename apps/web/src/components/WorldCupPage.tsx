@@ -7,8 +7,39 @@ import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Button } from '@/components/ui/button';
 
+type WCTeam = { country: string; flag: string };
+
+type DisplayMatch = {
+  id?: number;
+  startTime: string;
+  venue?: string;
+  flag?: string;
+  homeTeam: WCTeam;
+  awayTeam: WCTeam;
+};
+
+const TEAM_FLAGS: Record<string, string> = {
+  Brasil: '🇧🇷',
+  Brazil: '🇧🇷',
+  Marrocos: '🇲🇦',
+  Morocco: '🇲🇦',
+  Haiti: '🇭🇹',
+  Escócia: '🏴',
+  Scotland: '🏴',
+  México: '🇲🇽',
+  'África do Sul': '🇿🇦',
+  'Coreia do Sul': '🇰🇷',
+  'República Tcheca': '🇨🇿',
+  Canadá: '🇨🇦',
+  'Bósnia e Herzegovina': '🇧🇦',
+  EUA: '🇺🇸',
+  Paraguai: '🇵🇾',
+  Catar: '🇶🇦',
+  Suíça: '🇨🇭',
+};
+
 // Copa do Mundo 2026 — 12 grupos, 48 seleções (Sorteio: 5 de dezembro de 2024)
-const WC_GROUPS: Record<string, { country: string; flag: string }[]> = {
+const WC_GROUPS: Record<string, WCTeam[]> = {
   A: [
     { country: 'México', flag: '🇲🇽' },
     { country: 'Argentina', flag: '🇦🇷' },
@@ -83,31 +114,26 @@ const WC_GROUPS: Record<string, { country: string; flag: string }[]> = {
   ],
 };
 
-// Jogos do Brasil (Grupo C) — informações confirmadas
-const BRAZIL_MATCHES = [
+// Lista reserva confirmada no 365Scores em 01/06/2026.
+const BRAZIL_MATCHES: DisplayMatch[] = [
   {
-    date: '13/06/2026',
     startTime: '2026-06-13T22:00:00+00:00',
-    opponent: 'Marrocos',
-    flag: '🇲🇦',
     venue: 'SoFi Stadium, Los Angeles',
-    group: 'C',
+    homeTeam: { country: 'Brasil', flag: TEAM_FLAGS.Brasil },
+    awayTeam: { country: 'Marrocos', flag: TEAM_FLAGS.Marrocos },
   },
   {
-    date: '18/06/2026',
-    startTime: '2026-06-18T22:00:00+00:00',
-    opponent: 'Haiti',
-    flag: '🇭🇹',
+    startTime: '2026-06-20T00:30:00+00:00',
     venue: 'MetLife Stadium, Nova York/NJ',
-    group: 'C',
+    homeTeam: { country: 'Brasil', flag: TEAM_FLAGS.Brasil },
+    awayTeam: { country: 'Haiti', flag: TEAM_FLAGS.Haiti },
   },
   {
-    date: '23/06/2026',
-    startTime: '2026-06-23T19:00:00+00:00',
-    opponent: 'Escócia',
+    startTime: '2026-06-24T22:00:00+00:00',
     flag: '🏴󠁧󠁢󠁳󠁣󠁴󠁿',
     venue: 'AT&T Stadium, Dallas',
-    group: 'C',
+    homeTeam: { country: 'Escócia', flag: TEAM_FLAGS.Escócia },
+    awayTeam: { country: 'Brasil', flag: TEAM_FLAGS.Brasil },
   },
 ];
 
@@ -145,6 +171,17 @@ function formatMatchDate(isoString: string): string {
   }).format(date);
 }
 
+function formatShortMatchDate(isoString: string): string {
+  const date = new Date(isoString);
+  if (Number.isNaN(date.getTime())) return '--';
+  return new Intl.DateTimeFormat('pt-BR', {
+    timeZone: 'America/Sao_Paulo',
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+  }).format(date);
+}
+
 function formatMatchTime(isoString: string): string {
   const date = new Date(isoString);
   if (Number.isNaN(date.getTime())) return '--:--';
@@ -154,6 +191,26 @@ function formatMatchTime(isoString: string): string {
     minute: '2-digit',
     hour12: false,
   }).format(date);
+}
+
+function normalizeTeamName(value: string): string {
+  return value
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9\s-]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function flagForTeam(name: string): string {
+  const normalized = normalizeTeamName(name);
+  const known = Object.entries(TEAM_FLAGS).find(([team]) => normalizeTeamName(team) === normalized);
+  return known?.[1] ?? '';
+}
+
+function isBrazilTeamName(name: string): boolean {
+  return ['brasil', 'brazil'].includes(normalizeTeamName(name));
 }
 
 export function WorldCupPage() {
@@ -364,32 +421,7 @@ export function WorldCupPage() {
                   Jogos do Brasil — Fase de Grupos
                 </h4>
                 <div className="space-y-3">
-                  {BRAZIL_MATCHES.map((match, i) => (
-                    <div
-                      key={i}
-                      className="bg-muted/40 rounded-lg p-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3"
-                    >
-                      <div className="flex items-center gap-4">
-                        <div className="text-center">
-                          <div className="text-xs text-muted-foreground">{match.date}</div>
-                          <div className="font-bold text-sm text-primary">
-                            {formatMatchTime(match.startTime)} BRT
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <span className="text-2xl">🇧🇷</span>
-                          <span className="font-semibold">Brasil</span>
-                          <span className="text-muted-foreground mx-2 font-bold">vs</span>
-                          <span className="font-semibold">{match.opponent}</span>
-                          <span className="text-2xl">{match.flag}</span>
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                        <MapPin className="w-3 h-3" />
-                        {match.venue}
-                      </div>
-                    </div>
-                  ))}
+                  <BrazilMatches />
                 </div>
               </div>
             </div>
@@ -451,6 +483,93 @@ export function WorldCupPage() {
         </TabsContent>
       </Tabs>
     </div>
+  );
+}
+
+function BrazilMatches() {
+  const [matches, setMatches] = useState<DisplayMatch[]>(BRAZIL_MATCHES);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function load() {
+      try {
+        const res = await fetch('/api/365scores/upcoming/copa_do_mundo');
+        if (!res.ok) return;
+        const data = await res.json();
+        const rawMatches: Array<{
+          id: number;
+          startTime: string;
+          venue?: string;
+          homeTeam: { name: string };
+          awayTeam: { name: string };
+        }> = data.matches || [];
+
+        const apiMatches = rawMatches
+          .filter((match) =>
+            [match.homeTeam.name, match.awayTeam.name].some((team) => isBrazilTeamName(team))
+          )
+          .map<DisplayMatch>((match) => ({
+            id: match.id,
+            startTime: match.startTime,
+            venue: match.venue,
+            homeTeam: {
+              country: match.homeTeam.name,
+              flag: flagForTeam(match.homeTeam.name),
+            },
+            awayTeam: {
+              country: match.awayTeam.name,
+              flag: flagForTeam(match.awayTeam.name),
+            },
+          }));
+
+        if (!cancelled && apiMatches.length > 0) {
+          setMatches(apiMatches);
+        }
+      } catch {
+        if (!cancelled) setMatches(BRAZIL_MATCHES);
+      }
+    }
+
+    load();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  return (
+    <>
+      {matches.map((match, i) => (
+        <div
+          key={match.id ?? `${match.startTime}-${i}`}
+          className="bg-muted/40 rounded-lg p-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3"
+        >
+          <div className="flex items-center gap-4">
+            <div className="text-center">
+              <div className="text-xs text-muted-foreground">
+                {formatShortMatchDate(match.startTime)}
+              </div>
+              <div className="font-bold text-sm text-primary">
+                {formatMatchTime(match.startTime)} BRT
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-2xl">{match.homeTeam.flag}</span>
+              <span className="font-semibold">{match.homeTeam.country}</span>
+              <span className="text-muted-foreground mx-2 font-bold">vs</span>
+              <span className="font-semibold">{match.awayTeam.country}</span>
+              <span className="text-2xl">{match.awayTeam.flag}</span>
+            </div>
+          </div>
+          {match.venue && (
+            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+              <MapPin className="w-3 h-3" />
+              {match.venue}
+            </div>
+          )}
+        </div>
+      ))}
+    </>
   );
 }
 

@@ -22,6 +22,29 @@ interface NormalizedUpcomingMatch {
 }
 
 const STATIC_UPCOMING_MATCHES: Record<string, NormalizedUpcomingMatch[]> = {
+  copa_do_mundo: [
+    {
+      id: 4627856,
+      startTime: '2026-06-13T22:00:00+00:00',
+      roundName: 'Fase de Grupos',
+      homeTeam: { id: 2379, name: 'Brasil', shortName: 'BRA' },
+      awayTeam: { id: 5093, name: 'Marrocos', shortName: 'MAR' },
+    },
+    {
+      id: 900619,
+      startTime: '2026-06-20T00:30:00+00:00',
+      roundName: 'Fase de Grupos',
+      homeTeam: { id: 2379, name: 'Brasil', shortName: 'BRA' },
+      awayTeam: { id: 5094, name: 'Haiti', shortName: 'HAI' },
+    },
+    {
+      id: 900624,
+      startTime: '2026-06-24T22:00:00+00:00',
+      roundName: 'Fase de Grupos',
+      homeTeam: { id: 5095, name: 'Escócia', shortName: 'SCO' },
+      awayTeam: { id: 2379, name: 'Brasil', shortName: 'BRA' },
+    },
+  ],
   champions_league: [
     {
       id: 2047742,
