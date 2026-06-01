@@ -34,15 +34,6 @@ type LocalTeamStats = {
   gamesPlayed: number;
 };
 
-const STATS_SETS = [
-  { label: 'Brasileirao Serie A', stats: teamStats as LocalTeamStats[] },
-  { label: 'Copa Libertadores', stats: libertadoresTeamStats as LocalTeamStats[] },
-  { label: 'Copa Sul-Americana', stats: sulAmericanaTeamStats as LocalTeamStats[] },
-  { label: 'Champions League', stats: championsLeagueTeamStats as LocalTeamStats[] },
-  { label: 'Europa League', stats: europaLeagueTeamStats as LocalTeamStats[] },
-  { label: 'Conference League', stats: conferenceLeagueTeamStats as LocalTeamStats[] },
-];
-
 function normalize(value: string): string {
   return value
     .toLowerCase()
@@ -53,6 +44,24 @@ function normalize(value: string): string {
     .replace(/\s+/g, ' ')
     .trim();
 }
+
+const brazilianStats = teamStats as LocalTeamStats[];
+const brasileiraoSerieAStats = brazilianStats.filter((stats) =>
+  normalize(stats.league ?? '').includes('brasileirao serie a')
+);
+const brasileiraoSerieBStats = brazilianStats.filter((stats) =>
+  normalize(stats.league ?? '').includes('brasileirao serie b')
+);
+
+const STATS_SETS = [
+  { label: 'Brasileirao Serie A', stats: brasileiraoSerieAStats },
+  { label: 'Brasileirao Serie B', stats: brasileiraoSerieBStats },
+  { label: 'Copa Libertadores', stats: libertadoresTeamStats as LocalTeamStats[] },
+  { label: 'Copa Sul-Americana', stats: sulAmericanaTeamStats as LocalTeamStats[] },
+  { label: 'Champions League', stats: championsLeagueTeamStats as LocalTeamStats[] },
+  { label: 'Europa League', stats: europaLeagueTeamStats as LocalTeamStats[] },
+  { label: 'Conference League', stats: conferenceLeagueTeamStats as LocalTeamStats[] },
+].filter((set) => set.stats.length > 0);
 
 function unique(values: string[]): string[] {
   return Array.from(new Set(values.filter(Boolean)));
@@ -68,6 +77,14 @@ function context(messages: ChatMessage[]): string {
 
 function oneDecimal(value: number): number {
   return Math.round(value * 10) / 10;
+}
+
+function weightedAverage(stats: LocalTeamStats[], selector: (stats: LocalTeamStats) => number): number {
+  const totalGames = stats.reduce((sum, item) => sum + Math.max(1, item.gamesPlayed), 0);
+  if (totalGames === 0) return 0;
+  return oneDecimal(
+    stats.reduce((sum, item) => sum + selector(item) * Math.max(1, item.gamesPlayed), 0) / totalGames
+  );
 }
 
 function firstHalf(stats: LocalTeamStats): number {
@@ -95,6 +112,22 @@ function leagueAliases(label: string): string[] {
 function mentionsLeague(text: string, league: string): boolean {
   const normalized = normalize(text);
   return leagueAliases(league).some((alias) => normalized.includes(alias));
+}
+
+function bestStatsSetForLeague(
+  question: string,
+  combined: string
+): { label: string; stats: LocalTeamStats[] } | null {
+  const candidates = STATS_SETS.map((set) => {
+    const direct = mentionsLeague(question, set.label);
+    const contextual = mentionsLeague(combined, set.label);
+    const leaguePos = Math.max(latestMention(combined, set.label), ...leagueAliases(set.label).map((alias) => latestMention(combined, alias)));
+    return { ...set, score: (direct ? 1000 : 0) + (contextual ? 100 : 0) + Math.max(leaguePos, 0) };
+  })
+    .filter((set) => set.score > 0)
+    .sort((a, b) => b.score - a.score);
+
+  return candidates[0] ?? null;
 }
 
 function latestMention(text: string, term: string): number {
@@ -236,6 +269,30 @@ function formatStats(stats: LocalTeamStats, league: string, half: 'first' | 'sec
   return `${stats.team} na ${league}:\n\n- Media a favor: ${stats.avgCornersFor} escanteios por jogo.\n- Media contra: ${stats.avgCornersAgainst} escanteios cedidos por jogo.\n- Total medio nos jogos: ${stats.avgTotalCorners} escanteios.\n- Por tempo: ${firstHalf(stats)} no 1o tempo e ${secondHalf(stats)} no 2o tempo.${homeAway}${last5}\n- Over 8.5: ${stats.over85Pct}% | Over 9.5: ${stats.over95Pct}% | Over 10.5: ${stats.over105Pct}%.\n- Amostra: ${stats.gamesPlayed} jogos analisados.`;
 }
 
+function formatLeagueStats(label: string, stats: LocalTeamStats[], half: 'first' | 'second' | null): string {
+  const avgFor = weightedAverage(stats, (item) => item.avgCornersFor);
+  const avgAgainst = weightedAverage(stats, (item) => item.avgCornersAgainst);
+  const avgTotal = weightedAverage(stats, (item) => item.avgTotalCorners);
+  const avgFirstFor = weightedAverage(stats, firstHalf);
+  const avgSecondFor = weightedAverage(stats, secondHalf);
+  const avgFirstTotal = oneDecimal(avgFirstFor * 2);
+  const avgSecondTotal = oneDecimal(avgSecondFor * 2);
+  const over85 = weightedAverage(stats, (item) => item.over85Pct);
+  const over95 = weightedAverage(stats, (item) => item.over95Pct);
+  const over105 = weightedAverage(stats, (item) => item.over105Pct);
+  const sample = stats.reduce((sum, item) => sum + Math.max(0, item.gamesPlayed), 0);
+
+  if (half === 'first') {
+    return `${label}, somente no 1o tempo:\n\n- Media a favor por time: ${avgFirstFor} escanteios.\n- Total medio estimado no 1o tempo: ${avgFirstTotal} escanteios.\n- Base: ${stats.length} times e ${sample} registros de jogos analisados.`;
+  }
+
+  if (half === 'second') {
+    return `${label}, somente no 2o tempo:\n\n- Media a favor por time: ${avgSecondFor} escanteios.\n- Total medio estimado no 2o tempo: ${avgSecondTotal} escanteios.\n- Base: ${stats.length} times e ${sample} registros de jogos analisados.`;
+  }
+
+  return `${label}:\n\n- Media total dos jogos: ${avgTotal} escanteios.\n- Media a favor por time: ${avgFor} escanteios.\n- Media contra por time: ${avgAgainst} escanteios.\n- Por tempo estimado: ${avgFirstTotal} no 1o tempo e ${avgSecondTotal} no 2o tempo.\n- Over 8.5: ${over85}% | Over 9.5: ${over95}% | Over 10.5: ${over105}%.\n- Base: ${stats.length} times e ${sample} registros de jogos analisados.`;
+}
+
 function bestStatsForTeam(
   team: string,
   question: string,
@@ -318,7 +375,11 @@ function statsReply(question: string, ctx: string): string | null {
   const team = mentionedTeams(combined)
     .map((name) => ({ name, pos: latestMention(combined, name) }))
     .sort((a, b) => b.pos - a.pos)[0]?.name;
-  if (!team) return null;
+  if (!team) {
+    const set = bestStatsSetForLeague(question, combined);
+    if (set) return formatLeagueStats(set.label, set.stats, requestedHalf(question));
+    return 'Para calcular media de escanteios, me diga a competicao ou o time. Exemplo: "media de escanteios no Brasileirao" ou "media do Fluminense na Libertadores".';
+  }
 
   const best = bestStatsForTeam(team, question, combined);
   if (!best) return null;

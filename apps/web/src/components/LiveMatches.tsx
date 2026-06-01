@@ -168,7 +168,7 @@ function LiveMatchCard({
                 variant="outline"
                 className="justify-center bg-amber-500/10 text-amber-300 border-amber-500/20"
               >
-                Acréscimo {addedTime.addedLabel}
+                Previsão de Acréscimo {addedTime.addedLabel}
               </Badge>
             </div>
           )}
