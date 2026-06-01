@@ -54,30 +54,8 @@ const COMPETITION_ICONS: Record<number, string> = {
   13: '🏆',
 };
 
-function numericMinute(minute: LiveMatch['minute']): number | null {
-  if (typeof minute === 'number') return minute;
-  const parsed = parseInt(String(minute).replace(/[^0-9]/g, ''), 10);
-  return Number.isFinite(parsed) ? parsed : null;
-}
-
-function estimateAddedTime(match: LiveMatch): { label: string; confidence: string } | null {
-  const minute = numericMinute(match.minute);
-  if (!minute || minute <= 0 || /intervalo|encerrado|final/i.test(match.statusText)) return null;
-
-  const isFirstHalf = minute <= 45;
-  const base = isFirstHalf ? 2.1 : 4.0;
-  const goals = match.homeTeam.score + match.awayTeam.score;
-  const cornerLoad = match.corners?.total ?? 0;
-  const latePressure = minute >= 40 && minute <= 45 ? 0.7 : minute >= 80 ? 0.9 : 0;
-  const estimated =
-    base + Math.min(1.8, goals * 0.35) + Math.min(1.2, cornerLoad * 0.12) + latePressure;
-  const low = Math.max(isFirstHalf ? 1 : 3, Math.round(estimated - 0.8));
-  const high = Math.min(isFirstHalf ? 7 : 10, Math.round(estimated + 0.9));
-
-  return {
-    label: `+${low}${high > low ? ` a +${high}` : ''} min`,
-    confidence: match.corners ? 'boa' : 'estimada',
-  };
+function getOfficialAddedTimePrediction(_match: LiveMatch): { label: string } | null {
+  return null;
 }
 
 function LiveMatchCard({
@@ -92,8 +70,7 @@ function LiveMatchCard({
   const icon = COMPETITION_ICONS[match.competitionId] || '⚽';
   const minuteDisplay =
     typeof match.minute === 'number' ? `${match.minute}'` : match.minute || match.statusText;
-  const addedTime = estimateAddedTime(match);
-
+  const addedTime = getOfficialAddedTimePrediction(match);
   return (
     <Card
       role="button"

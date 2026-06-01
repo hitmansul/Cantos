@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { teamStats } from '@/data/teamCornerStats';
+import { getHeadToHead, teamStats } from '@/data/teamCornerStats';
 import { currentUpcomingMatches, type CurrentFixture } from '@/data/currentFixtures';
 import { findReferee, getRefereeStatsSummary } from '@/data/brazilianReferees';
 import { findTeamCardStats } from '@/data/teamCardStats';
@@ -61,6 +61,7 @@ function unique(values: string[]): string[] {
 function context(messages: ChatMessage[]): string {
   return messages
     .slice(-8)
+    .filter((message) => message.role === 'user')
     .map((message) => message.content)
     .join(' ');
 }
@@ -112,6 +113,15 @@ function mentionedTeams(text: string): string[] {
   return allTeams().filter((team) => normalized.includes(normalize(team)));
 }
 
+function latestTeams(text: string, limit = 2): string[] {
+  return mentionedTeams(text)
+    .map((name) => ({ name, pos: latestMention(text, name) }))
+    .filter((team) => team.pos >= 0)
+    .sort((a, b) => b.pos - a.pos)
+    .slice(0, limit)
+    .map((team) => team.name);
+}
+
 function askedCoverage(text: string): boolean {
   const normalized = normalize(text);
   return ['quais ligas', 'ligas disponiveis', 'dados locais', 'base local', 'dados temos local'].some((term) =>
@@ -128,14 +138,45 @@ function askedUpcoming(text: string): boolean {
 
 function askedStats(text: string): boolean {
   const normalized = normalize(text);
-  return ['media', 'escanteio', 'corner', 'primeiro tempo', 'segundo tempo', '1o tempo', '2o tempo'].some((term) =>
-    normalized.includes(term)
-  );
+  if (askedAddedTime(text)) return false;
+  if (normalized.includes('escanteio') || normalized.includes('corner')) return true;
+  return normalized.includes('media') || normalized.includes('medias');
 }
 
 function askedCards(text: string): boolean {
   const normalized = normalize(text);
   return ['cartao', 'cartoes', 'juiz', 'arbitro'].some((term) => normalized.includes(term));
+}
+
+function askedAddedTime(text: string): boolean {
+  const normalized = normalize(text);
+  const compact = normalized.replace(/\s+/g, '');
+  return [
+    'acrescimo',
+    'acrescimos',
+    'acrecimo',
+    'acrecimos',
+    'acrecismo',
+    'acrecismos',
+    'tempo adicional',
+    'tempo de acrescimo',
+    'stoppage',
+    'injury time',
+  ].some((term) => normalized.includes(term)) || /acr[a-z]*scim/.test(compact);
+}
+
+function askedMatchPrediction(text: string): boolean {
+  const normalized = normalize(text);
+  if (askedAddedTime(text) || askedCards(text)) return false;
+  return [
+    'previsao do jogo',
+    'previsao para o jogo',
+    'previsao para o confronto',
+    'previsao do confronto',
+    'confronto entre os dois',
+    'analise do jogo',
+    'analise do confronto',
+  ].some((term) => normalized.includes(term));
 }
 
 function requestedHalf(text: string): 'first' | 'second' | null {
@@ -190,6 +231,82 @@ function formatStats(stats: LocalTeamStats, league: string, half: 'first' | 'sec
   return `${stats.team} na ${league}:\n\n- Media a favor: ${stats.avgCornersFor} escanteios por jogo.\n- Media contra: ${stats.avgCornersAgainst} escanteios cedidos por jogo.\n- Total medio nos jogos: ${stats.avgTotalCorners} escanteios.\n- Por tempo: ${firstHalf(stats)} no 1o tempo e ${secondHalf(stats)} no 2o tempo.${homeAway}${last5}\n- Over 8.5: ${stats.over85Pct}% | Over 9.5: ${stats.over95Pct}% | Over 10.5: ${stats.over105Pct}%.\n- Amostra: ${stats.gamesPlayed} jogos analisados.`;
 }
 
+function bestStatsForTeam(
+  team: string,
+  question: string,
+  combined: string
+): { stats: LocalTeamStats; league: string; setLabel: string } | null {
+  const candidates = STATS_SETS.flatMap((set) =>
+    set.stats
+      .filter((stats) => normalize(stats.team) === normalize(team))
+      .map((stats) => ({ stats, setLabel: set.label, league: stats.league ?? set.label }))
+  );
+  if (candidates.length === 0) return null;
+
+  return candidates
+    .map((candidate) => {
+      const direct = mentionsLeague(question, candidate.league) || mentionsLeague(question, candidate.setLabel);
+      const leaguePos = Math.max(latestMention(combined, candidate.league), latestMention(combined, candidate.setLabel));
+      return { ...candidate, score: (direct ? 1000 : 0) + Math.max(leaguePos, 0) };
+    })
+    .sort((a, b) => b.score - a.score)[0];
+}
+
+function overProbability(mean: number, threshold: number): number {
+  const variance = 2.4;
+  const zScore = (threshold - mean) / variance;
+  const probability = 100 * (1 - 0.5 * (1 + Math.tanh(zScore * 0.8)));
+  return Math.min(95, Math.max(5, Math.round(probability)));
+}
+
+function matchPredictionReply(question: string, ctx: string): string | null {
+  if (!askedMatchPrediction(`${ctx} ${question}`)) return null;
+  const combined = `${ctx} ${question}`;
+  const teams = latestTeams(combined, 2).reverse();
+  if (teams.length < 2) return 'Para montar a previsao do confronto, me diga os dois times do jogo.';
+
+  const home = bestStatsForTeam(teams[0], question, combined);
+  const away = bestStatsForTeam(teams[1], question, combined);
+  if (!home || !away) {
+    const missing = [!home ? teams[0] : null, !away ? teams[1] : null].filter(Boolean).join(' e ');
+    return `Nao encontrei dados locais suficientes para montar a previsao do confronto. Faltou base estatistica para: ${missing}.`;
+  }
+
+  let homeExpected =
+    ((home.stats.avgCornersHome ?? home.stats.avgCornersFor * 1.08) * 0.35) +
+    ((home.stats.avgLast5 ?? home.stats.avgCornersFor) * 0.25) +
+    (((home.stats.avgCornersFor * 1.08 + away.stats.avgCornersAgainst) / 2) * 0.4);
+  let awayExpected =
+    ((away.stats.avgCornersAway ?? away.stats.avgCornersFor * 0.92) * 0.35) +
+    ((away.stats.avgLast5 ?? away.stats.avgCornersFor) * 0.25) +
+    (((away.stats.avgCornersFor * 0.94 + home.stats.avgCornersAgainst) / 2) * 0.4);
+
+  const h2h = getHeadToHead(home.stats.team, away.stats.team);
+  if (h2h) {
+    const adjustment = (h2h.avgTotalCorners - (homeExpected + awayExpected)) * 0.18;
+    homeExpected += adjustment / 2;
+    awayExpected += adjustment / 2;
+  }
+
+  const total = homeExpected + awayExpected;
+  const homeFirstShare = home.stats.avgCornersFor > 0 ? firstHalf(home.stats) / home.stats.avgCornersFor : 0.46;
+  const awayFirstShare = away.stats.avgCornersFor > 0 ? firstHalf(away.stats) / away.stats.avgCornersFor : 0.46;
+  const first = homeExpected * homeFirstShare + awayExpected * awayFirstShare;
+  const second = Math.max(0, total - first);
+  const confidence = home.stats.gamesPlayed > 0 && away.stats.gamesPlayed > 0 ? 'alta' : 'media';
+  const h2hLine = h2h ? `\n- H2H local: ${oneDecimal(h2h.avgTotalCorners)} escanteios de media.` : '';
+
+  return `Previsao local para ${home.stats.team} x ${away.stats.team}:\n\n- Total previsto: ${oneDecimal(total)} escanteios.\n- 1o tempo: ${oneDecimal(first)} escanteios.\n- 2o tempo: ${oneDecimal(second)} escanteios.\n- Times: ${home.stats.team} ${oneDecimal(homeExpected)} x ${oneDecimal(awayExpected)} ${away.stats.team}.\n- Linhas: Over 8.5 ${overProbability(total, 8.5)}% | Over 9.5 ${overProbability(total, 9.5)}% | Over 10.5 ${overProbability(total, 10.5)}%.\n- Base: ${home.league} e ${away.league}; confianca ${confidence}.${h2hLine}`;
+}
+
+function addedTimeReply(question: string, ctx: string): string | null {
+  if (!askedAddedTime(`${ctx} ${question}`)) return null;
+  const teams = latestTeams(`${ctx} ${question}`, 2).reverse();
+  const matchText = teams.length >= 2 ? ` para ${teams[0]} x ${teams[1]}` : '';
+
+  return `Nao tenho previsao confiavel de acrescimos${matchText} na base local.\n\nO Radar Futebol informa esse tipo de dado pelos endpoints oficiais /api/eventos-live e /api/eventos-live-basico, mas exige token deles e a formula nao e publica. Como nao temos esse token configurado, removi a estimativa local de acrescimos para nao mostrar numero inventado.\n\nPosso responder escanteios, cartoes, juiz, proximos jogos e chaveamento quando esses dados existem na nossa base.`;
+}
+
 function statsReply(question: string, ctx: string): string | null {
   if (!askedStats(`${ctx} ${question}`)) return null;
   const combined = `${ctx} ${question}`;
@@ -198,20 +315,8 @@ function statsReply(question: string, ctx: string): string | null {
     .sort((a, b) => b.pos - a.pos)[0]?.name;
   if (!team) return null;
 
-  const candidates = STATS_SETS.flatMap((set) =>
-    set.stats
-      .filter((stats) => normalize(stats.team) === normalize(team))
-      .map((stats) => ({ stats, setLabel: set.label, league: stats.league ?? set.label }))
-  );
-  if (candidates.length === 0) return null;
-
-  const best = candidates
-    .map((candidate) => {
-      const direct = mentionsLeague(question, candidate.league) || mentionsLeague(question, candidate.setLabel);
-      const leaguePos = Math.max(latestMention(combined, candidate.league), latestMention(combined, candidate.setLabel));
-      return { ...candidate, score: (direct ? 1000 : 0) + Math.max(leaguePos, 0) };
-    })
-    .sort((a, b) => b.score - a.score)[0];
+  const best = bestStatsForTeam(team, question, combined);
+  if (!best) return null;
 
   return formatStats(best.stats, best.league, requestedHalf(question));
 }
@@ -299,7 +404,13 @@ function cardsReply(question: string, ctx: string): string | null {
 
 function localReply(question: string, ctx: string): string | null {
   if (askedCoverage(question)) return coverageReply();
-  return upcomingReply(question, ctx) ?? cardsReply(question, ctx) ?? statsReply(question, ctx);
+  return (
+    addedTimeReply(question, ctx) ??
+    upcomingReply(question, ctx) ??
+    cardsReply(question, ctx) ??
+    matchPredictionReply(question, ctx) ??
+    statsReply(question, ctx)
+  );
 }
 
 function fallbackReply(question: string, ctx: string): string {
