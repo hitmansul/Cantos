@@ -68,9 +68,10 @@ function unique(values: string[]): string[] {
 }
 
 function context(messages: ChatMessage[]): string {
-  return messages
-    .slice(-8)
-    .filter((message) => message.role === 'user')
+  const userMessages = messages.filter((message) => message.role === 'user');
+  return userMessages
+    .slice(0, -1)
+    .slice(-6)
     .map((message) => message.content)
     .join(' ');
 }
@@ -217,6 +218,26 @@ function askedMatchPrediction(text: string): boolean {
   ].some((term) => normalized.includes(term));
 }
 
+function isFollowUpQuestion(text: string): boolean {
+  const normalized = normalize(text);
+  if (!normalized) return false;
+  if (normalized.length > 90) return false;
+  return [
+    'e ',
+    'e no ',
+    'e na ',
+    'e do ',
+    'e da ',
+    'no ',
+    'na ',
+    'do ',
+    'da ',
+    'so no ',
+    'somente no ',
+    'tambem ',
+  ].some((prefix) => normalized.startsWith(prefix));
+}
+
 function requestedHalf(text: string): 'first' | 'second' | null {
   const normalized = normalize(text);
   if (['primeiro tempo', '1o tempo', '1 tempo', '1t', 'so no primeiro'].some((term) => normalized.includes(term))) {
@@ -322,7 +343,7 @@ function overProbability(mean: number, threshold: number): number {
 }
 
 function matchPredictionReply(question: string, ctx: string): string | null {
-  if (!askedMatchPrediction(`${ctx} ${question}`)) return null;
+  if (!askedMatchPrediction(question)) return null;
   const combined = `${ctx} ${question}`;
   const teams = latestTeams(combined, 2).reverse();
   if (teams.length < 2) return 'Para montar a previsao do confronto, me diga os dois times do jogo.';
@@ -362,7 +383,7 @@ function matchPredictionReply(question: string, ctx: string): string | null {
 }
 
 function addedTimeReply(question: string, ctx: string): string | null {
-  if (!askedAddedTime(`${ctx} ${question}`)) return null;
+  if (!askedAddedTime(question)) return null;
   const teams = latestTeams(`${ctx} ${question}`, 2).reverse();
   const matchText = teams.length >= 2 ? ` para ${teams[0]} x ${teams[1]}` : '';
 
@@ -370,7 +391,7 @@ function addedTimeReply(question: string, ctx: string): string | null {
 }
 
 function statsReply(question: string, ctx: string): string | null {
-  if (!askedStats(`${ctx} ${question}`)) return null;
+  if (!askedStats(question)) return null;
   const combined = `${ctx} ${question}`;
   const team = mentionedTeams(combined)
     .map((name) => ({ name, pos: latestMention(combined, name) }))
@@ -434,8 +455,8 @@ function libertadoresBracketReply(): string {
 }
 
 function upcomingReply(question: string, ctx: string): string | null {
-  if (!askedUpcoming(`${ctx} ${question}`)) return null;
-  const normalized = normalize(`${ctx} ${question}`);
+  if (!askedUpcoming(question)) return null;
+  const normalized = normalize(question);
   if (normalized.includes('oitavas') || normalized.includes('chaveamento')) return libertadoresBracketReply();
 
   const matches = upcomingMatches(question, ctx);
@@ -446,8 +467,12 @@ function upcomingReply(question: string, ctx: string): string | null {
 }
 
 function cardsReply(question: string, ctx: string): string | null {
-  if (!askedCards(`${ctx} ${question}`)) return null;
-  const match = upcomingMatches(question, ctx)[0];
+  if (!askedCards(question)) return null;
+  const combined = `${ctx} ${question}`;
+  const teams = mentionedTeams(combined);
+  const hasSpecificFilter =
+    teams.length > 0 || STATS_SETS.some((set) => mentionsLeague(question, set.label));
+  const match = hasSpecificFilter ? upcomingMatches(question, ctx)[0] : undefined;
 
   if (match?.referee) {
     const referee = findReferee(match.referee);
@@ -459,8 +484,9 @@ function cardsReply(question: string, ctx: string): string | null {
     return `Previsao de cartoes para ${match.homeTeam} x ${match.awayTeam}:\n\n- Arbitro: ${refereeLine}\n- Jogo: ${match.dateLabel ?? match.date}.\n- Usei o juiz informado na agenda local e as medias locais dos times quando disponiveis.`;
   }
 
-  const teams = mentionedTeams(`${ctx} ${question}`);
-  if (teams.length === 0) return null;
+  if (teams.length === 0) {
+    return `A previsao de cartoes usa primeiro a base local.\n\n- Se o jogo tem arbitro cadastrado, eu uso o historico dele: media de cartoes por jogo, peso de 1o/2o tempo e comportamento por placar.\n- Se nao ha arbitro, eu uso as medias locais de cartoes dos times.\n- Quando voce cita um confronto, eu tento localizar o jogo na agenda local para trazer o juiz e a previsao desse jogo.\n\nSe o dado nao existir na base local, eu digo isso em vez de inventar.`;
+  }
   const lines = teams.slice(-2).map((team) => {
     const cards = findTeamCardStats(team);
     return cards ? `- ${team}: ${cards.avgCardsPerMatch} cartoes por jogo.` : `- ${team}: sem media local de cartoes.`;
@@ -470,13 +496,22 @@ function cardsReply(question: string, ctx: string): string | null {
 
 function localReply(question: string, ctx: string): string | null {
   if (askedCoverage(question)) return coverageReply();
-  return (
-    addedTimeReply(question, ctx) ??
-    upcomingReply(question, ctx) ??
-    cardsReply(question, ctx) ??
-    matchPredictionReply(question, ctx) ??
-    statsReply(question, ctx)
-  );
+  if (askedCards(question)) return cardsReply(question, ctx);
+  if (askedAddedTime(question)) return addedTimeReply(question, ctx);
+  if (askedUpcoming(question)) return upcomingReply(question, ctx);
+  if (askedMatchPrediction(question)) return matchPredictionReply(question, ctx);
+  if (askedStats(question)) return statsReply(question, ctx);
+
+  if (isFollowUpQuestion(question) && ctx) {
+    const contextualQuestion = `${ctx} ${question}`;
+    if (askedCards(ctx)) return cardsReply(contextualQuestion, '');
+    if (askedAddedTime(ctx)) return addedTimeReply(contextualQuestion, '');
+    if (askedUpcoming(ctx)) return upcomingReply(contextualQuestion, '');
+    if (askedMatchPrediction(ctx)) return matchPredictionReply(contextualQuestion, '');
+    if (askedStats(ctx)) return statsReply(contextualQuestion, '');
+  }
+
+  return null;
 }
 
 function fallbackReply(question: string, ctx: string): string {
@@ -489,6 +524,7 @@ function fallbackReply(question: string, ctx: string): string {
 function geminiPrompt(): string {
   return `Voce e a IA da Cantos Estatisticas. Responda em portugues brasileiro.
 Use primeiro os dados locais abaixo. Se o dado nao existir na base local, diga claramente.
+A pergunta mais recente do usuario sempre manda. Se ela mudar de assunto, ignore o assunto anterior e responda o novo tema.
 
 ${coverageReply()}
 

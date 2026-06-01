@@ -87,7 +87,7 @@ const WC_GROUPS: Record<string, { country: string; flag: string }[]> = {
 const BRAZIL_MATCHES = [
   {
     date: '13/06/2026',
-    time: '22:00',
+    startTime: '2026-06-13T22:00:00+00:00',
     opponent: 'Marrocos',
     flag: '🇲🇦',
     venue: 'SoFi Stadium, Los Angeles',
@@ -95,7 +95,7 @@ const BRAZIL_MATCHES = [
   },
   {
     date: '18/06/2026',
-    time: '19:00',
+    startTime: '2026-06-18T22:00:00+00:00',
     opponent: 'Haiti',
     flag: '🇭🇹',
     venue: 'MetLife Stadium, Nova York/NJ',
@@ -103,7 +103,7 @@ const BRAZIL_MATCHES = [
   },
   {
     date: '23/06/2026',
-    time: '16:00',
+    startTime: '2026-06-23T19:00:00+00:00',
     opponent: 'Escócia',
     flag: '🏴󠁧󠁢󠁳󠁣󠁴󠁿',
     venue: 'AT&T Stadium, Dallas',
@@ -135,33 +135,25 @@ const VENUES = [
 const WC_DAYS_LEFT = 22;
 
 function formatMatchDate(isoString: string): string {
-  const d = isoString.split('T')[0];
-  const parts = d.split('-');
-  const months = [
-    'janeiro',
-    'fevereiro',
-    'março',
-    'abril',
-    'maio',
-    'junho',
-    'julho',
-    'agosto',
-    'setembro',
-    'outubro',
-    'novembro',
-    'dezembro',
-  ];
-  const month = months[parseInt(parts[1], 10) - 1];
-  return `${parseInt(parts[2], 10)} de ${month} de ${parts[0]}`;
+  const date = new Date(isoString);
+  if (Number.isNaN(date.getTime())) return '--';
+  return new Intl.DateTimeFormat('pt-BR', {
+    timeZone: 'America/Sao_Paulo',
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric',
+  }).format(date);
 }
 
 function formatMatchTime(isoString: string): string {
-  const raw = isoString.includes('T') ? isoString.split('T')[1].replace('Z', '') : '';
-  if (!raw) return '--:--';
-  const [hStr, mStr] = raw.split(':');
-  let h = parseInt(hStr, 10) - 3;
-  if (h < 0) h += 24;
-  return `${String(h).padStart(2, '0')}:${mStr.slice(0, 2)}`;
+  const date = new Date(isoString);
+  if (Number.isNaN(date.getTime())) return '--:--';
+  return new Intl.DateTimeFormat('pt-BR', {
+    timeZone: 'America/Sao_Paulo',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).format(date);
 }
 
 export function WorldCupPage() {
@@ -380,7 +372,9 @@ export function WorldCupPage() {
                       <div className="flex items-center gap-4">
                         <div className="text-center">
                           <div className="text-xs text-muted-foreground">{match.date}</div>
-                          <div className="font-bold text-sm text-primary">{match.time} BRT</div>
+                          <div className="font-bold text-sm text-primary">
+                            {formatMatchTime(match.startTime)} BRT
+                          </div>
                         </div>
                         <div className="flex items-center gap-2">
                           <span className="text-2xl">🇧🇷</span>
