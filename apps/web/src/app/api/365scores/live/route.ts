@@ -16,37 +16,272 @@ interface LiveMatch {
   competitionId: number;
   corners?: { home: number; away: number; total: number };
   source?: string;
+  stoppage?: StoppageInfo;
+}
+
+interface StoppageIncident {
+  startAt: string;
+  endAt?: string;
+  durationMs: number;
+  reason: string;
+  period?: string;
+  timeline?: string;
+}
+
+interface StoppageInfo {
+  totalStoppedMs: number;
+  totalStoppedMinutes: number;
+  predictedAddedMs: number;
+  predictedAddedMinutes: number;
+  source: '365scores-sportradar';
+  incidents: StoppageIncident[];
+}
+
+interface Scores365Game {
+  id: number;
+  sportId?: number;
+  statusGroup?: number;
+  statusText?: string;
+  gameTime?: number;
+  competitionId?: number;
+  competitionDisplayName?: string;
+  competition?: { name?: string };
+  homeCompetitor?: { id?: number; name?: string; score?: number; sportId?: number };
+  awayCompetitor?: { id?: number; name?: string; score?: number; sportId?: number };
+}
+
+interface PlayByPlayMessage {
+  Comment?: string;
+  LastModified?: string;
+  Period?: string;
+  Timeline?: string;
+}
+
+const SCORES365_HEADERS = {
+  'User-Agent':
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+  Accept: 'application/json',
+};
+
+const MAX_STOPPAGE_ENRICHMENT = 24;
+const STOPPAGE_MIN_DURATION_MS = 15_000;
+const STOPPAGE_MAX_OPEN_DURATION_MS = 7 * 60_000;
+const STOPPAGE_FETCH_TIMEOUT_MS = 4_500;
+
+const STOPPAGE_START_TERMS = [
+  'interrupted',
+  'match is stopped',
+  'play has been stopped',
+  'waits before resuming play',
+  'down injured',
+  'still down',
+  'down on the field',
+  'receiving treatment',
+  'medical staff',
+  'var check',
+  'video assistant referee',
+  'interromp',
+  'paralis',
+  'atendimento',
+  'lesionado',
+  'revisao do var',
+  'cheque do var',
+];
+
+const STOPPAGE_END_TERMS = [
+  'back on his feet',
+  'back on her feet',
+  'back on the field',
+  'play resumes',
+  'resume play',
+  'back underway',
+  'retoma',
+  'jogo recomeca',
+  'bola volta',
+  'de volta ao campo',
+];
+
+function normalizeText(value: string) {
+  return value
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase();
+}
+
+function hasTerm(comment: string, terms: string[]) {
+  const normalized = normalizeText(comment);
+  return terms.some((term) => normalized.includes(term));
+}
+
+function toRoundedMinutes(ms: number) {
+  return Math.round((ms / 60_000) * 10) / 10;
+}
+
+function messageTime(message: PlayByPlayMessage) {
+  if (!message.LastModified) return null;
+  const timestamp = Date.parse(message.LastModified);
+  return Number.isFinite(timestamp) ? timestamp : null;
+}
+
+async function fetchWithTimeout(
+  input: string,
+  init: RequestInit,
+  timeoutMs = STOPPAGE_FETCH_TIMEOUT_MS
+) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(input, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function calculateStoppageInfo(messages: PlayByPlayMessage[]): StoppageInfo | undefined {
+  const sortedMessages = messages
+    .map((message) => ({ message, timestamp: messageTime(message) }))
+    .filter(
+      (entry): entry is { message: PlayByPlayMessage; timestamp: number } =>
+        typeof entry.timestamp === 'number' && Boolean(entry.message.Comment)
+    )
+    .sort((a, b) => a.timestamp - b.timestamp);
+
+  const incidents: StoppageIncident[] = [];
+  let openIncident:
+    | {
+        startMs: number;
+        startAt: string;
+        reason: string;
+        period?: string;
+        timeline?: string;
+      }
+    | undefined;
+
+  for (const entry of sortedMessages) {
+    const comment = entry.message.Comment ?? '';
+
+    if (!openIncident && hasTerm(comment, STOPPAGE_START_TERMS)) {
+      openIncident = {
+        startMs: entry.timestamp,
+        startAt: new Date(entry.timestamp).toISOString(),
+        reason: comment,
+        period: entry.message.Period,
+        timeline: entry.message.Timeline,
+      };
+      continue;
+    }
+
+    if (openIncident && hasTerm(comment, STOPPAGE_END_TERMS)) {
+      const durationMs = entry.timestamp - openIncident.startMs;
+      if (durationMs >= STOPPAGE_MIN_DURATION_MS && durationMs <= STOPPAGE_MAX_OPEN_DURATION_MS) {
+        incidents.push({
+          startAt: openIncident.startAt,
+          endAt: new Date(entry.timestamp).toISOString(),
+          durationMs,
+          reason: openIncident.reason,
+          period: openIncident.period,
+          timeline: openIncident.timeline,
+        });
+      }
+      openIncident = undefined;
+    }
+  }
+
+  if (openIncident) {
+    const durationMs = Math.min(Date.now() - openIncident.startMs, STOPPAGE_MAX_OPEN_DURATION_MS);
+    if (durationMs >= STOPPAGE_MIN_DURATION_MS) {
+      incidents.push({
+        startAt: openIncident.startAt,
+        durationMs,
+        reason: openIncident.reason,
+        period: openIncident.period,
+        timeline: openIncident.timeline,
+      });
+    }
+  }
+
+  const totalStoppedMs = incidents.reduce((sum, incident) => sum + incident.durationMs, 0);
+  if (totalStoppedMs <= 0) return undefined;
+
+  const predictedAddedMs = Math.round(totalStoppedMs * 0.8);
+  return {
+    totalStoppedMs,
+    totalStoppedMinutes: toRoundedMinutes(totalStoppedMs),
+    predictedAddedMs,
+    predictedAddedMinutes: toRoundedMinutes(predictedAddedMs),
+    source: '365scores-sportradar',
+    incidents,
+  };
+}
+
+async function fetchStoppageInfo(gameId: number): Promise<StoppageInfo | undefined> {
+  try {
+    const detailRes = await fetchWithTimeout(
+      `https://webws.365scores.com/web/game/?appTypeId=5&langId=31&gameId=${gameId}`,
+      {
+        headers: SCORES365_HEADERS,
+        cache: 'no-store',
+      }
+    );
+
+    if (!detailRes.ok) return undefined;
+
+    const detail = (await detailRes.json()) as {
+      game?: {
+        playByPlay?: {
+          feedURL?: string;
+        };
+      };
+    };
+
+    const feedURL = detail.game?.playByPlay?.feedURL;
+    if (!feedURL) return undefined;
+
+    const playByPlayRes = await fetchWithTimeout(feedURL, {
+      headers: SCORES365_HEADERS,
+      cache: 'no-store',
+    });
+
+    if (!playByPlayRes.ok) return undefined;
+
+    const playByPlay = (await playByPlayRes.json()) as { Messages?: PlayByPlayMessage[] };
+    return calculateStoppageInfo(playByPlay.Messages ?? []);
+  } catch (err) {
+    console.warn('[live/365scores/stoppage] error:', err);
+    return undefined;
+  }
+}
+
+async function enrichWithStoppage(matches: LiveMatch[]): Promise<LiveMatch[]> {
+  const enrichedMatches = [...matches];
+  const limit = Math.min(enrichedMatches.length, MAX_STOPPAGE_ENRICHMENT);
+
+  await Promise.all(
+    enrichedMatches.slice(0, limit).map(async (match, index) => {
+      const stoppage = await fetchStoppageInfo(match.id);
+      if (stoppage) {
+        enrichedMatches[index] = { ...match, stoppage };
+      }
+    })
+  );
+
+  return enrichedMatches;
 }
 
 async function fetchFrom365Scores(): Promise<LiveMatch[]> {
   try {
     const res = await fetch('https://webws.365scores.com/web/games/?appTypeId=5&langId=31&statuses=2', {
-      headers: {
-        'User-Agent':
-          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-        Accept: 'application/json',
-      },
+      headers: SCORES365_HEADERS,
       cache: 'no-store',
     });
 
     if (!res.ok) return [];
 
     const data = (await res.json()) as {
-      games?: Array<{
-        id: number;
-        sportId?: number;
-        statusGroup?: number;
-        statusText?: string;
-        gameTime?: number;
-        competitionId?: number;
-        competitionDisplayName?: string;
-        competition?: { name?: string };
-        homeCompetitor?: { id?: number; name?: string; score?: number; sportId?: number };
-        awayCompetitor?: { id?: number; name?: string; score?: number; sportId?: number };
-      }>;
+      games?: Scores365Game[];
     };
 
-    return (data.games ?? [])
+    const liveMatches = (data.games ?? [])
       .filter((game) => {
         const isFootball = game.sportId === 1 || game.homeCompetitor?.sportId === 1;
         return isFootball && game.statusGroup === 3 && game.homeCompetitor && game.awayCompetitor;
@@ -72,6 +307,8 @@ async function fetchFrom365Scores(): Promise<LiveMatch[]> {
         competitionId: game.competitionId ?? 0,
         source: '365scores',
       }));
+
+    return enrichWithStoppage(liveMatches);
   } catch (err) {
     console.error('[live/365scores] error:', err);
     return [];

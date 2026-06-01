@@ -17,6 +17,21 @@ interface LiveMatch {
   competitionId: number;
   corners?: { home: number; away: number; total: number };
   source?: string;
+  stoppage?: {
+    totalStoppedMs: number;
+    totalStoppedMinutes: number;
+    predictedAddedMs: number;
+    predictedAddedMinutes: number;
+    source: '365scores-sportradar';
+    incidents: Array<{
+      startAt: string;
+      endAt?: string;
+      durationMs: number;
+      reason: string;
+      period?: string;
+      timeline?: string;
+    }>;
+  };
 }
 
 // Competition ID to emoji/flag mapping (365Scores IDs + API-Football IDs)
@@ -54,8 +69,24 @@ const COMPETITION_ICONS: Record<number, string> = {
   13: '🏆',
 };
 
-function getOfficialAddedTimePrediction(_match: LiveMatch): { label: string } | null {
-  return null;
+function formatMinuteValue(value: number) {
+  if (value < 1) return `${Math.max(1, Math.round(value * 60))}s`;
+  return `${value.toFixed(1).replace('.0', '')} min`;
+}
+
+function getOfficialAddedTimePrediction(
+  match: LiveMatch
+): { totalLabel: string; addedLabel: string; sourceLabel: string } | null {
+  if (!match.stoppage || match.stoppage.totalStoppedMs <= 0) return null;
+
+  const incidentCount = match.stoppage.incidents.length;
+  return {
+    totalLabel: formatMinuteValue(match.stoppage.totalStoppedMinutes),
+    addedLabel: `+${formatMinuteValue(match.stoppage.predictedAddedMinutes)}`,
+    sourceLabel: `${incidentCount} parada${incidentCount === 1 ? '' : 's'} detectada${
+      incidentCount === 1 ? '' : 's'
+    } via 365Scores/Sportradar`,
+  };
 }
 
 function LiveMatchCard({
@@ -123,13 +154,23 @@ function LiveMatchCard({
             {minuteDisplay}
           </Badge>
           {addedTime && (
-            <Badge
-              variant="outline"
-              className="mt-1 bg-cyan-500/10 text-cyan-300 border-cyan-500/20"
-              title="Estimativa local baseada em minuto, placar e eventos disponíveis."
+            <div
+              className="mt-2 grid gap-1 text-[11px]"
+              title={`${addedTime.sourceLabel}. A previsão de acréscimo usa 80% do tempo total de bola parada identificado.`}
             >
-              Acréscimo {addedTime.label}
-            </Badge>
+              <Badge
+                variant="outline"
+                className="justify-center bg-cyan-500/10 text-cyan-300 border-cyan-500/20"
+              >
+                Bola parada {addedTime.totalLabel}
+              </Badge>
+              <Badge
+                variant="outline"
+                className="justify-center bg-amber-500/10 text-amber-300 border-amber-500/20"
+              >
+                Acréscimo {addedTime.addedLabel}
+              </Badge>
+            </div>
           )}
         </div>
         <div className="flex-1 text-left">

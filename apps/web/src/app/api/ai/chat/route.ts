@@ -160,6 +160,11 @@ function askedAddedTime(text: string): boolean {
     'acrecismos',
     'tempo adicional',
     'tempo de acrescimo',
+    'bola parada',
+    'jogo parado',
+    'tempo parado',
+    'interrupcao',
+    'interrupcoes',
     'stoppage',
     'injury time',
   ].some((term) => normalized.includes(term)) || /acr[a-z]*scim/.test(compact);
@@ -304,7 +309,7 @@ function addedTimeReply(question: string, ctx: string): string | null {
   const teams = latestTeams(`${ctx} ${question}`, 2).reverse();
   const matchText = teams.length >= 2 ? ` para ${teams[0]} x ${teams[1]}` : '';
 
-  return `Nao tenho previsao confiavel de acrescimos${matchText} na base local.\n\nO Radar Futebol informa esse tipo de dado pelos endpoints oficiais /api/eventos-live e /api/eventos-live-basico, mas exige token deles e a formula nao e publica. Como nao temos esse token configurado, removi a estimativa local de acrescimos para nao mostrar numero inventado.\n\nPosso responder escanteios, cartoes, juiz, proximos jogos e chaveamento quando esses dados existem na nossa base.`;
+  return `A previsao de acrescimo${matchText} agora aparece na aba Tempo Real quando a 365Scores/Sportradar entrega play-by-play com interrupcao e retomada do jogo.\n\nA regra local e: tempo total de bola parada identificado no play-by-play, e previsao de acrescimo = 80% desse tempo. Quando a fonte nao envia esses eventos, eu nao mostro numero inventado.\n\nNo chat, ainda nao busco esse dado ao vivo por partida; use a tela Tempo Real para ver os jogos que ja tem esse calculo disponivel.`;
 }
 
 function statsReply(question: string, ctx: string): string | null {
