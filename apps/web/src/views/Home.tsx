@@ -264,6 +264,7 @@ const LEAGUE_TO_365SCORES: Record<string, Scores365League> = {
   nations_league: 'nations_league',
   // FIFA
   copa_do_mundo: 'copa_do_mundo',
+  amistoso_internacional: 'amistoso_internacional',
   // CONMEBOL
   libertadores: 'libertadores',
   sudamericana: 'sudamericana',

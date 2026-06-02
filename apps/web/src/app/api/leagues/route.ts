@@ -7,6 +7,13 @@ import type { LeagueConfig } from '@/shared/footballDataTypes';
 const EXTRA_LEAGUES: LeagueConfig[] = [
   // ── FIFA ─────────────────────────────────────────────────────────────────
   { id: 'copa_do_mundo', name: '🏆 Copa do Mundo 2026', country: 'FIFA', csvUrl: '', flag: '🌍' },
+  {
+    id: 'amistoso_internacional',
+    name: 'Amistoso Internacional',
+    country: 'FIFA',
+    csvUrl: '',
+    flag: '🌍',
+  },
 
   // ── UEFA competitions ─────────────────────────────────────────────────────
   { id: 'UCL', name: 'Champions League', country: 'UEFA', csvUrl: '', flag: '🏆' },

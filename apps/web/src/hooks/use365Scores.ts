@@ -55,6 +55,7 @@ export type Scores365League =
   | 'nations_league'
   // FIFA / Internacional
   | 'copa_do_mundo'
+  | 'amistoso_internacional'
   | 'copa_america'
   | 'africa_cup'
   // South America
@@ -218,6 +219,7 @@ export const LEAGUE_CONFIG: Record<
 
   // FIFA / Internacional
   copa_do_mundo: { name: '🏆 Copa do Mundo 2026', country: 'FIFA', flag: '🌍' },
+  amistoso_internacional: { name: 'Amistoso Internacional', country: 'FIFA', flag: '🌍' },
   copa_america: { name: 'Copa América', country: 'CONMEBOL', flag: '🏆' },
   africa_cup: { name: 'Copa África das Nações', country: 'CAF', flag: '🌍' },
 

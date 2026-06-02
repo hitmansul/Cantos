@@ -209,6 +209,7 @@ export const SCORES365_COMPETITIONS: Record<string, Scores365Competition> = {
 
   // ─── Internacional — FIFA / CONMEBOL ───
   copa_do_mundo: { id: 5930, name: '🏆 Copa do Mundo 2026', country: 'FIFA' },
+  amistoso_internacional: { id: 570, name: 'Amistoso Internacional', country: 'FIFA' },
   copa_america: { id: 597, name: 'Copa América', country: 'CONMEBOL' },
   africa_cup: { id: 160, name: 'Copa África das Nações', country: 'CAF' },
 
