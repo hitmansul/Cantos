@@ -15,6 +15,8 @@ interface LiveMatch {
   competition?: string;
   competitionId: number;
   corners?: { home: number; away: number; total: number };
+  liveStats?: LiveStatRow[];
+  statsSource?: '365scores' | 'sofascore' | 'api-football';
   source?: string;
   sourceIds?: {
     scores365?: number;
@@ -53,6 +55,29 @@ interface Scores365Game {
   competition?: { name?: string };
   homeCompetitor?: { id?: number; name?: string; score?: number; sportId?: number };
   awayCompetitor?: { id?: number; name?: string; score?: number; sportId?: number };
+}
+
+interface Scores365Statistic {
+  id?: number;
+  name?: string;
+  competitorId?: number;
+  categoryId?: number;
+  categoryName?: string;
+  isMajor?: boolean;
+  value?: number | string;
+  order?: number;
+  categoryOrder?: number;
+}
+
+interface LiveStatRow {
+  key: string;
+  label: string;
+  home: string;
+  away: string;
+  order: number;
+  categoryOrder: number;
+  category?: string;
+  isMajor?: boolean;
 }
 
 interface PlayByPlayMessage {
@@ -129,6 +154,8 @@ function mergeMatch(base: LiveMatch, incoming: LiveMatch): LiveMatch {
     competition: base.competition ?? incoming.competition,
     competitionId: base.competitionId || incoming.competitionId,
     corners: incoming.corners ?? base.corners,
+    liveStats: incoming.liveStats ?? base.liveStats,
+    statsSource: incoming.statsSource ?? base.statsSource,
     stoppage: base.stoppage ?? incoming.stoppage,
     sourceIds: {
       ...base.sourceIds,
@@ -144,6 +171,113 @@ function hasTerm(comment: string, terms: string[]) {
 
 function toRoundedMinutes(ms: number) {
   return Math.round((ms / 60_000) * 10) / 10;
+}
+
+function statDisplayValue(value: Scores365Statistic['value']) {
+  if (value === undefined || value === null || value === '') return '-';
+  return String(value);
+}
+
+function parseStatNumber(value: string) {
+  const numeric = Number(value.replace('%', '').replace(',', '.').trim());
+  return Number.isFinite(numeric) ? numeric : null;
+}
+
+function statKey(stat: Scores365Statistic) {
+  return `${stat.id ?? 'stat'}:${normalizeText(stat.name ?? '')}`;
+}
+
+function extractRowsForMatch(stats: Scores365Statistic[], match: LiveMatch): LiveStatRow[] {
+  const rows = new Map<string, LiveStatRow>();
+  const homeId = match.homeTeam.id;
+  const awayId = match.awayTeam.id;
+
+  for (const stat of stats) {
+    if (stat.competitorId !== homeId && stat.competitorId !== awayId) continue;
+
+    const key = statKey(stat);
+    const current =
+      rows.get(key) ??
+      ({
+        key,
+        label: stat.name ?? 'Estatistica',
+        home: '-',
+        away: '-',
+        order: stat.order ?? 999,
+        categoryOrder: stat.categoryOrder ?? 999,
+        category: stat.categoryName,
+        isMajor: stat.isMajor,
+      } satisfies LiveStatRow);
+
+    if (stat.competitorId === homeId) current.home = statDisplayValue(stat.value);
+    if (stat.competitorId === awayId) current.away = statDisplayValue(stat.value);
+    current.isMajor = current.isMajor || stat.isMajor;
+    rows.set(key, current);
+  }
+
+  return [...rows.values()].sort((a, b) => {
+    if (a.order !== b.order) return a.order - b.order;
+    if (a.categoryOrder !== b.categoryOrder) return a.categoryOrder - b.categoryOrder;
+    return a.label.localeCompare(b.label, 'pt-BR');
+  });
+}
+
+function extractCornersFromRows(rows: LiveStatRow[]) {
+  const cornerRow = rows.find((row) => {
+    const label = normalizeText(row.label);
+    return label.includes('escanteio') || label.includes('corner');
+  });
+
+  if (!cornerRow) return undefined;
+
+  const home = parseStatNumber(cornerRow.home);
+  const away = parseStatNumber(cornerRow.away);
+  if (home === null || away === null) return undefined;
+
+  return { home, away, total: home + away };
+}
+
+async function enrichWith365Stats(matches: LiveMatch[]): Promise<LiveMatch[]> {
+  const ids = [...new Set(matches.map((match) => match.sourceIds?.scores365 ?? match.id))].filter(
+    (id) => Number.isFinite(id) && id > 0
+  );
+
+  if (ids.length === 0) return matches;
+
+  try {
+    const statsRes = await fetchWithTimeout(
+      `https://webws.365scores.com/web/game/stats/?appTypeId=5&langId=31&games=${ids.join(',')}`,
+      {
+        headers: {
+          ...SCORES365_HEADERS,
+          Referer: 'https://www.365scores.com/pt-br',
+          Origin: 'https://www.365scores.com',
+        },
+        cache: 'no-store',
+      }
+    );
+
+    if (!statsRes.ok) return matches;
+
+    const data = (await statsRes.json()) as { statistics?: Scores365Statistic[] };
+    const stats = data.statistics ?? [];
+    if (stats.length === 0) return matches;
+
+    return matches.map((match) => {
+      const liveStats = extractRowsForMatch(stats, match);
+      if (liveStats.length === 0) return match;
+
+      return {
+        ...match,
+        corners: extractCornersFromRows(liveStats) ?? match.corners,
+        liveStats,
+        statsSource: '365scores',
+      };
+    });
+  } catch (err) {
+    console.warn('[live/365scores/stats] error:', err);
+    return matches;
+  }
 }
 
 function messageTime(message: PlayByPlayMessage) {
@@ -338,7 +472,8 @@ async function fetchFrom365Scores(): Promise<LiveMatch[]> {
         sourceIds: { scores365: game.id },
       }));
 
-    return enrichWithStoppage(liveMatches);
+    const withStats = await enrichWith365Stats(liveMatches);
+    return enrichWithStoppage(withStats);
   } catch (err) {
     console.error('[live/365scores] error:', err);
     return [];
@@ -505,6 +640,7 @@ async function fetchFromApiFootball(): Promise<LiveMatch[]> {
         competition: `${item.league.name} (${item.league.country})`,
         competitionId: item.league.id,
         corners,
+        statsSource: corners ? 'api-football' : undefined,
         source: 'api-football',
         sourceIds: { apiFootball: item.fixture.id },
       };

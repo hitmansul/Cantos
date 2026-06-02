@@ -26,6 +26,8 @@ interface LiveMatch {
   competition?: string;
   competitionId: number;
   corners?: { home: number; away: number; total: number };
+  liveStats?: LiveStatRow[];
+  statsSource?: '365scores' | 'sofascore' | 'api-football';
   source?: string;
   sourceIds?: {
     scores365?: number;
@@ -47,6 +49,15 @@ interface LiveMatch {
       timeline?: string;
     }>;
   };
+}
+
+interface LiveStatRow {
+  key: string;
+  label: string;
+  home: string;
+  away: string;
+  category?: string;
+  isMajor?: boolean;
 }
 
 interface SofascoreStatItem {
@@ -196,6 +207,8 @@ function mergeLiveMatch(base: LiveMatch, incoming: LiveMatch): LiveMatch {
     competition: base.competition ?? incoming.competition,
     competitionId: base.competitionId || incoming.competitionId,
     corners: incoming.corners ?? base.corners,
+    liveStats: incoming.liveStats ?? base.liveStats,
+    statsSource: incoming.statsSource ?? base.statsSource,
     stoppage: base.stoppage ?? incoming.stoppage,
     sourceIds: {
       ...base.sourceIds,
@@ -331,12 +344,16 @@ function LiveMatchDetails({
   const [statsError, setStatsError] = useState<string | null>(null);
   const sofascoreId = match.sourceIds?.sofascore ?? (match.source === 'sofascore' ? match.id : null);
   const addedTime = getOfficialAddedTimePrediction(match);
-  const statRows = useMemo(() => extractLiveStatRows(stats), [stats]);
+  const hasEmbeddedStats = Boolean(match.liveStats?.length);
+  const statRows = useMemo(
+    () => (match.liveStats?.length ? match.liveStats : extractLiveStatRows(stats)),
+    [match.liveStats, stats]
+  );
 
   useEffect(() => {
     let cancelled = false;
 
-    if (!sofascoreId) {
+    if (hasEmbeddedStats || !sofascoreId) {
       setStats(null);
       setStatsError(null);
       setStatsLoading(false);
@@ -365,7 +382,16 @@ function LiveMatchDetails({
     return () => {
       cancelled = true;
     };
-  }, [sofascoreId]);
+  }, [hasEmbeddedStats, sofascoreId]);
+
+  const statsSourceLabel =
+    match.statsSource === '365scores'
+      ? '365Scores'
+      : match.statsSource === 'api-football'
+        ? 'API-Football'
+        : match.sourceIds?.sofascore
+          ? 'SofaScore'
+          : match.source ?? 'ao vivo';
 
   return (
     <div className="rounded-xl border border-emerald-500/20 bg-card/80 p-4 space-y-4">
@@ -380,7 +406,7 @@ function LiveMatchDetails({
             {match.awayTeam.name}
           </h4>
           <p className="text-xs text-muted-foreground">
-            {competition} - fonte: {match.sourceIds?.sofascore ? '365Scores + SofaScore' : match.source ?? 'ao vivo'}
+            {competition} - estatisticas: {statsSourceLabel}
           </p>
         </div>
         <Button variant="ghost" size="icon" onClick={onClose} className="h-8 w-8">
@@ -469,7 +495,8 @@ function LiveMatchDetails({
           </p>
         ) : (
           <p className="text-sm text-muted-foreground">
-            Aguardando a fonte enviar estatisticas ao vivo deste evento.
+            A 365Scores trouxe placar e tempo, mas ainda nao enviou estatisticas detalhadas deste
+            evento.
           </p>
         )}
       </div>

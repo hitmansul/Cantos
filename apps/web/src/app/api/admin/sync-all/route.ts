@@ -30,7 +30,7 @@ async function sfFetch(path: string): Promise<unknown> {
 // ── League → Sofascore tournament+season mappings ────────────────────────────
 // IMPORTANT: tid = tournament ID (stable), sid = season ID (changes each year)
 // Season IDs below are for the 2025/2026 season
-export const SOFASCORE_LEAGUES: Record<
+const SOFASCORE_LEAGUES: Record<
   string,
   { tid: number; sid: number; name: string; country: string }
 > = {
@@ -86,7 +86,7 @@ export const SOFASCORE_LEAGUES: Record<
 };
 
 // Default leagues for "sync all"
-export const DEFAULT_SYNC_LEAGUES = [
+const DEFAULT_SYNC_LEAGUES = [
   'brasileirao_a',
   'brasileirao_b',
   'copa_do_brasil',
