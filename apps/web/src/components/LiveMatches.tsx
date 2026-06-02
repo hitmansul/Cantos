@@ -1,7 +1,17 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
-import { RefreshCw, AlertCircle, Radio, CornerUpRight, Clock, Trophy } from 'lucide-react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
+import {
+  RefreshCw,
+  AlertCircle,
+  Radio,
+  CornerUpRight,
+  Clock,
+  Trophy,
+  BarChart3,
+  Timer,
+  X,
+} from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -17,6 +27,11 @@ interface LiveMatch {
   competitionId: number;
   corners?: { home: number; away: number; total: number };
   source?: string;
+  sourceIds?: {
+    scores365?: number;
+    sofascore?: number;
+    apiFootball?: number;
+  };
   stoppage?: {
     totalStoppedMs: number;
     totalStoppedMinutes: number;
@@ -30,6 +45,33 @@ interface LiveMatch {
       reason: string;
       period?: string;
       timeline?: string;
+    }>;
+  };
+}
+
+interface SofascoreStatItem {
+  name: string;
+  home: string | number;
+  away: string | number;
+  homeValue?: number;
+  awayValue?: number;
+  key: string;
+}
+
+interface SofascoreStatsResponse {
+  homeCorners: number;
+  awayCorners: number;
+  totalCorners: number;
+  homeCorners1stHalf: number;
+  awayCorners1stHalf: number;
+  homeCorners2ndHalf: number;
+  awayCorners2ndHalf: number;
+  fullStatistics?: {
+    statistics?: Array<{
+      period: string;
+      groups: Array<{
+        statisticsItems: SofascoreStatItem[];
+      }>;
     }>;
   };
 }
@@ -89,6 +131,79 @@ function getOfficialAddedTimePrediction(
   };
 }
 
+function normalizeStatKey(value: string) {
+  return value
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase();
+}
+
+function statValue(item: SofascoreStatItem, side: 'home' | 'away') {
+  const numeric = side === 'home' ? item.homeValue : item.awayValue;
+  if (typeof numeric === 'number' && Number.isFinite(numeric)) return String(numeric);
+  const value = side === 'home' ? item.home : item.away;
+  return value === undefined || value === null || value === '' ? '-' : String(value);
+}
+
+function extractLiveStatRows(stats: SofascoreStatsResponse | null) {
+  const allPeriod = stats?.fullStatistics?.statistics?.find((period) => period.period === 'ALL');
+  const items = allPeriod?.groups?.flatMap((group) => group.statisticsItems ?? []) ?? [];
+  const priority = [
+    'ballPossession',
+    'expectedGoals',
+    'totalShotsOnGoal',
+    'shotsOnGoal',
+    'cornerKicks',
+    'yellowCards',
+    'redCards',
+    'fouls',
+    'offsides',
+    'goalkeeperSaves',
+    'bigChances',
+    'blockedScoringAttempt',
+  ];
+
+  const unique = new Map<string, SofascoreStatItem>();
+  for (const item of items) {
+    const key = item.key || normalizeStatKey(item.name);
+    if (!unique.has(key)) unique.set(key, item);
+  }
+
+  return priority
+    .map((key) => unique.get(key))
+    .filter((item): item is SofascoreStatItem => Boolean(item))
+    .map((item) => ({
+      key: item.key || item.name,
+      label: item.name,
+      home: statValue(item, 'home'),
+      away: statValue(item, 'away'),
+    }));
+}
+
+function matchKey(match: Pick<LiveMatch, 'homeTeam' | 'awayTeam'>) {
+  const clean = (value: string) =>
+    normalizeStatKey(value)
+      .replace(/\b(fc|cf|sc|ac|ec|club|clube|futebol|sport|sporting|real|atletico)\b/g, '')
+      .replace(/[^a-z0-9]+/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+  return `${clean(match.homeTeam.name)}-${clean(match.awayTeam.name)}`;
+}
+
+function mergeLiveMatch(base: LiveMatch, incoming: LiveMatch): LiveMatch {
+  return {
+    ...base,
+    competition: base.competition ?? incoming.competition,
+    competitionId: base.competitionId || incoming.competitionId,
+    corners: incoming.corners ?? base.corners,
+    stoppage: base.stoppage ?? incoming.stoppage,
+    sourceIds: {
+      ...base.sourceIds,
+      ...incoming.sourceIds,
+    },
+  };
+}
+
 function LiveMatchCard({
   match,
   selected,
@@ -117,10 +232,10 @@ function LiveMatchCard({
         selected ? 'ring-2 ring-emerald-500/60 border-emerald-400' : ''
       }`}
     >
-      <div className="flex items-center justify-between mb-3">
-        <div className="flex items-center gap-2">
+      <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+        <div className="min-w-0 flex items-center gap-2">
           <span className="text-lg">{icon}</span>
-          <span className="text-xs text-muted-foreground truncate max-w-[150px]">
+          <span className="text-xs text-muted-foreground break-words">
             {match.competition || 'Competição'}
           </span>
         </div>
@@ -130,13 +245,13 @@ function LiveMatchCard({
         </Badge>
       </div>
 
-      <div className="flex items-center justify-between gap-3">
-        <div className="flex-1 text-right">
-          <p className="font-semibold truncate" title={match.homeTeam.name}>
+      <div className="grid items-center gap-3 md:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]">
+        <div className="min-w-0 md:text-right">
+          <p className="font-semibold leading-tight break-words" title={match.homeTeam.name}>
             {match.homeTeam.name}
           </p>
         </div>
-        <div className="flex flex-col items-center px-4">
+        <div className="flex min-w-[132px] flex-col items-center px-2">
           <div className="flex items-center gap-2 text-2xl font-bold tabular-nums">
             <span className={match.homeTeam.score > match.awayTeam.score ? 'text-emerald-400' : ''}>
               {match.homeTeam.score}
@@ -173,8 +288,8 @@ function LiveMatchCard({
             </div>
           )}
         </div>
-        <div className="flex-1 text-left">
-          <p className="font-semibold truncate" title={match.awayTeam.name}>
+        <div className="min-w-0">
+          <p className="font-semibold leading-tight break-words" title={match.awayTeam.name}>
             {match.awayTeam.name}
           </p>
         </div>
@@ -199,6 +314,173 @@ function LiveMatchCard({
         </div>
       )}
     </Card>
+  );
+}
+
+function LiveMatchDetails({
+  match,
+  competition,
+  onClose,
+}: {
+  match: LiveMatch;
+  competition: string;
+  onClose: () => void;
+}) {
+  const [stats, setStats] = useState<SofascoreStatsResponse | null>(null);
+  const [statsLoading, setStatsLoading] = useState(false);
+  const [statsError, setStatsError] = useState<string | null>(null);
+  const sofascoreId = match.sourceIds?.sofascore ?? (match.source === 'sofascore' ? match.id : null);
+  const addedTime = getOfficialAddedTimePrediction(match);
+  const statRows = useMemo(() => extractLiveStatRows(stats), [stats]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    if (!sofascoreId) {
+      setStats(null);
+      setStatsError(null);
+      setStatsLoading(false);
+      return;
+    }
+
+    async function fetchStats() {
+      setStatsLoading(true);
+      setStatsError(null);
+      try {
+        const res = await fetch(`/api/sofascore-direct/match/${sofascoreId}/statistics`);
+        const data = (await res.json()) as SofascoreStatsResponse & { error?: string };
+        if (!res.ok) throw new Error(data.error ?? 'Estatisticas indisponiveis');
+        if (!cancelled) setStats(data);
+      } catch (error) {
+        if (!cancelled) {
+          setStats(null);
+          setStatsError(error instanceof Error ? error.message : 'Estatisticas indisponiveis');
+        }
+      } finally {
+        if (!cancelled) setStatsLoading(false);
+      }
+    }
+
+    void fetchStats();
+    return () => {
+      cancelled = true;
+    };
+  }, [sofascoreId]);
+
+  return (
+    <div className="rounded-xl border border-emerald-500/20 bg-card/80 p-4 space-y-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <p className="flex items-center gap-2 text-sm font-semibold text-emerald-400">
+            <BarChart3 className="w-4 h-4" />
+            Estatisticas ao vivo
+          </p>
+          <h4 className="mt-1 text-base font-bold">
+            {match.homeTeam.name} <span className="text-muted-foreground">x</span>{' '}
+            {match.awayTeam.name}
+          </h4>
+          <p className="text-xs text-muted-foreground">
+            {competition} - fonte: {match.sourceIds?.sofascore ? '365Scores + SofaScore' : match.source ?? 'ao vivo'}
+          </p>
+        </div>
+        <Button variant="ghost" size="icon" onClick={onClose} className="h-8 w-8">
+          <X className="w-4 h-4" />
+        </Button>
+      </div>
+
+      <div className="grid gap-3 md:grid-cols-3">
+        <div className="rounded-lg border border-border bg-background/40 p-3 text-center">
+          <p className="text-xs text-muted-foreground">Placar atual</p>
+          <p className="text-2xl font-bold tabular-nums">
+            {match.homeTeam.score} - {match.awayTeam.score}
+          </p>
+        </div>
+        <div className="rounded-lg border border-border bg-background/40 p-3 text-center">
+          <p className="text-xs text-muted-foreground">Tempo</p>
+          <p className="text-2xl font-bold text-emerald-400">
+            {typeof match.minute === 'number' ? `${match.minute}'` : match.minute}
+          </p>
+        </div>
+        <div className="rounded-lg border border-border bg-background/40 p-3 text-center">
+          <p className="text-xs text-muted-foreground">Escanteios ao vivo</p>
+          <p className="text-2xl font-bold text-amber-400">
+            {match.corners
+              ? `${match.corners.home} - ${match.corners.away}`
+              : stats
+                ? `${stats.homeCorners} - ${stats.awayCorners}`
+                : '-'}
+          </p>
+        </div>
+      </div>
+
+      {addedTime ? (
+        <div className="grid gap-3 md:grid-cols-2">
+          <div className="rounded-lg border border-cyan-500/20 bg-cyan-500/10 p-3">
+            <p className="flex items-center gap-2 text-sm font-semibold text-cyan-300">
+              <Timer className="w-4 h-4" />
+              Tempo total de bola parada
+            </p>
+            <p className="mt-1 text-2xl font-bold">{addedTime.totalLabel}</p>
+            <p className="text-xs text-muted-foreground">{addedTime.sourceLabel}</p>
+          </div>
+          <div className="rounded-lg border border-amber-500/20 bg-amber-500/10 p-3">
+            <p className="flex items-center gap-2 text-sm font-semibold text-amber-300">
+              <Clock className="w-4 h-4" />
+              Previsao de Acrescimo
+            </p>
+            <p className="mt-1 text-2xl font-bold">{addedTime.addedLabel}</p>
+            <p className="text-xs text-muted-foreground">80% do tempo total parado identificado.</p>
+          </div>
+        </div>
+      ) : (
+        <div className="rounded-lg border border-border bg-background/40 p-3 text-sm text-muted-foreground">
+          A fonte ao vivo ainda nao enviou paradas e retomadas suficientes para calcular tempo de
+          bola parada e Previsao de Acrescimo neste jogo.
+        </div>
+      )}
+
+      <div className="rounded-lg border border-border bg-background/40 p-3">
+        <div className="mb-3 flex items-center justify-between gap-2">
+          <p className="text-sm font-semibold">Numeros do jogo</p>
+          {statsLoading && (
+            <span className="flex items-center gap-1 text-xs text-muted-foreground">
+              <RefreshCw className="w-3 h-3 animate-spin" />
+              buscando
+            </span>
+          )}
+        </div>
+
+        {statRows.length > 0 ? (
+          <div className="space-y-2">
+            {statRows.map((row) => (
+              <div
+                key={row.key}
+                className="grid grid-cols-[minmax(42px,80px)_minmax(0,1fr)_minmax(42px,80px)] items-center gap-3 rounded-md bg-muted/30 px-3 py-2 text-sm"
+              >
+                <span className="font-semibold tabular-nums">{row.home}</span>
+                <span className="text-center text-muted-foreground">{row.label}</span>
+                <span className="text-right font-semibold tabular-nums">{row.away}</span>
+              </div>
+            ))}
+          </div>
+        ) : statsError ? (
+          <p className="text-sm text-muted-foreground">
+            Nao consegui carregar estatisticas ao vivo do SofaScore para este jogo agora.
+          </p>
+        ) : (
+          <p className="text-sm text-muted-foreground">
+            Aguardando a fonte enviar estatisticas ao vivo deste evento.
+          </p>
+        )}
+      </div>
+
+      <FutureMatchPrediction
+        homeTeam={match.homeTeam.name}
+        awayTeam={match.awayTeam.name}
+        league={match.competition || competition}
+        kickoffLabel="Ao vivo"
+      />
+    </div>
   );
 }
 
@@ -235,27 +517,30 @@ export function LiveMatches() {
       ]);
 
       const allMatches: LiveMatch[] = [];
-      const seenKeys = new Set<string>();
+      const indexByKey = new Map<string, number>();
+      const addOrMerge = (match: LiveMatch, fallbackSource: string) => {
+        const key = matchKey(match);
+        const incoming = { ...match, source: match.source ?? fallbackSource };
+        const existingIndex = indexByKey.get(key);
+        if (existingIndex === undefined) {
+          indexByKey.set(key, allMatches.length);
+          allMatches.push(incoming);
+        } else {
+          allMatches[existingIndex] = mergeLiveMatch(allMatches[existingIndex], incoming);
+        }
+      };
 
       if (scores365Res.status === 'fulfilled' && scores365Res.value.ok) {
         const data = (await scores365Res.value.json()) as { matches?: LiveMatch[] };
         for (const match of data.matches ?? []) {
-          const key = `${match.homeTeam.name}-${match.awayTeam.name}`.toLowerCase();
-          if (!seenKeys.has(key)) {
-            seenKeys.add(key);
-            allMatches.push({ ...match, source: '365scores' });
-          }
+          addOrMerge(match, '365scores');
         }
       }
 
       if (sofascoreRes.status === 'fulfilled' && sofascoreRes.value.ok) {
         const data = (await sofascoreRes.value.json()) as { matches?: LiveMatch[] };
         for (const match of data.matches ?? []) {
-          const key = `${match.homeTeam.name}-${match.awayTeam.name}`.toLowerCase();
-          if (!seenKeys.has(key)) {
-            seenKeys.add(key);
-            allMatches.push({ ...match, source: 'sofascore' });
-          }
+          addOrMerge(match, 'sofascore');
         }
       }
 
@@ -462,7 +747,7 @@ export function LiveMatches() {
                   {compMatches.length}
                 </Badge>
               </h4>
-              <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
+              <div className="space-y-3">
                 {compMatches.map((match) => {
                   const selected = selectedMatchId === match.id;
                   return (
@@ -473,11 +758,9 @@ export function LiveMatches() {
                         onClick={() => setSelectedMatchId((current) => (current === match.id ? null : match.id))}
                       />
                       {selected && (
-                        <FutureMatchPrediction
-                          homeTeam={match.homeTeam.name}
-                          awayTeam={match.awayTeam.name}
-                          league={match.competition || competition}
-                          kickoff="Ao vivo"
+                        <LiveMatchDetails
+                          match={match}
+                          competition={competition}
                           onClose={() => setSelectedMatchId(null)}
                         />
                       )}

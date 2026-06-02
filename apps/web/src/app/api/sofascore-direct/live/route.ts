@@ -84,6 +84,7 @@ export async function GET() {
           event.tournament?.uniqueTournament?.name ?? event.tournament?.name ?? 'Competição',
         competitionId: event.tournament?.uniqueTournament?.id ?? event.tournament?.id ?? 0,
         source: 'sofascore',
+        sourceIds: { sofascore: event.id },
       };
     });
 

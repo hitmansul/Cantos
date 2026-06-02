@@ -14,9 +14,15 @@ interface SignedAdminTokenPayload extends AdminTokenPayload {
 }
 
 function getSecret(): string {
-  const secret = process.env.ADMIN_JWT_SECRET ?? process.env.AUTH_SECRET ?? process.env.CRON_SECRET;
+  const secret =
+    process.env.ADMIN_JWT_SECRET ??
+    process.env.AUTH_SECRET ??
+    process.env.BETTER_AUTH_SECRET ??
+    process.env.CRON_SECRET;
   if (!secret) {
-    throw new Error('ADMIN_JWT_SECRET, AUTH_SECRET or CRON_SECRET is required for admin sessions');
+    throw new Error(
+      'ADMIN_JWT_SECRET, AUTH_SECRET, BETTER_AUTH_SECRET or CRON_SECRET is required for admin sessions'
+    );
   }
   return secret;
 }

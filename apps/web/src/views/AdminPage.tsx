@@ -845,6 +845,7 @@ export default function AdminPage() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
   const [isAdmin, setIsAdmin] = useState<boolean | null>(null);
+  const [adminAccessError, setAdminAccessError] = useState<string | null>(null);
   const [adminEmail, setAdminEmail] = useState<string>('');
   const [activeTab, setActiveTab] = useState<TabType>('equipes');
   const [teams, setTeams] = useState<Team[]>([]);
@@ -942,14 +943,18 @@ export default function AdminPage() {
   useEffect(() => {
     fetch('/api/admin/check')
       .then((r) => r.json())
-      .then((data: { isAdmin: boolean; user?: { email?: string } }) => {
+      .then((data: { isAdmin: boolean; user?: { email?: string }; error?: string }) => {
         setIsAdmin(data.isAdmin);
+        setAdminAccessError(data.error ?? null);
         if (data.isAdmin) {
           if (data.user?.email) setAdminEmail(data.user.email);
           loadData();
         }
       })
-      .catch(() => setIsAdmin(false));
+      .catch(() => {
+        setAdminAccessError('Nao consegui verificar o acesso admin agora.');
+        setIsAdmin(false);
+      });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -1433,6 +1438,11 @@ export default function AdminPage() {
             <h1 className="text-2xl font-bold text-white mb-1">Área de Administrador</h1>
             <p className="text-slate-400 text-sm">Acesso restrito ao painel de controle</p>
           </div>
+          {adminAccessError && (
+            <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-left text-sm text-amber-200">
+              {adminAccessError}
+            </div>
+          )}
           <div className="bg-slate-700/40 border border-emerald-500/30 rounded-xl p-4 space-y-3">
             <p className="text-sm font-medium text-white">Login de administrador</p>
             <a

@@ -18,6 +18,16 @@ function generateTempPassword(): string {
 
 export async function POST(req: NextRequest) {
   try {
+    if (!process.env.DATABASE_URL) {
+      return NextResponse.json(
+        {
+          error:
+            'Banco de dados nao configurado. Configure DATABASE_URL na Vercel para definir a senha admin.',
+        },
+        { status: 503 }
+      );
+    }
+
     const body = (await req.json()) as {
       secret?: string;
       password?: string;
@@ -78,6 +88,16 @@ export async function POST(req: NextRequest) {
     });
   } catch (err) {
     console.error('[admin/auth/setup]', err);
+    const message = err instanceof Error ? err.message : String(err);
+    if (message.includes('admin_users') || message.includes('relation')) {
+      return NextResponse.json(
+        {
+          error:
+            'Tabela de administradores nao encontrada. Execute a configuracao/migracao do banco antes de definir senha.',
+        },
+        { status: 500 }
+      );
+    }
     return NextResponse.json({ error: 'Erro interno do servidor' }, { status: 500 });
   }
 }

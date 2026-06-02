@@ -1,42 +1,39 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { auth } from '@/lib/auth';
-import sql from '@/app/api/utils/sql';
+import { getAdminSession } from '@/app/api/utils/adminAuth';
 
 export async function GET(request: NextRequest) {
   try {
-    const session = await auth.api.getSession({ headers: request.headers });
+    if (!process.env.DATABASE_URL) {
+      return NextResponse.json(
+        {
+          isAdmin: false,
+          error:
+            'Banco de dados nao configurado. Configure DATABASE_URL na Vercel para usar o admin.',
+        },
+        { status: 503 }
+      );
+    }
 
-    if (!session?.user) {
+    const session = await getAdminSession(request);
+    if (!session) {
       return NextResponse.json({ isAdmin: false }, { status: 401 });
     }
 
-    const userId = session.user.id;
-    const email = session.user.email;
-
-    // Check by user_id first (fast path), then fall back to email
-    // This handles the case where legacy rows have user_id = 'pending_xxx'
-    let result = await sql`
-      SELECT * FROM admin_users WHERE user_id = ${userId} AND is_active = 1
-    `;
-
-    if (result.length === 0 && email) {
-      // Fall back: match by email — also update user_id so next login is faster
-      const byEmail = await sql`
-        SELECT * FROM admin_users WHERE email = ${email} AND is_active = 1
-      `;
-      if (byEmail.length > 0) {
-        // Backfill the real user_id so future lookups use the fast path
-        await sql`
-          UPDATE admin_users SET user_id = ${userId}
-          WHERE email = ${email} AND is_active = 1
-        `;
-        result = byEmail;
-      }
-    }
-
-    return NextResponse.json({ isAdmin: result.length > 0, user: session.user });
+    return NextResponse.json({ isAdmin: true, user: session });
   } catch (error) {
     console.error('Admin check error:', error);
+    const message = error instanceof Error ? error.message : String(error);
+    if (message.includes('admin_users') || message.includes('relation')) {
+      return NextResponse.json(
+        {
+          isAdmin: false,
+          error:
+            'Tabela de administradores nao encontrada. Execute a configuracao/migracao do banco antes de acessar o admin.',
+        },
+        { status: 500 }
+      );
+    }
+
     return NextResponse.json({ isAdmin: false }, { status: 500 });
   }
 }

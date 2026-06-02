@@ -11,6 +11,16 @@ import { signAdminToken, ADMIN_COOKIE_NAME, ADMIN_COOKIE_MAX_AGE } from '@/app/a
 
 export async function POST(req: NextRequest) {
   try {
+    if (!process.env.DATABASE_URL) {
+      return NextResponse.json(
+        {
+          error:
+            'Banco de dados nao configurado. Configure DATABASE_URL na Vercel para usar o admin.',
+        },
+        { status: 503 }
+      );
+    }
+
     const body = (await req.json()) as {
       secret?: string;
       email?: string;

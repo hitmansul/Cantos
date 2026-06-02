@@ -170,6 +170,28 @@ function askedCoverage(text: string): boolean {
   ].some((term) => normalized.includes(term));
 }
 
+function askedDataUpdate(text: string): boolean {
+  const normalized = normalize(text);
+  const updateTerms = [
+    'como os dados sao atualizados',
+    'como atualiza',
+    'quando atualiza',
+    'de onde vem os dados',
+    'de onde vem esses dados',
+    'fonte dos dados',
+    'origem dos dados',
+    'dados atualizados',
+    'atualizacao dos dados',
+    'atualizar dados',
+    'sincronizacao',
+    'sync',
+    'cron',
+    '365scores',
+    'sofascore',
+  ];
+  return updateTerms.some((term) => normalized.includes(term));
+}
+
 function askedUpcoming(text: string): boolean {
   const normalized = normalize(text);
   return [
@@ -272,6 +294,10 @@ function requestedHalf(text: string): 'first' | 'second' | null {
   return null;
 }
 
+function scopeForQuestion(question: string, ctx: string): string {
+  return isFollowUpQuestion(question) && ctx ? `${ctx} ${question}` : question;
+}
+
 function formatCatalog(): string {
   const grouped = Object.values(SCORES365_COMPETITIONS).reduce<Record<string, string[]>>((acc, competition) => {
     (acc[competition.country] ??= []).push(competition.name);
@@ -291,6 +317,10 @@ function coverageReply(): string {
   }).join('\n');
 
   return `Ligas integradas no app:\n\n${formatCatalog()}\n\nBases estatisticas carregadas:\n${statsLines}\n\nA IA tenta responder primeiro por esses dados locais. O Gemini so entra quando a pergunta pede interpretacao aberta ou quando o dado nao existe na base.`;
+}
+
+function dataUpdateReply(): string {
+  return `Os dados do app entram por camadas, sempre priorizando fonte local e fonte ao vivo antes de IA externa.\n\n- Tempo Real: busca jogos ao vivo na hora pela API da 365Scores e pela API publica do SofaScore. A tela atualiza automaticamente a cada 30 segundos.\n- Estatisticas ao vivo do jogo: quando o SofaScore entrega estatisticas do evento, o app mostra escanteios, finalizacoes, posse, cartoes e outros numeros disponiveis. Se a fonte nao enviar, eu aviso que nao tenho em vez de inventar.\n- Previsao de Acrescimo: so aparece quando a 365Scores/Sportradar envia play-by-play com parada e retomada. O app soma o tempo parado e calcula 80% como previsao de acrescimo.\n- Proximos jogos, resultados e tabelas: vem das rotas de 365Scores/SofaScore e tambem da base local onde ja temos agenda, chaveamentos e estatisticas historicas.\n- Base local: medias de escanteios por time, por competicao e por tempo ficam nos arquivos de dados do app e no banco quando o admin sincroniza/importa jogos.\n- Admin/sincronizacao: o painel admin usa DATABASE_URL para gravar dados; a rota de cron chama a sincronizacao geral quando CRON_SECRET esta configurado.\n- Gemini: so deve entrar quando a pergunta precisa de interpretacao aberta ou quando a base local nao tem a resposta direta. Para medias, proximos jogos, cartoes e acrescimos, eu tento resolver localmente primeiro.`;
 }
 
 function cornerMethodReply(): string {
@@ -371,7 +401,7 @@ function overProbability(mean: number, threshold: number): number {
 
 function matchPredictionReply(question: string, ctx: string): string | null {
   if (!askedMatchPrediction(question)) return null;
-  const combined = `${ctx} ${question}`;
+  const combined = scopeForQuestion(question, ctx);
   const teams = latestTeams(combined, 2).reverse();
   if (teams.length < 2) return 'Para montar a previsao do confronto, me diga os dois times do jogo.';
 
@@ -411,7 +441,7 @@ function matchPredictionReply(question: string, ctx: string): string | null {
 
 function addedTimeReply(question: string, ctx: string): string | null {
   if (!askedAddedTime(question)) return null;
-  const teams = latestTeams(`${ctx} ${question}`, 2).reverse();
+  const teams = latestTeams(scopeForQuestion(question, ctx), 2).reverse();
   const matchText = teams.length >= 2 ? ` para ${teams[0]} x ${teams[1]}` : '';
 
   return `A Previsao de Acrescimo${matchText} usa somente dado real de bola parada quando a 365Scores/Sportradar entrega play-by-play com interrupcao e retomada do jogo.\n\nA regra local e:\n- tempo total de bola parada = soma dos intervalos entre parada e retomada;\n- Previsao de Acrescimo = 80% desse tempo total parado;\n- quando a fonte nao envia esses eventos, eu nao invento numero.\n\nNa tela Tempo Real, esse campo aparece nos jogos que ja chegam com play-by-play suficiente para calcular.`;
@@ -419,7 +449,7 @@ function addedTimeReply(question: string, ctx: string): string | null {
 
 function statsReply(question: string, ctx: string): string | null {
   if (!askedStats(question)) return null;
-  const combined = `${ctx} ${question}`;
+  const combined = scopeForQuestion(question, ctx);
   const team = mentionedTeams(combined)
     .map((name) => ({ name, pos: latestMention(combined, name) }))
     .sort((a, b) => b.pos - a.pos)[0]?.name;
@@ -453,7 +483,7 @@ function matchLine(match: CurrentFixture): string {
 }
 
 function upcomingMatches(question: string, ctx: string): CurrentFixture[] {
-  const combined = `${ctx} ${question}`;
+  const combined = scopeForQuestion(question, ctx);
   const team = mentionedTeams(combined)
     .map((name) => ({ name, pos: latestMention(combined, name) }))
     .sort((a, b) => b.pos - a.pos)[0]?.name;
@@ -489,16 +519,16 @@ function upcomingReply(question: string, ctx: string): string | null {
   const matches = upcomingMatches(question, ctx);
   if (matches.length === 0) return 'Nao encontrei proximos jogos para esse filtro na base local.';
 
-  const limit = mentionedTeams(`${ctx} ${question}`).length > 0 ? 3 : 12;
+  const limit = mentionedTeams(scopeForQuestion(question, ctx)).length > 0 ? 3 : 12;
   return `Proximos jogos encontrados na base local:\n\n${matches.slice(0, limit).map(matchLine).join('\n')}`;
 }
 
 function cardsReply(question: string, ctx: string): string | null {
   if (!askedCards(question)) return null;
-  const combined = `${ctx} ${question}`;
+  const combined = scopeForQuestion(question, ctx);
   const teams = mentionedTeams(combined);
   const hasSpecificFilter =
-    teams.length > 0 || STATS_SETS.some((set) => mentionsLeague(question, set.label));
+    teams.length > 0 || STATS_SETS.some((set) => mentionsLeague(combined, set.label));
   const match = hasSpecificFilter ? upcomingMatches(question, ctx)[0] : undefined;
 
   if (match?.referee) {
@@ -522,6 +552,7 @@ function cardsReply(question: string, ctx: string): string | null {
 }
 
 function localReply(question: string, ctx: string): string | null {
+  if (askedDataUpdate(question)) return dataUpdateReply();
   if (askedCoverage(question)) return coverageReply();
   if (askedAddedTime(question)) return addedTimeReply(question, ctx);
   if (askedCards(question)) return cardsReply(question, ctx);
@@ -532,6 +563,7 @@ function localReply(question: string, ctx: string): string | null {
 
   if (isFollowUpQuestion(question) && ctx) {
     const contextualQuestion = `${ctx} ${question}`;
+    if (askedDataUpdate(ctx)) return dataUpdateReply();
     if (askedAddedTime(ctx)) return addedTimeReply(contextualQuestion, '');
     if (askedCards(ctx)) return cardsReply(contextualQuestion, '');
     if (askedUpcoming(ctx)) return upcomingReply(contextualQuestion, '');

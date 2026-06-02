@@ -16,6 +16,11 @@ interface LiveMatch {
   competitionId: number;
   corners?: { home: number; away: number; total: number };
   source?: string;
+  sourceIds?: {
+    scores365?: number;
+    sofascore?: number;
+    apiFootball?: number;
+  };
   stoppage?: StoppageInfo;
 }
 
@@ -106,6 +111,30 @@ function normalizeText(value: string) {
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
     .toLowerCase();
+}
+
+function matchKey(match: Pick<LiveMatch, 'homeTeam' | 'awayTeam'>) {
+  const clean = (value: string) =>
+    normalizeText(value)
+      .replace(/\b(fc|cf|sc|ac|ec|club|clube|futebol|sport|sporting|real|atletico)\b/g, '')
+      .replace(/[^a-z0-9]+/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+  return `${clean(match.homeTeam.name)}-${clean(match.awayTeam.name)}`;
+}
+
+function mergeMatch(base: LiveMatch, incoming: LiveMatch): LiveMatch {
+  return {
+    ...base,
+    competition: base.competition ?? incoming.competition,
+    competitionId: base.competitionId || incoming.competitionId,
+    corners: incoming.corners ?? base.corners,
+    stoppage: base.stoppage ?? incoming.stoppage,
+    sourceIds: {
+      ...base.sourceIds,
+      ...incoming.sourceIds,
+    },
+  };
 }
 
 function hasTerm(comment: string, terms: string[]) {
@@ -306,6 +335,7 @@ async function fetchFrom365Scores(): Promise<LiveMatch[]> {
         competition: game.competitionDisplayName ?? game.competition?.name ?? 'Competicao',
         competitionId: game.competitionId ?? 0,
         source: '365scores',
+        sourceIds: { scores365: game.id },
       }));
 
     return enrichWithStoppage(liveMatches);
@@ -388,6 +418,7 @@ async function fetchFromSofascore(): Promise<LiveMatch[]> {
         competition: ev.tournament?.uniqueTournament?.name ?? ev.tournament?.name ?? 'Competição',
         competitionId: ev.tournament?.uniqueTournament?.id ?? 0,
         source: 'sofascore',
+        sourceIds: { sofascore: ev.id },
       };
     });
   } catch (err) {
@@ -475,6 +506,7 @@ async function fetchFromApiFootball(): Promise<LiveMatch[]> {
         competitionId: item.league.id,
         corners,
         source: 'api-football',
+        sourceIds: { apiFootball: item.fixture.id },
       };
     });
   } catch (err) {
@@ -497,36 +529,23 @@ export async function GET() {
     const sfMatches = sofascoreResult.status === 'fulfilled' ? sofascoreResult.value : [];
     const afMatches = apiFootballResult.status === 'fulfilled' ? apiFootballResult.value : [];
 
-    // Merge: use 365Scores/Sofascore as base, enrich with API-Football corner data
-    const seenKeys = new Set<string>();
     const allMatches: LiveMatch[] = [];
+    const indexByKey = new Map<string, number>();
 
-    // Build a lookup for API-Football corners by team name key
-    const afCornersByKey = new Map<string, { home: number; away: number; total: number }>();
-    for (const m of afMatches) {
-      const key = `${m.homeTeam.name.toLowerCase()}-${m.awayTeam.name.toLowerCase()}`;
-      if (m.corners) {
-        afCornersByKey.set(key, m.corners);
+    const addOrMerge = (match: LiveMatch) => {
+      const key = matchKey(match);
+      const existingIndex = indexByKey.get(key);
+      if (existingIndex === undefined) {
+        indexByKey.set(key, allMatches.length);
+        allMatches.push(match);
+      } else {
+        allMatches[existingIndex] = mergeMatch(allMatches[existingIndex], match);
       }
-    }
+    };
 
-    for (const m of [...scores365Matches, ...sfMatches]) {
-      const key = `${m.homeTeam.name.toLowerCase()}-${m.awayTeam.name.toLowerCase()}`;
-      if (!seenKeys.has(key)) {
-        seenKeys.add(key);
-        const corners = afCornersByKey.get(key);
-        allMatches.push({ ...m, corners: corners ?? m.corners });
-      }
-    }
-
-    // Add API-Football matches not in Sofascore
-    for (const m of afMatches) {
-      const key = `${m.homeTeam.name.toLowerCase()}-${m.awayTeam.name.toLowerCase()}`;
-      if (!seenKeys.has(key)) {
-        seenKeys.add(key);
-        allMatches.push(m);
-      }
-    }
+    for (const match of scores365Matches) addOrMerge(match);
+    for (const match of sfMatches) addOrMerge(match);
+    for (const match of afMatches) addOrMerge(match);
 
     return NextResponse.json({
       matches: allMatches,

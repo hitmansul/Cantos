@@ -5,6 +5,16 @@ import { signAdminToken, ADMIN_COOKIE_NAME, ADMIN_COOKIE_MAX_AGE } from '@/app/a
 
 export async function POST(req: NextRequest) {
   try {
+    if (!process.env.DATABASE_URL) {
+      return NextResponse.json(
+        {
+          error:
+            'Banco de dados nao configurado. Configure DATABASE_URL na Vercel para usar o admin.',
+        },
+        { status: 503 }
+      );
+    }
+
     const body = (await req.json()) as { email?: string; password?: string };
 
     if (!body.email || !body.password) {
@@ -67,6 +77,16 @@ export async function POST(req: NextRequest) {
     return res;
   } catch (err) {
     console.error('[admin/auth/login]', err);
+    const message = err instanceof Error ? err.message : String(err);
+    if (message.includes('admin_users') || message.includes('relation')) {
+      return NextResponse.json(
+        {
+          error:
+            'Tabela de administradores nao encontrada. Execute a configuracao/migracao do banco antes de logar.',
+        },
+        { status: 500 }
+      );
+    }
     return NextResponse.json({ error: 'Erro interno do servidor' }, { status: 500 });
   }
 }
