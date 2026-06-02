@@ -39,7 +39,7 @@ interface LiveMatch {
     totalStoppedMinutes: number;
     predictedAddedMs: number;
     predictedAddedMinutes: number;
-    source: '365scores-sportradar';
+    source: '365scores-actual-play-time' | '365scores-sportradar';
     incidents: Array<{
       startAt: string;
       endAt?: string;
@@ -133,12 +133,16 @@ function getOfficialAddedTimePrediction(
   if (!match.stoppage || match.stoppage.totalStoppedMs <= 0) return null;
 
   const incidentCount = match.stoppage.incidents.length;
+  const sourceLabel =
+    match.stoppage.source === '365scores-actual-play-time'
+      ? 'tempo de bola rolando da 365Scores'
+      : 'play-by-play da 365Scores/Sportradar';
   return {
     totalLabel: formatMinuteValue(match.stoppage.totalStoppedMinutes),
     addedLabel: `+${formatMinuteValue(match.stoppage.predictedAddedMinutes)}`,
     sourceLabel: `${incidentCount} parada${incidentCount === 1 ? '' : 's'} detectada${
       incidentCount === 1 ? '' : 's'
-    } via 365Scores/Sportradar`,
+    } via ${sourceLabel}`,
   };
 }
 

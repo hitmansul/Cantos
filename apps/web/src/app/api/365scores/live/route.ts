@@ -40,7 +40,7 @@ interface StoppageInfo {
   totalStoppedMinutes: number;
   predictedAddedMs: number;
   predictedAddedMinutes: number;
-  source: '365scores-sportradar';
+  source: '365scores-actual-play-time' | '365scores-sportradar';
   incidents: StoppageIncident[];
 }
 
@@ -55,6 +55,13 @@ interface Scores365Game {
   competition?: { name?: string };
   homeCompetitor?: { id?: number; name?: string; score?: number; sportId?: number };
   awayCompetitor?: { id?: number; name?: string; score?: number; sportId?: number };
+  actualPlayTime?: Scores365ActualPlayTime;
+}
+
+interface Scores365ActualPlayTime {
+  title?: string;
+  actualTime?: { name?: string; progress?: number };
+  totalTime?: { name?: string; progress?: number };
 }
 
 interface Scores365Statistic {
@@ -171,6 +178,52 @@ function hasTerm(comment: string, terms: string[]) {
 
 function toRoundedMinutes(ms: number) {
   return Math.round((ms / 60_000) * 10) / 10;
+}
+
+function parseClockMs(value?: string) {
+  if (!value) return null;
+  const match = value.match(/(\d{1,2}):(\d{2})(?::(\d{2}))?/);
+  if (!match) return null;
+
+  const first = Number(match[1]);
+  const second = Number(match[2]);
+  const third = match[3] ? Number(match[3]) : null;
+  if (!Number.isFinite(first) || !Number.isFinite(second) || (third !== null && !Number.isFinite(third))) {
+    return null;
+  }
+
+  const hours = third === null ? 0 : first;
+  const minutes = third === null ? first : second;
+  const seconds = third === null ? second : third;
+  return ((hours * 60 + minutes) * 60 + seconds) * 1000;
+}
+
+function calculateStoppageFromActualPlayTime(
+  actualPlayTime?: Scores365ActualPlayTime
+): StoppageInfo | undefined {
+  const ballInPlayMs = parseClockMs(actualPlayTime?.actualTime?.name ?? actualPlayTime?.title);
+  const totalElapsedMs = parseClockMs(actualPlayTime?.totalTime?.name);
+  if (ballInPlayMs === null || totalElapsedMs === null) return undefined;
+
+  const totalStoppedMs = totalElapsedMs - ballInPlayMs;
+  if (totalStoppedMs < STOPPAGE_MIN_DURATION_MS) return undefined;
+
+  const predictedAddedMs = Math.round(totalStoppedMs * 0.8);
+  return {
+    totalStoppedMs,
+    totalStoppedMinutes: toRoundedMinutes(totalStoppedMs),
+    predictedAddedMs,
+    predictedAddedMinutes: toRoundedMinutes(predictedAddedMs),
+    source: '365scores-actual-play-time',
+    incidents: [
+      {
+        startAt: new Date().toISOString(),
+        durationMs: totalStoppedMs,
+        reason: 'Tempo total menos tempo de bola rolando informado pela 365Scores.',
+        timeline: actualPlayTime?.totalTime?.name,
+      },
+    ],
+  };
 }
 
 function statDisplayValue(value: Scores365Statistic['value']) {
@@ -391,11 +444,15 @@ async function fetchStoppageInfo(gameId: number): Promise<StoppageInfo | undefin
 
     const detail = (await detailRes.json()) as {
       game?: {
+        actualPlayTime?: Scores365ActualPlayTime;
         playByPlay?: {
           feedURL?: string;
         };
       };
     };
+
+    const fromActualPlayTime = calculateStoppageFromActualPlayTime(detail.game?.actualPlayTime);
+    if (fromActualPlayTime) return fromActualPlayTime;
 
     const feedURL = detail.game?.playByPlay?.feedURL;
     if (!feedURL) return undefined;
