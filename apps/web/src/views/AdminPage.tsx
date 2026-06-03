@@ -860,6 +860,12 @@ export default function AdminPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [mustChangePassword, setMustChangePassword] = useState(false);
+  const [showPasswordForm, setShowPasswordForm] = useState(false);
+  const [currentAdminPassword, setCurrentAdminPassword] = useState('');
+  const [newAdminPassword, setNewAdminPassword] = useState('');
+  const [confirmAdminPassword, setConfirmAdminPassword] = useState('');
+  const [passwordSaving, setPasswordSaving] = useState(false);
 
   // Auto-fill state
   const [autoFilling, setAutoFilling] = useState(false);
@@ -943,12 +949,24 @@ export default function AdminPage() {
   useEffect(() => {
     fetch('/api/admin/check')
       .then((r) => r.json())
-      .then((data: { isAdmin: boolean; user?: { email?: string }; error?: string }) => {
+      .then(
+        (data: {
+          isAdmin: boolean;
+          user?: { email?: string; mustChangePassword?: boolean };
+          error?: string;
+        }) => {
         setIsAdmin(data.isAdmin);
         setAdminAccessError(data.error ?? null);
         if (data.isAdmin) {
           if (data.user?.email) setAdminEmail(data.user.email);
-          loadData();
+          const needsPasswordChange = data.user?.mustChangePassword === true;
+          setMustChangePassword(needsPasswordChange);
+          setShowPasswordForm(needsPasswordChange);
+          if (needsPasswordChange) {
+            setLoading(false);
+          } else {
+            loadData();
+          }
         }
       })
       .catch(() => {
@@ -1416,6 +1434,52 @@ export default function AdminPage() {
     return `${day}/${month}/${year}`;
   };
 
+  const changeAdminPassword = async () => {
+    setMessage(null);
+
+    if (!mustChangePassword && !currentAdminPassword.trim()) {
+      setMessage({ type: 'error', text: 'Informe a senha atual.' });
+      return;
+    }
+
+    if (newAdminPassword.length < 8) {
+      setMessage({ type: 'error', text: 'A nova senha deve ter pelo menos 8 caracteres.' });
+      return;
+    }
+
+    if (newAdminPassword !== confirmAdminPassword) {
+      setMessage({ type: 'error', text: 'A confirmacao da senha nao confere.' });
+      return;
+    }
+
+    setPasswordSaving(true);
+    try {
+      const res = await fetch('/api/admin/auth/change-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          currentPassword: currentAdminPassword,
+          newPassword: newAdminPassword,
+        }),
+      });
+      const data = (await res.json().catch(() => ({}))) as { error?: string };
+      if (!res.ok) throw new Error(data.error ?? 'Nao consegui alterar a senha agora.');
+
+      setCurrentAdminPassword('');
+      setNewAdminPassword('');
+      setConfirmAdminPassword('');
+      setMustChangePassword(false);
+      setShowPasswordForm(false);
+      setMessage({ type: 'success', text: 'Senha admin alterada com sucesso.' });
+      await loadData();
+    } catch (error) {
+      const text = error instanceof Error ? error.message : 'Nao consegui alterar a senha agora.';
+      setMessage({ type: 'error', text });
+    } finally {
+      setPasswordSaving(false);
+    }
+  };
+
   // ── Guards ─────────────────────────────────────────────────────────────────
 
   if (isAdmin === null) {
@@ -1538,6 +1602,17 @@ export default function AdminPage() {
           </div>
           <div className="flex items-center gap-4">
             <span className="text-sm text-slate-400">{displayEmail}</span>
+            {!mustChangePassword && (
+              <Button
+                onClick={() => setShowPasswordForm((value) => !value)}
+                variant="ghost"
+                size="sm"
+                className="text-slate-300 hover:text-white"
+              >
+                <Shield className="w-4 h-4" />
+                Alterar senha
+              </Button>
+            )}
             <Button
               onClick={() => {
                 logout();
@@ -1566,6 +1641,104 @@ export default function AdminPage() {
       )}
 
       <div className="max-w-7xl mx-auto px-4 py-6">
+        {(mustChangePassword || showPasswordForm) && (
+          <div className="mb-6 rounded-2xl border border-emerald-500/30 bg-slate-800/70 p-6 shadow-xl">
+            <div className="flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between">
+              <div className="max-w-xl">
+                <div className="flex items-center gap-3 mb-3">
+                  <div className="w-11 h-11 rounded-xl bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center">
+                    <Shield className="w-6 h-6 text-emerald-300" />
+                  </div>
+                  <div>
+                    <h2 className="text-xl font-bold text-white">
+                      {mustChangePassword ? 'Criar senha definitiva' : 'Alterar senha admin'}
+                    </h2>
+                    <p className="text-sm text-slate-400">
+                      {mustChangePassword
+                        ? 'A senha temporaria funcionou. Agora defina uma senha permanente para liberar o painel.'
+                        : 'Atualize sua senha de acesso ao painel administrativo.'}
+                    </p>
+                  </div>
+                </div>
+                {mustChangePassword && (
+                  <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-100">
+                    Por seguranca, o painel fica bloqueado ate voce salvar uma nova senha.
+                  </div>
+                )}
+              </div>
+
+              <div className="w-full max-w-md space-y-3">
+                {!mustChangePassword && (
+                  <label className="block">
+                    <span className="mb-1 block text-sm font-medium text-slate-300">
+                      Senha atual
+                    </span>
+                    <input
+                      type="password"
+                      value={currentAdminPassword}
+                      onChange={(event) => setCurrentAdminPassword(event.target.value)}
+                      className="w-full rounded-xl border border-slate-600 bg-slate-900/70 px-4 py-3 text-white outline-none focus:border-emerald-400"
+                    />
+                  </label>
+                )}
+                <label className="block">
+                  <span className="mb-1 block text-sm font-medium text-slate-300">Nova senha</span>
+                  <input
+                    type="password"
+                    value={newAdminPassword}
+                    onChange={(event) => setNewAdminPassword(event.target.value)}
+                    className="w-full rounded-xl border border-slate-600 bg-slate-900/70 px-4 py-3 text-white outline-none focus:border-emerald-400"
+                  />
+                </label>
+                <label className="block">
+                  <span className="mb-1 block text-sm font-medium text-slate-300">
+                    Confirmar nova senha
+                  </span>
+                  <input
+                    type="password"
+                    value={confirmAdminPassword}
+                    onChange={(event) => setConfirmAdminPassword(event.target.value)}
+                    className="w-full rounded-xl border border-slate-600 bg-slate-900/70 px-4 py-3 text-white outline-none focus:border-emerald-400"
+                  />
+                </label>
+                <div className="flex flex-col gap-2 sm:flex-row">
+                  <Button
+                    onClick={changeAdminPassword}
+                    disabled={passwordSaving}
+                    className="flex-1 bg-emerald-500 text-white hover:bg-emerald-600"
+                  >
+                    {passwordSaving ? (
+                      <Loader2
+                        className="w-4 h-4"
+                        style={{ animation: 'spin 1s linear infinite' }}
+                      />
+                    ) : (
+                      <Save className="w-4 h-4" />
+                    )}
+                    Salvar senha
+                  </Button>
+                  {!mustChangePassword && (
+                    <Button
+                      onClick={() => {
+                        setShowPasswordForm(false);
+                        setCurrentAdminPassword('');
+                        setNewAdminPassword('');
+                        setConfirmAdminPassword('');
+                      }}
+                      variant="ghost"
+                      className="text-slate-300 hover:text-white"
+                    >
+                      Cancelar
+                    </Button>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {!mustChangePassword && (
+          <>
         {/* Tabs */}
         <div className="flex flex-wrap gap-2 mb-6">
           {(
@@ -2963,6 +3136,8 @@ export default function AdminPage() {
                 )}
               </div>
             )}
+          </>
+        )}
           </>
         )}
       </div>
