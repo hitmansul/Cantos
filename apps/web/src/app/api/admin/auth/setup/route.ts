@@ -6,6 +6,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { randomBytes } from 'crypto';
 import sql from '@/app/api/utils/sql';
 import argon2 from 'argon2';
+import { ensureAdminUser } from '@/app/api/utils/adminSchema';
 
 function generateTempPassword(): string {
   // 12-char alphanumeric without ambiguous chars (0/O, 1/I/l)
@@ -51,6 +52,8 @@ export async function POST(req: NextRequest) {
     }
 
     const email = (body.email ?? 'hitmansul@gmail.com').toLowerCase().trim();
+
+    await ensureAdminUser(email);
 
     const admins = await sql`
       SELECT id, email FROM admin_users WHERE email = ${email} AND is_active = 1

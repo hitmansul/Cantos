@@ -8,6 +8,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import sql from '@/app/api/utils/sql';
 import argon2 from 'argon2';
 import { signAdminToken, ADMIN_COOKIE_NAME, ADMIN_COOKIE_MAX_AGE } from '@/app/api/utils/adminJwt';
+import { ensureAdminUser } from '@/app/api/utils/adminSchema';
 
 export async function POST(req: NextRequest) {
   try {
@@ -34,6 +35,8 @@ export async function POST(req: NextRequest) {
 
     const email = (body.email ?? 'hitmansul@gmail.com').toLowerCase().trim();
     const newPassword = body.newPassword;
+
+    await ensureAdminUser(email);
 
     // Find admin
     const admins = await sql`

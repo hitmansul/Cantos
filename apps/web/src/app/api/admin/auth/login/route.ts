@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import sql from '@/app/api/utils/sql';
 import argon2 from 'argon2';
 import { signAdminToken, ADMIN_COOKIE_NAME, ADMIN_COOKIE_MAX_AGE } from '@/app/api/utils/adminJwt';
+import { ensureAdminSchema } from '@/app/api/utils/adminSchema';
 
 export async function POST(req: NextRequest) {
   try {
@@ -20,6 +21,8 @@ export async function POST(req: NextRequest) {
     if (!body.email || !body.password) {
       return NextResponse.json({ error: 'Email e senha são obrigatórios' }, { status: 400 });
     }
+
+    await ensureAdminSchema();
 
     const admins = await sql`
       SELECT id, email, admin_password_hash, must_change_password

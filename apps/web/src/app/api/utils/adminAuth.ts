@@ -7,8 +7,11 @@ import { type NextRequest } from 'next/server';
 import { auth } from '@/lib/auth';
 import sql from '@/app/api/utils/sql';
 import { verifyAdminToken, ADMIN_COOKIE_NAME } from '@/app/api/utils/adminJwt';
+import { ensureAdminSchema } from '@/app/api/utils/adminSchema';
 
 export async function getAdminSession(request: NextRequest) {
+  await ensureAdminSchema();
+
   // ── 1. Check custom admin JWT cookie ────────────────────────────────────
   const token = request.cookies.get(ADMIN_COOKIE_NAME)?.value;
   if (token) {
