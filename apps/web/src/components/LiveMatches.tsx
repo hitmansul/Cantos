@@ -39,7 +39,13 @@ interface LiveMatch {
     totalStoppedMinutes: number;
     predictedAddedMs: number;
     predictedAddedMinutes: number;
-    source: '365scores-actual-play-time' | '365scores-sportradar';
+    source:
+      | '365scores-actual-play-time'
+      | '365scores-sportradar'
+      | '365scores-announced-added-time'
+      | 'sofascore-announced-added-time'
+      | 'api-football-announced-added-time';
+    kind?: 'calculated-stoppage' | 'announced-added-time';
     incidents: Array<{
       startAt: string;
       endAt?: string;
@@ -129,20 +135,38 @@ function formatMinuteValue(value: number) {
 
 function getOfficialAddedTimePrediction(
   match: LiveMatch
-): { totalLabel: string; addedLabel: string; sourceLabel: string } | null {
-  if (!match.stoppage || match.stoppage.totalStoppedMs <= 0) return null;
+): { totalLabel?: string; addedLabel: string; sourceLabel: string; announcedOnly: boolean } | null {
+  if (!match.stoppage) return null;
 
   const incidentCount = match.stoppage.incidents.length;
-  const sourceLabel =
-    match.stoppage.source === '365scores-actual-play-time'
-      ? 'tempo de bola rolando da 365Scores'
-      : 'play-by-play da 365Scores/Sportradar';
+  const announcedOnly = match.stoppage.kind === 'announced-added-time';
+  const sourceLabels: Record<NonNullable<LiveMatch['stoppage']>['source'], string> = {
+    '365scores-actual-play-time': 'tempo de bola rolando da 365Scores',
+    '365scores-sportradar': 'play-by-play da 365Scores/Sportradar',
+    '365scores-announced-added-time': 'acrescimo anunciado pela 365Scores',
+    'sofascore-announced-added-time': 'acrescimo anunciado pelo SofaScore',
+    'api-football-announced-added-time': 'acrescimo anunciado pela API-Football',
+  };
+  const sourceLabel = sourceLabels[match.stoppage.source] ?? 'fonte ao vivo';
+
+  if (announcedOnly && match.stoppage.predictedAddedMinutes > 0) {
+    return {
+      totalLabel: 'nao informado',
+      addedLabel: `+${formatMinuteValue(match.stoppage.predictedAddedMinutes)}`,
+      sourceLabel: `Acrescimo informado via ${sourceLabel}`,
+      announcedOnly: true,
+    };
+  }
+
+  if (match.stoppage.totalStoppedMs <= 0) return null;
+
   return {
     totalLabel: formatMinuteValue(match.stoppage.totalStoppedMinutes),
     addedLabel: `+${formatMinuteValue(match.stoppage.predictedAddedMinutes)}`,
     sourceLabel: `${incidentCount} parada${incidentCount === 1 ? '' : 's'} detectada${
       incidentCount === 1 ? '' : 's'
     } via ${sourceLabel}`,
+    announcedOnly: false,
   };
 }
 
@@ -288,7 +312,11 @@ function LiveMatchCard({
           {addedTime && (
             <div
               className="mt-2 grid gap-1 text-[11px]"
-              title={`${addedTime.sourceLabel}. A previsão de acréscimo usa 80% do tempo total de bola parada identificado.`}
+              title={
+                addedTime.announcedOnly
+                  ? `${addedTime.sourceLabel}. A fonte informou o acréscimo, mas não enviou o tempo total de bola parada.`
+                  : `${addedTime.sourceLabel}. A previsão de acréscimo usa 80% do tempo total de bola parada identificado.`
+              }
             >
               <Badge
                 variant="outline"
@@ -444,22 +472,28 @@ function LiveMatchDetails({
       </div>
 
       {addedTime ? (
-        <div className="grid gap-3 md:grid-cols-2">
-          <div className="rounded-lg border border-cyan-500/20 bg-cyan-500/10 p-3">
-            <p className="flex items-center gap-2 text-sm font-semibold text-cyan-300">
-              <Timer className="w-4 h-4" />
-              Tempo total de bola parada
-            </p>
-            <p className="mt-1 text-2xl font-bold">{addedTime.totalLabel}</p>
-            <p className="text-xs text-muted-foreground">{addedTime.sourceLabel}</p>
-          </div>
+        <div className={`grid gap-3 ${addedTime.announcedOnly ? 'md:grid-cols-1' : 'md:grid-cols-2'}`}>
+          {!addedTime.announcedOnly && (
+            <div className="rounded-lg border border-cyan-500/20 bg-cyan-500/10 p-3">
+              <p className="flex items-center gap-2 text-sm font-semibold text-cyan-300">
+                <Timer className="w-4 h-4" />
+                Tempo total de bola parada
+              </p>
+              <p className="mt-1 text-2xl font-bold">{addedTime.totalLabel}</p>
+              <p className="text-xs text-muted-foreground">{addedTime.sourceLabel}</p>
+            </div>
+          )}
           <div className="rounded-lg border border-amber-500/20 bg-amber-500/10 p-3">
             <p className="flex items-center gap-2 text-sm font-semibold text-amber-300">
               <Clock className="w-4 h-4" />
               Previsao de Acrescimo
             </p>
             <p className="mt-1 text-2xl font-bold">{addedTime.addedLabel}</p>
-            <p className="text-xs text-muted-foreground">80% do tempo total parado identificado.</p>
+            <p className="text-xs text-muted-foreground">
+              {addedTime.announcedOnly
+                ? `${addedTime.sourceLabel}. A fonte nao enviou o tempo total de bola parada.`
+                : '80% do tempo total parado identificado.'}
+            </p>
           </div>
         </div>
       ) : (

@@ -40,7 +40,13 @@ interface StoppageInfo {
   totalStoppedMinutes: number;
   predictedAddedMs: number;
   predictedAddedMinutes: number;
-  source: '365scores-actual-play-time' | '365scores-sportradar';
+  source:
+    | '365scores-actual-play-time'
+    | '365scores-sportradar'
+    | '365scores-announced-added-time'
+    | 'sofascore-announced-added-time'
+    | 'api-football-announced-added-time';
+  kind?: 'calculated-stoppage' | 'announced-added-time';
   incidents: StoppageIncident[];
 }
 
@@ -56,6 +62,8 @@ interface Scores365Game {
   homeCompetitor?: { id?: number; name?: string; score?: number; sportId?: number };
   awayCompetitor?: { id?: number; name?: string; score?: number; sportId?: number };
   actualPlayTime?: Scores365ActualPlayTime;
+  gameTimeDisplay?: string;
+  preciseGameTime?: string;
 }
 
 interface Scores365ActualPlayTime {
@@ -215,12 +223,48 @@ function calculateStoppageFromActualPlayTime(
     predictedAddedMs,
     predictedAddedMinutes: toRoundedMinutes(predictedAddedMs),
     source: '365scores-actual-play-time',
+    kind: 'calculated-stoppage',
     incidents: [
       {
         startAt: new Date().toISOString(),
         durationMs: totalStoppedMs,
         reason: 'Tempo total menos tempo de bola rolando informado pela 365Scores.',
         timeline: actualPlayTime?.totalTime?.name,
+      },
+    ],
+  };
+}
+
+function parseAddedTimeMinutes(value?: string | number | null) {
+  if (value === undefined || value === null) return null;
+  const normalized = String(value).replace(/\s+/g, '');
+  const match = normalized.match(/(?:45|90|105|120)\+(\d{1,2})/);
+  if (!match) return null;
+  const minutes = Number(match[1]);
+  return Number.isFinite(minutes) && minutes > 0 ? minutes : null;
+}
+
+function calculateAnnouncedAddedTime(
+  addedMinutes: number | null,
+  source: StoppageInfo['source'],
+  reason: string,
+  timeline?: string
+): StoppageInfo | undefined {
+  if (!addedMinutes || addedMinutes <= 0) return undefined;
+  const predictedAddedMs = addedMinutes * 60_000;
+  return {
+    totalStoppedMs: 0,
+    totalStoppedMinutes: 0,
+    predictedAddedMs,
+    predictedAddedMinutes: addedMinutes,
+    source,
+    kind: 'announced-added-time',
+    incidents: [
+      {
+        startAt: new Date().toISOString(),
+        durationMs: 0,
+        reason,
+        timeline,
       },
     ],
   };
@@ -426,6 +470,7 @@ function calculateStoppageInfo(messages: PlayByPlayMessage[]): StoppageInfo | un
     predictedAddedMs,
     predictedAddedMinutes: toRoundedMinutes(predictedAddedMs),
     source: '365scores-sportradar',
+    kind: 'calculated-stoppage',
     incidents,
   };
 }
@@ -506,28 +551,43 @@ async function fetchFrom365Scores(): Promise<LiveMatch[]> {
         const isFootball = game.sportId === 1 || game.homeCompetitor?.sportId === 1;
         return isFootball && game.statusGroup === 3 && game.homeCompetitor && game.awayCompetitor;
       })
-      .map((game) => ({
-        id: game.id,
-        minute:
-          typeof game.gameTime === 'number' && game.gameTime >= 0
-            ? game.gameTime
-            : game.statusText || 'AO VIVO',
-        statusText: game.statusText || 'Ao vivo',
-        homeTeam: {
-          id: game.homeCompetitor?.id ?? 0,
-          name: game.homeCompetitor?.name ?? 'Mandante',
-          score: Math.max(0, game.homeCompetitor?.score ?? 0),
-        },
-        awayTeam: {
-          id: game.awayCompetitor?.id ?? 0,
-          name: game.awayCompetitor?.name ?? 'Visitante',
-          score: Math.max(0, game.awayCompetitor?.score ?? 0),
-        },
-        competition: game.competitionDisplayName ?? game.competition?.name ?? 'Competicao',
-        competitionId: game.competitionId ?? 0,
-        source: '365scores',
-        sourceIds: { scores365: game.id },
-      }));
+      .map((game) => {
+        const displayMinute = game.gameTimeDisplay ?? game.preciseGameTime ?? game.statusText;
+        const addedTimeMinutes = parseAddedTimeMinutes(displayMinute);
+        const calculatedStoppage = calculateStoppageFromActualPlayTime(game.actualPlayTime);
+        const announcedAddedTime = calculateAnnouncedAddedTime(
+          addedTimeMinutes,
+          '365scores-announced-added-time',
+          'Acréscimo anunciado no relógio da 365Scores.',
+          displayMinute
+        );
+
+        return {
+          id: game.id,
+          minute:
+            displayMinute && addedTimeMinutes
+              ? displayMinute
+              : typeof game.gameTime === 'number' && game.gameTime >= 0
+                ? game.gameTime
+                : game.statusText || 'AO VIVO',
+          statusText: game.statusText || 'Ao vivo',
+          homeTeam: {
+            id: game.homeCompetitor?.id ?? 0,
+            name: game.homeCompetitor?.name ?? 'Mandante',
+            score: Math.max(0, game.homeCompetitor?.score ?? 0),
+          },
+          awayTeam: {
+            id: game.awayCompetitor?.id ?? 0,
+            name: game.awayCompetitor?.name ?? 'Visitante',
+            score: Math.max(0, game.awayCompetitor?.score ?? 0),
+          },
+          competition: game.competitionDisplayName ?? game.competition?.name ?? 'Competicao',
+          competitionId: game.competitionId ?? 0,
+          source: '365scores',
+          sourceIds: { scores365: game.id },
+          stoppage: calculatedStoppage ?? announcedAddedTime,
+        };
+      });
 
     const withStats = await enrichWith365Stats(liveMatches);
     return enrichWithStoppage(withStats);
@@ -593,6 +653,15 @@ async function fetchFromSofascore(): Promise<LiveMatch[]> {
         }
       }
 
+      const announcedAddedTime = calculateAnnouncedAddedTime(
+        typeof ev.time?.extra === 'number'
+          ? ev.time.extra
+          : parseAddedTimeMinutes(ev.status?.description),
+        'sofascore-announced-added-time',
+        'Acréscimo anunciado pelo relógio/status do SofaScore.',
+        ev.status?.description
+      );
+
       return {
         id: ev.id,
         minute,
@@ -611,6 +680,7 @@ async function fetchFromSofascore(): Promise<LiveMatch[]> {
         competitionId: ev.tournament?.uniqueTournament?.id ?? 0,
         source: 'sofascore',
         sourceIds: { sofascore: ev.id },
+        stoppage: announcedAddedTime,
       };
     });
   } catch (err) {
@@ -642,7 +712,7 @@ async function fetchFromApiFootball(): Promise<LiveMatch[]> {
       response?: Array<{
         fixture: {
           id: number;
-          status: { elapsed?: number; short?: string; long?: string };
+          status: { elapsed?: number; extra?: number; short?: string; long?: string };
         };
         league: { id: number; name: string; country: string };
         teams: {
@@ -680,9 +750,21 @@ async function fetchFromApiFootball(): Promise<LiveMatch[]> {
         }
       }
 
+      const announcedAddedTime = calculateAnnouncedAddedTime(
+        typeof item.fixture.status.extra === 'number'
+          ? item.fixture.status.extra
+          : parseAddedTimeMinutes(item.fixture.status.short ?? item.fixture.status.long),
+        'api-football-announced-added-time',
+        'Acréscimo anunciado pela API-Football.',
+        item.fixture.status.short ?? item.fixture.status.long
+      );
+
       return {
         id: item.fixture.id,
-        minute: item.fixture.status.elapsed ?? item.fixture.status.short ?? 'AO VIVO',
+        minute:
+          item.fixture.status.extra && item.fixture.status.elapsed
+            ? `${item.fixture.status.elapsed}+${item.fixture.status.extra}'`
+            : item.fixture.status.elapsed ?? item.fixture.status.short ?? 'AO VIVO',
         statusText: item.fixture.status.long ?? 'Em andamento',
         homeTeam: {
           id: item.teams.home.id,
@@ -700,6 +782,7 @@ async function fetchFromApiFootball(): Promise<LiveMatch[]> {
         statsSource: corners ? 'api-football' : undefined,
         source: 'api-football',
         sourceIds: { apiFootball: item.fixture.id },
+        stoppage: announcedAddedTime,
       };
     });
   } catch (err) {
