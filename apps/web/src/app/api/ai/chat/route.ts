@@ -456,13 +456,19 @@ function isFollowUpQuestion(text: string): boolean {
 
 function requestedHalf(text: string): 'first' | 'second' | null {
   const normalized = normalize(text);
-  if (['primeiro tempo', '1o tempo', '1 tempo', '1t', 'so no primeiro'].some((term) => normalized.includes(term))) {
-    return 'first';
-  }
-  if (['segundo tempo', '2o tempo', '2 tempo', '2t', 'so no segundo'].some((term) => normalized.includes(term))) {
-    return 'second';
-  }
-  return null;
+  const latestFirst = Math.max(
+    ...['primeiro tempo', '1o tempo', '1 tempo', '1t', 'so no primeiro', 'no primeiro', 'primeiro'].map((term) =>
+      normalized.lastIndexOf(term)
+    )
+  );
+  const latestSecond = Math.max(
+    ...['segundo tempo', '2o tempo', '2 tempo', '2t', 'so no segundo', 'no segundo', 'segundo'].map((term) =>
+      normalized.lastIndexOf(term)
+    )
+  );
+
+  if (latestFirst < 0 && latestSecond < 0) return null;
+  return latestSecond > latestFirst ? 'second' : 'first';
 }
 
 function scopeForQuestion(question: string, ctx: string): string {
