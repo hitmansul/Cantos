@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getFifaWorldCupSquads } from '@/lib/fifaWorldCup';
 
-// ── Auth ──────────────────────────────────────────────────────────────────────
+// Auth
 function isAuthorized(request: NextRequest): boolean {
   const cronSecret = process.env.CRON_SECRET;
   if (!cronSecret) return process.env.NODE_ENV === 'development';
@@ -12,7 +12,7 @@ function isAuthorized(request: NextRequest): boolean {
   return false;
 }
 
-// ── Handler principal ─────────────────────────────────────────────────────────
+// Handler principal
 export async function GET(request: NextRequest) {
   if (!isAuthorized(request)) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
@@ -38,8 +38,21 @@ export async function GET(request: NextRequest) {
         error: error instanceof Error ? error.message : 'Erro ao atualizar FIFA',
       }));
 
-    if (task === 'fifa') {
-      return NextResponse.json({ success: fifaRefresh.success, fifa: fifaRefresh, timestamp: new Date().toISOString() });
+    if (task === 'fifa' || !process.env.DATABASE_URL) {
+      const syncSkippedReason =
+        task === 'fifa'
+          ? 'Atualizacao limitada aos dados oficiais da FIFA.'
+          : 'DATABASE_URL nao configurado; atualizacao FIFA executada sem sincronizar o banco/admin.';
+
+      return NextResponse.json(
+        {
+          success: fifaRefresh.success,
+          fifa: fifaRefresh,
+          sync: { skipped: true, reason: syncSkippedReason },
+          timestamp: new Date().toISOString(),
+        },
+        { status: fifaRefresh.success ? 200 : 500 }
+      );
     }
 
     const res = await fetch(`${baseUrl}/api/admin/sync-all`, {
