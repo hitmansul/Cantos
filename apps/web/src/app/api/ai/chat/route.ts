@@ -173,6 +173,14 @@ function askedCoverage(text: string): boolean {
 
 function askedDataUpdate(text: string): boolean {
   const normalized = normalize(text);
+  if (
+    normalized.includes('dados') &&
+    ['atualiz', 'sincron', 'fonte', 'origem', 'vem'].some((term) => normalized.includes(term))
+  ) {
+    return true;
+  }
+  if (normalized.includes('como') && normalized.includes('atualiz')) return true;
+
   const updateTerms = [
     'como os dados sao atualizados',
     'como atualiza',
@@ -279,16 +287,41 @@ function askedBestCornerTeam(text: string): boolean {
   return [
     'qual time',
     'que time',
+    'qual equipe',
+    'que equipe',
+    'qual clube',
+    'que clube',
     'quem tem',
     'time tem',
     'time que tem',
-    'melhor media',
-    'maior media',
-    'maior numero',
+    'equipe tem',
+    'clube tem',
+    'times com',
+    'equipes com',
+    'clubes com',
     'ranking',
     'top ',
     'lider',
     'lidera',
+  ].some((term) => normalized.includes(term));
+}
+
+function asksExplicitTeamRanking(text: string): boolean {
+  const normalized = normalize(text);
+  return [
+    'qual time',
+    'que time',
+    'qual equipe',
+    'que equipe',
+    'qual clube',
+    'que clube',
+    'times',
+    'equipes',
+    'clubes',
+    'quem tem',
+    'time tem',
+    'equipe tem',
+    'clube tem',
   ].some((term) => normalized.includes(term));
 }
 
@@ -305,13 +338,39 @@ function askedBestCornerLeague(text: string): boolean {
     normalized.includes('campeonato') ||
     normalized.includes('liga') ||
     normalized.includes('competicao') ||
+    normalized.includes('competi') ||
     normalized.includes('torneio');
-  if (!asksCompetition) return false;
+
+  const asksBestMetric = [
+    'maior media',
+    'melhor media',
+    'maior numero',
+    'mais escanteios',
+    'melhor',
+    'maior',
+    'mais',
+    'ranking',
+    'top ',
+    'lider',
+    'lidera',
+    'tem a maior',
+    'tem melhor',
+  ].some((term) => normalized.includes(term));
+  if (!asksBestMetric) return false;
+
+  const explicitTeamRanking = asksExplicitTeamRanking(text);
+  if (!asksCompetition && explicitTeamRanking) return false;
+  if (!asksCompetition && !normalized.startsWith('qual') && !normalized.includes('ranking') && !normalized.includes('top ')) {
+    return false;
+  }
 
   return [
     'maior media',
     'melhor media',
     'maior numero',
+    'melhor',
+    'maior',
+    'mais',
     'qual campeonato',
     'qual liga',
     'qual competicao',
