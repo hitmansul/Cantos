@@ -59,8 +59,8 @@ interface Scores365Game {
   competitionId?: number;
   competitionDisplayName?: string;
   competition?: { name?: string };
-  homeCompetitor?: { id?: number; name?: string; score?: number; sportId?: number };
-  awayCompetitor?: { id?: number; name?: string; score?: number; sportId?: number };
+  homeCompetitor?: { id?: number; name?: string; score?: number; sportId?: number; countryId?: number };
+  awayCompetitor?: { id?: number; name?: string; score?: number; sportId?: number; countryId?: number };
   actualPlayTime?: Scores365ActualPlayTime;
   gameTimeDisplay?: string;
   preciseGameTime?: string;
@@ -108,6 +108,20 @@ const SCORES365_HEADERS = {
   Accept: 'application/json',
 };
 
+const SCORES365_COUNTRIES: Record<number, string> = {
+  18: 'EUA',
+  24: 'Suecia',
+  25: 'Finlandia',
+  51: 'Equador',
+  70: 'Etiopia',
+  73: 'Camaroes',
+  86: 'Coreia do Sul',
+  113: 'Bolivia',
+  121: 'Uzbequistao',
+  146: 'Panama',
+  252: 'Aruba',
+};
+
 const MAX_STOPPAGE_ENRICHMENT = 24;
 const STOPPAGE_MIN_DURATION_MS = 15_000;
 const STOPPAGE_MAX_OPEN_DURATION_MS = 7 * 60_000;
@@ -151,6 +165,23 @@ function normalizeText(value: string) {
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
     .toLowerCase();
+}
+
+function formatScores365Competition(game: Scores365Game) {
+  const baseName = game.competitionDisplayName ?? game.competition?.name ?? 'Competicao';
+  const homeCountry = game.homeCompetitor?.countryId
+    ? SCORES365_COUNTRIES[game.homeCompetitor.countryId]
+    : undefined;
+  const awayCountry = game.awayCompetitor?.countryId
+    ? SCORES365_COUNTRIES[game.awayCompetitor.countryId]
+    : undefined;
+  const sharedCountry = homeCountry && homeCountry === awayCountry ? homeCountry : undefined;
+
+  if (!sharedCountry) return baseName;
+  if (normalizeText(baseName).includes(normalizeText(sharedCountry))) return baseName;
+  if (baseName.includes('(')) return baseName;
+
+  return `${baseName} (${sharedCountry})`;
 }
 
 function matchKey(match: Pick<LiveMatch, 'homeTeam' | 'awayTeam'>) {
@@ -581,7 +612,7 @@ async function fetchFrom365Scores(): Promise<LiveMatch[]> {
             name: game.awayCompetitor?.name ?? 'Visitante',
             score: Math.max(0, game.awayCompetitor?.score ?? 0),
           },
-          competition: game.competitionDisplayName ?? game.competition?.name ?? 'Competicao',
+          competition: formatScores365Competition(game),
           competitionId: game.competitionId ?? 0,
           source: '365scores',
           sourceIds: { scores365: game.id },

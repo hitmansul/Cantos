@@ -1002,7 +1002,16 @@ export default function AdminPage() {
       setTeams(await teamsRes.json());
       setTeamStats(await statsRes.json());
       setMatches(await matchesRes.json());
-      setAdmins(await adminsRes.json());
+      const adminsData = await adminsRes.json();
+      if (adminsRes.ok && Array.isArray(adminsData)) {
+        setAdmins(adminsData);
+      } else {
+        setAdmins([]);
+        setMessage({
+          type: 'error',
+          text: adminsData?.error || 'Nao consegui carregar a lista de administradores.',
+        });
+      }
       setPendingMatches(await pendingRes.json());
       const faqData = (await faqsRes.json()) as { faqs: FaqItem[] };
       setFaqs(faqData.faqs ?? []);
@@ -1368,7 +1377,10 @@ export default function AdminPage() {
       });
       const data = await res.json();
       if (res.ok) {
-        setMessage({ type: 'success', text: 'Admin adicionado!' });
+        setMessage({
+          type: 'success',
+          text: data.alreadyExisted ? 'Admin ja existia e esta ativo.' : 'Admin adicionado!',
+        });
         setNewAdminEmail('');
         loadData();
       } else setMessage({ type: 'error', text: data.error || 'Erro ao adicionar' });
