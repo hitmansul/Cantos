@@ -1,7 +1,24 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Trophy, Calendar, MapPin, Users, Radio, RefreshCw, Loader2, ExternalLink, Search } from 'lucide-react';
+import {
+  Trophy,
+  Calendar,
+  MapPin,
+  Users,
+  Radio,
+  RefreshCw,
+  Loader2,
+  ExternalLink,
+  Search,
+  UserRound,
+  Ruler,
+  Cake,
+  Building2,
+  Shirt,
+  BarChart3,
+  ChevronRight,
+} from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -38,6 +55,8 @@ type FifaSquad = {
   players: FifaSquadPlayer[];
 };
 
+type PositionFilter = FifaSquadPlayer['position'] | 'ALL';
+
 type FifaSquadsResponse = {
   source: {
     url: string;
@@ -57,6 +76,63 @@ const POSITION_LABELS: Record<FifaSquadPlayer['position'], string> = {
   DF: 'Defensores',
   MF: 'Meias',
   FW: 'Atacantes',
+};
+
+const POSITION_SHORT_LABELS: Record<FifaSquadPlayer['position'], string> = {
+  GK: 'Goleiro',
+  DF: 'Defensor',
+  MF: 'Meia',
+  FW: 'Atacante',
+};
+
+const POSITION_FILTERS: Array<{ value: PositionFilter; label: string }> = [
+  { value: 'ALL', label: 'Todos' },
+  { value: 'GK', label: 'Goleiros' },
+  { value: 'DF', label: 'Defensores' },
+  { value: 'MF', label: 'Meias' },
+  { value: 'FW', label: 'Atacantes' },
+];
+
+const SQUAD_TEAM_ALIASES: Record<string, string> = {
+  alemanha: 'Germany',
+  argentina: 'Argentina',
+  argelia: 'Algeria',
+  australia: 'Australia',
+  austria: 'Austria',
+  belgica: 'Belgium',
+  bosnia: 'Bosnia And Herzegovina',
+  'bosnia e herzegovina': 'Bosnia And Herzegovina',
+  brasil: 'Brazil',
+  canada: 'Canada',
+  catar: 'Qatar',
+  colombia: 'Colombia',
+  'coreia do sul': 'Korea Republic',
+  croacia: 'Croatia',
+  curacao: 'Curacao',
+  equador: 'Ecuador',
+  escocia: 'Scotland',
+  espanha: 'Spain',
+  estados: 'USA',
+  'estados unidos': 'USA',
+  eua: 'USA',
+  franca: 'France',
+  gana: 'Ghana',
+  haiti: 'Haiti',
+  holanda: 'Netherlands',
+  inglaterra: 'England',
+  ira: 'IR Iran',
+  japao: 'Japan',
+  marrocos: 'Morocco',
+  mexico: 'Mexico',
+  noruega: 'Norway',
+  paraguai: 'Paraguay',
+  portugal: 'Portugal',
+  'rep tcheca': 'Czechia',
+  'republica tcheca': 'Czechia',
+  senegal: 'Senegal',
+  suica: 'Switzerland',
+  turquia: 'Turkiye',
+  uruguai: 'Uruguay',
 };
 
 const TEAM_FLAGS: Record<string, string> = {
@@ -259,6 +335,68 @@ function normalizeTeamName(value: string): string {
     .trim();
 }
 
+function fifaTeamLookupName(value: string): string {
+  const normalized = normalizeTeamName(value);
+  return SQUAD_TEAM_ALIASES[normalized] ?? value;
+}
+
+function findSquadTeam(teams: FifaSquad[], query: string): FifaSquad | undefined {
+  const normalizedQuery = normalizeTeamName(fifaTeamLookupName(query));
+  const normalizedRaw = normalizeTeamName(query);
+  return teams.find((team) => {
+    const normalizedTeam = normalizeTeamName(`${team.team} ${team.code}`);
+    return normalizedTeam.includes(normalizedQuery) || normalizedTeam.includes(normalizedRaw);
+  });
+}
+
+function playerKey(teamCode: string, player: FifaSquadPlayer): string {
+  return `${teamCode}-${player.number}-${player.playerName}`;
+}
+
+function parseFifaBirthDate(value: string): Date | null {
+  const [day, month, year] = value.split('/').map(Number);
+  if (!day || !month || !year) return null;
+  const date = new Date(Date.UTC(year, month - 1, day));
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function playerAge(value: string): number | null {
+  const date = parseFifaBirthDate(value);
+  if (!date) return null;
+  const now = new Date();
+  let age = now.getUTCFullYear() - date.getUTCFullYear();
+  const monthDiff = now.getUTCMonth() - date.getUTCMonth();
+  if (monthDiff < 0 || (monthDiff === 0 && now.getUTCDate() < date.getUTCDate())) age -= 1;
+  return age;
+}
+
+function average(values: number[]): number | null {
+  const valid = values.filter((value) => Number.isFinite(value));
+  if (valid.length === 0) return null;
+  return Math.round((valid.reduce((sum, value) => sum + value, 0) / valid.length) * 10) / 10;
+}
+
+function selectedTeamSummary(team: FifaSquad) {
+  const heights = team.players
+    .map((player) => player.heightCm)
+    .filter((height): height is number => typeof height === 'number' && Number.isFinite(height));
+  const ages = team.players
+    .map((player) => playerAge(player.dateOfBirth))
+    .filter((age): age is number => typeof age === 'number' && Number.isFinite(age));
+  const clubs = new Set(team.players.map((player) => player.club).filter(Boolean));
+  const positions = (['GK', 'DF', 'MF', 'FW'] as FifaSquadPlayer['position'][]).map((position) => ({
+    position,
+    total: team.players.filter((player) => player.position === position).length,
+  }));
+
+  return {
+    averageHeight: average(heights),
+    averageAge: average(ages),
+    clubs: clubs.size,
+    positions,
+  };
+}
+
 function flagForTeam(name: string): string {
   const normalized = normalizeTeamName(name);
   const known = Object.entries(TEAM_FLAGS).find(([team]) => normalizeTeamName(team) === normalized);
@@ -271,6 +409,13 @@ function isBrazilTeamName(name: string): boolean {
 
 export function WorldCupPage() {
   const [activeGroup, setActiveGroup] = useState<string>('C');
+  const [activeTab, setActiveTab] = useState('grupos');
+  const [selectedTeamQuery, setSelectedTeamQuery] = useState('Brasil');
+
+  function openTeamDetails(teamName: string) {
+    setSelectedTeamQuery(teamName);
+    setActiveTab('elencos');
+  }
 
   return (
     <div className="space-y-6">
@@ -313,7 +458,7 @@ export function WorldCupPage() {
       </div>
 
       {/* Main Tabs */}
-      <Tabs defaultValue="grupos" className="space-y-4">
+      <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
         <TabsList className="grid w-full grid-cols-6">
           <TabsTrigger value="grupos" className="gap-2">
             <Users className="w-4 h-4" />
@@ -333,7 +478,7 @@ export function WorldCupPage() {
           </TabsTrigger>
           <TabsTrigger value="elencos" className="gap-2">
             <Users className="w-4 h-4" />
-            <span className="hidden sm:inline">Elencos</span>
+            <span className="hidden sm:inline">Selecoes</span>
           </TabsTrigger>
           <TabsTrigger value="sedes" className="gap-2">
             <MapPin className="w-4 h-4" />
@@ -395,10 +540,15 @@ export function WorldCupPage() {
                       >
                         <td className="px-4 py-3 text-muted-foreground font-mono">{idx + 1}</td>
                         <td className="px-4 py-3">
-                          <div className="flex items-center gap-3">
+                          <button
+                            type="button"
+                            onClick={() => openTeamDetails(team.country)}
+                            className="flex items-center gap-3 rounded-lg px-2 py-1 -ml-2 text-left transition-colors hover:bg-emerald-500/10 focus:outline-none focus:ring-2 focus:ring-emerald-500/60"
+                          >
                             <span className="text-xl">{team.flag}</span>
                             <span className="font-medium">{team.country}</span>
-                          </div>
+                            <ChevronRight className="w-4 h-4 text-muted-foreground" />
+                          </button>
                         </td>
                         <td className="px-4 py-3 text-center text-muted-foreground">0</td>
                         <td className="px-4 py-3 text-center text-green-400">0</td>
@@ -438,10 +588,18 @@ export function WorldCupPage() {
                   </div>
                   <div className="space-y-1">
                     {teams.map((t) => (
-                      <div key={t.country} className="flex items-center gap-2 text-sm">
+                      <button
+                        key={t.country}
+                        type="button"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          openTeamDetails(t.country);
+                        }}
+                        className="flex w-full items-center gap-2 rounded-md px-1 py-0.5 text-left text-sm transition-colors hover:bg-emerald-500/10 focus:outline-none focus:ring-2 focus:ring-emerald-500/50"
+                      >
                         <span>{t.flag}</span>
                         <span className="truncate">{t.country}</span>
-                      </div>
+                      </button>
                     ))}
                   </div>
                 </Card>
@@ -523,7 +681,7 @@ export function WorldCupPage() {
 
         {/* Elencos Tab */}
         <TabsContent value="elencos" className="space-y-4">
-          <WorldCupSquads />
+          <WorldCupSquads selectedTeamQuery={selectedTeamQuery} />
         </TabsContent>
 
         {/* Sedes Tab */}
@@ -638,9 +796,11 @@ function BrazilMatches() {
   );
 }
 
-function WorldCupSquads() {
+function WorldCupSquads({ selectedTeamQuery }: { selectedTeamQuery?: string }) {
   const [data, setData] = useState<FifaSquadsResponse | null>(null);
   const [selectedCode, setSelectedCode] = useState('BRA');
+  const [selectedPlayerKey, setSelectedPlayerKey] = useState<string | null>(null);
+  const [positionFilter, setPositionFilter] = useState<PositionFilter>('ALL');
   const [query, setQuery] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -668,7 +828,26 @@ function WorldCupSquads() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  useEffect(() => {
+    if (!data || !selectedTeamQuery) return;
+    const team = findSquadTeam(data.teams, selectedTeamQuery);
+    if (team) setSelectedCode(team.code);
+  }, [data, selectedTeamQuery]);
+
+  useEffect(() => {
+    setPositionFilter('ALL');
+    setSelectedPlayerKey(null);
+  }, [selectedCode]);
+
   const selectedTeam = data?.teams.find((team) => team.code === selectedCode) ?? data?.teams[0];
+  const selectedTeamStats = selectedTeam ? selectedTeamSummary(selectedTeam) : null;
+  const visiblePlayers =
+    selectedTeam?.players.filter((player) => positionFilter === 'ALL' || player.position === positionFilter) ?? [];
+  const selectedPlayer =
+    selectedTeam?.players.find((player) => playerKey(selectedTeam.code, player) === selectedPlayerKey) ??
+    visiblePlayers[0] ??
+    selectedTeam?.players[0] ??
+    null;
   const filteredTeams =
     data?.teams.filter((team) => {
       const term = normalizeTeamName(query);
@@ -683,10 +862,10 @@ function WorldCupSquads() {
           <div>
             <h3 className="font-bold text-lg flex items-center gap-2">
               <Users className="w-5 h-5 text-emerald-400" />
-              Elencos oficiais FIFA
+              Selecoes e jogadores oficiais FIFA
             </h3>
             <p className="text-sm text-muted-foreground mt-1">
-              Convocacoes extraidas do Football Data Platform e atualizadas com cache diario.
+              Lista oficial de convocados extraida do Football Data Platform.
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
@@ -776,7 +955,10 @@ function WorldCupSquads() {
           <section className="p-4 space-y-4">
             <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
               <div>
-                <h4 className="text-xl font-bold">{selectedTeam.team}</h4>
+                <h4 className="text-xl font-bold flex items-center gap-2">
+                  <span>{flagForTeam(selectedTeam.team)}</span>
+                  {selectedTeam.team}
+                </h4>
                 <p className="text-sm text-muted-foreground">
                   {selectedTeam.players.length} convocados oficiais
                   {selectedTeam.coach?.name ? ` • Tecnico: ${selectedTeam.coach.name}` : ''}
@@ -787,45 +969,104 @@ function WorldCupSquads() {
               </Badge>
             </div>
 
-            {(['GK', 'DF', 'MF', 'FW'] as FifaSquadPlayer['position'][]).map((position) => {
-              const players = selectedTeam.players.filter((player) => player.position === position);
-              if (players.length === 0) return null;
-              return (
-                <div key={position} className="rounded-xl border border-border overflow-hidden">
-                  <div className="px-4 py-2 bg-muted/40 font-semibold text-sm">
-                    {POSITION_LABELS[position]} <span className="text-muted-foreground">({players.length})</span>
-                  </div>
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-sm">
-                      <thead className="text-xs text-muted-foreground bg-muted/20">
-                        <tr>
-                          <th className="px-3 py-2 text-left">#</th>
-                          <th className="px-3 py-2 text-left">Jogador</th>
-                          <th className="px-3 py-2 text-left">Camisa</th>
-                          <th className="px-3 py-2 text-left">Clube</th>
-                          <th className="px-3 py-2 text-left">Nascimento</th>
-                          <th className="px-3 py-2 text-left">Altura</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-border">
-                        {players.map((player) => (
-                          <tr key={`${selectedTeam.code}-${player.number}-${player.playerName}`} className="hover:bg-muted/30">
-                            <td className="px-3 py-2 text-muted-foreground">{player.number}</td>
-                            <td className="px-3 py-2 font-semibold">{player.playerName}</td>
-                            <td className="px-3 py-2">{player.shirtName}</td>
-                            <td className="px-3 py-2 text-muted-foreground">{player.club}</td>
-                            <td className="px-3 py-2 text-muted-foreground">{player.dateOfBirth}</td>
-                            <td className="px-3 py-2 text-muted-foreground">
-                              {player.heightCm ? `${player.heightCm} cm` : '-'}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
+            {selectedTeamStats && (
+              <div className="grid sm:grid-cols-4 gap-3">
+                <div className="rounded-lg bg-muted/30 p-3">
+                  <div className="text-xs text-muted-foreground">Jogadores</div>
+                  <div className="text-lg font-bold text-emerald-400">{selectedTeam.players.length}</div>
+                </div>
+                <div className="rounded-lg bg-muted/30 p-3">
+                  <div className="text-xs text-muted-foreground">Clubes</div>
+                  <div className="text-lg font-bold text-emerald-400">{selectedTeamStats.clubs}</div>
+                </div>
+                <div className="rounded-lg bg-muted/30 p-3">
+                  <div className="text-xs text-muted-foreground">Altura media</div>
+                  <div className="text-lg font-bold text-emerald-400">
+                    {selectedTeamStats.averageHeight ? `${selectedTeamStats.averageHeight} cm` : '-'}
                   </div>
                 </div>
-              );
-            })}
+                <div className="rounded-lg bg-muted/30 p-3">
+                  <div className="text-xs text-muted-foreground">Idade media</div>
+                  <div className="text-lg font-bold text-emerald-400">
+                    {selectedTeamStats.averageAge ? `${selectedTeamStats.averageAge} anos` : '-'}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {selectedTeamStats && (
+              <div className="flex flex-wrap gap-2">
+                {selectedTeamStats.positions.map((item) => (
+                  <Badge key={item.position} variant="outline" className="bg-muted/30">
+                    {POSITION_LABELS[item.position]}: {item.total}
+                  </Badge>
+                ))}
+              </div>
+            )}
+
+            <div className="grid xl:grid-cols-[1fr_360px] gap-4">
+              <div className="rounded-xl border border-border overflow-hidden">
+                <div className="border-b border-border bg-muted/30 p-3 space-y-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <div className="font-semibold flex items-center gap-2">
+                        <Users className="w-4 h-4 text-emerald-400" />
+                        Lista de jogadores
+                      </div>
+                      <div className="text-xs text-muted-foreground">
+                        {visiblePlayers.length} jogadores exibidos
+                      </div>
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {POSITION_FILTERS.map((filter) => (
+                      <button
+                        key={filter.value}
+                        type="button"
+                        onClick={() => setPositionFilter(filter.value)}
+                        className={`rounded-full border px-3 py-1 text-xs font-semibold transition-colors ${
+                          positionFilter === filter.value
+                            ? 'border-emerald-500 bg-emerald-500/20 text-emerald-300'
+                            : 'border-border bg-muted/20 text-muted-foreground hover:bg-muted/50'
+                        }`}
+                      >
+                        {filter.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="divide-y divide-border">
+                  {visiblePlayers.map((player) => {
+                    const key = playerKey(selectedTeam.code, player);
+                    const isSelected = selectedPlayer ? key === playerKey(selectedTeam.code, selectedPlayer) : false;
+                    return (
+                      <button
+                        key={key}
+                        type="button"
+                        onClick={() => setSelectedPlayerKey(key)}
+                        className={`grid w-full grid-cols-[48px_1fr_auto] items-center gap-3 px-4 py-3 text-left transition-colors ${
+                          isSelected ? 'bg-emerald-500/10' : 'hover:bg-muted/30'
+                        }`}
+                      >
+                        <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-muted/50 font-bold text-emerald-300">
+                          {player.number}
+                        </span>
+                        <span className="min-w-0">
+                          <span className="block truncate font-semibold">{player.playerName}</span>
+                          <span className="block truncate text-xs text-muted-foreground">
+                            {POSITION_SHORT_LABELS[player.position]} • {player.club}
+                          </span>
+                        </span>
+                        <ChevronRight className="w-4 h-4 text-muted-foreground" />
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <PlayerPersonalStats team={selectedTeam} player={selectedPlayer} />
+            </div>
           </section>
         </div>
       ) : null}
@@ -834,6 +1075,91 @@ function WorldCupSquads() {
 }
 
 // Sub-component: fetches Copa do Mundo upcoming/results from 365Scores API — auto-loads
+function PlayerPersonalStats({ team, player }: { team: FifaSquad; player: FifaSquadPlayer | null }) {
+  if (!player) {
+    return (
+      <aside className="rounded-xl border border-border bg-muted/20 p-4">
+        <div className="text-sm text-muted-foreground">Nenhum jogador selecionado.</div>
+      </aside>
+    );
+  }
+
+  const age = playerAge(player.dateOfBirth);
+  const teamStats = selectedTeamSummary(team);
+  const heightDiff =
+    player.heightCm && teamStats.averageHeight
+      ? Math.round((player.heightCm - teamStats.averageHeight) * 10) / 10
+      : null;
+
+  const detailRows = [
+    { icon: Shirt, label: 'Camisa', value: String(player.number) },
+    { icon: UserRound, label: 'Posicao', value: POSITION_SHORT_LABELS[player.position] },
+    { icon: Building2, label: 'Clube', value: player.club || '-' },
+    { icon: Cake, label: 'Idade', value: age ? `${age} anos` : '-' },
+    { icon: Calendar, label: 'Nascimento', value: player.dateOfBirth || '-' },
+    { icon: Ruler, label: 'Altura', value: player.heightCm ? `${player.heightCm} cm` : '-' },
+  ];
+
+  return (
+    <aside className="rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-4 space-y-4">
+      <div className="space-y-1">
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-emerald-500/20 text-lg font-black text-emerald-300">
+            {player.number}
+          </div>
+          <Badge className="bg-emerald-500/20 text-emerald-300 border-emerald-500/30">
+            {team.code}
+          </Badge>
+        </div>
+        <h5 className="text-lg font-bold leading-tight">{player.playerName}</h5>
+        <p className="text-sm text-muted-foreground">
+          {POSITION_SHORT_LABELS[player.position]} de {team.team}
+        </p>
+      </div>
+
+      <div className="grid grid-cols-2 gap-2">
+        {detailRows.map((row) => {
+          const Icon = row.icon;
+          return (
+            <div key={row.label} className="rounded-lg bg-muted/30 p-3">
+              <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                <Icon className="w-3.5 h-3.5" />
+                {row.label}
+              </div>
+              <div className="mt-1 text-sm font-semibold">{row.value}</div>
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="rounded-lg border border-border bg-background/30 p-3 space-y-2">
+        <div className="flex items-center gap-2 text-sm font-semibold">
+          <BarChart3 className="w-4 h-4 text-emerald-400" />
+          Estatisticas pessoais
+        </div>
+        <div className="space-y-2 text-sm">
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-muted-foreground">Altura vs. media da selecao</span>
+            <span className="font-semibold">
+              {heightDiff === null ? '-' : `${heightDiff > 0 ? '+' : ''}${heightDiff} cm`}
+            </span>
+          </div>
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-muted-foreground">Jogadores da posicao</span>
+            <span className="font-semibold">
+              {team.players.filter((item) => item.position === player.position).length}
+            </span>
+          </div>
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-muted-foreground">Fonte</span>
+            <span className="font-semibold">FIFA</span>
+          </div>
+        </div>
+      </div>
+    </aside>
+  );
+}
+
 function WorldCupMatches({
   showResults = false,
   autoLoad = false,
