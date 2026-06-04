@@ -215,6 +215,8 @@ function askedStats(text: string): boolean {
 
 function askedBestCornerTeam(text: string): boolean {
   const normalized = normalize(text);
+  if (askedBestCornerLeague(text)) return false;
+
   const asksCornerAverage =
     normalized.includes('escanteio') ||
     normalized.includes('corner') ||
@@ -235,6 +237,39 @@ function askedBestCornerTeam(text: string): boolean {
     'top ',
     'lider',
     'lidera',
+  ].some((term) => normalized.includes(term));
+}
+
+function askedBestCornerLeague(text: string): boolean {
+  const normalized = normalize(text);
+  const asksCornerAverage =
+    normalized.includes('escanteio') ||
+    normalized.includes('corner') ||
+    normalized.includes('media') ||
+    normalized.includes('medias');
+  if (!asksCornerAverage) return false;
+
+  const asksCompetition =
+    normalized.includes('campeonato') ||
+    normalized.includes('liga') ||
+    normalized.includes('competicao') ||
+    normalized.includes('torneio');
+  if (!asksCompetition) return false;
+
+  return [
+    'maior media',
+    'melhor media',
+    'maior numero',
+    'qual campeonato',
+    'qual liga',
+    'qual competicao',
+    'qual torneio',
+    'ranking',
+    'top ',
+    'lider',
+    'lidera',
+    'tem a maior',
+    'tem melhor',
   ].some((term) => normalized.includes(term));
 }
 
@@ -472,6 +507,52 @@ function bestCornerTeamReply(question: string, ctx: string): string | null {
   return formatBestCornerTeams('base local', allStats, half, question, true);
 }
 
+function formatBestCornerLeagues(half: 'first' | 'second' | null, question: string): string {
+  const totalMetric = wantsTotalCornerAverage(question) || !normalize(question).includes('a favor');
+  const valueFor = (stats: LocalTeamStats[]): number => {
+    if (half === 'first') return oneDecimal(weightedAverage(stats, firstHalf) * 2);
+    if (half === 'second') return oneDecimal(weightedAverage(stats, secondHalf) * 2);
+    if (totalMetric) return weightedAverage(stats, (item) => item.avgTotalCorners);
+    return weightedAverage(stats, (item) => item.avgCornersFor);
+  };
+
+  const metricLabel =
+    half === 'first'
+      ? 'media total estimada no 1o tempo'
+      : half === 'second'
+        ? 'media total estimada no 2o tempo'
+        : totalMetric
+          ? 'media total de escanteios por jogo'
+          : 'media de escanteios a favor por time';
+
+  const ranked = STATS_SETS.map((set) => ({
+    label: set.label,
+    value: valueFor(set.stats),
+    teams: set.stats.length,
+    sample: set.stats.reduce((sum, item) => sum + Math.max(0, item.gamesPlayed), 0),
+  })).sort((a, b) => b.value - a.value);
+
+  if (ranked.length === 0) {
+    return 'Nao encontrei ranking local de medias por campeonato.';
+  }
+
+  const leader = ranked[0];
+  const rows = ranked
+    .slice(0, 5)
+    .map(
+      (item, index) =>
+        `${index + 1}. ${item.label}: ${item.value} escanteios (${item.teams} times, ${item.sample} registros)`
+    )
+    .join('\n');
+
+  return `O campeonato com maior ${metricLabel} na base local e ${leader.label}, com ${leader.value} escanteios.\n\nTop 5 campeonatos:\n${rows}`;
+}
+
+function bestCornerLeagueReply(question: string): string | null {
+  if (!askedBestCornerLeague(question)) return null;
+  return formatBestCornerLeagues(requestedHalf(question), question);
+}
+
 function bestStatsForTeam(
   team: string,
   question: string,
@@ -550,6 +631,9 @@ function addedTimeReply(question: string, ctx: string): string | null {
 
 function statsReply(question: string, ctx: string): string | null {
   if (!askedStats(question)) return null;
+  const bestLeague = bestCornerLeagueReply(question);
+  if (bestLeague) return bestLeague;
+
   const bestTeam = bestCornerTeamReply(question, ctx);
   if (bestTeam) return bestTeam;
 
