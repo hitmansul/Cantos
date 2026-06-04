@@ -213,6 +213,31 @@ function askedStats(text: string): boolean {
   return normalized.includes('media') || normalized.includes('medias');
 }
 
+function askedBestCornerTeam(text: string): boolean {
+  const normalized = normalize(text);
+  const asksCornerAverage =
+    normalized.includes('escanteio') ||
+    normalized.includes('corner') ||
+    normalized.includes('media') ||
+    normalized.includes('medias');
+  if (!asksCornerAverage) return false;
+
+  return [
+    'qual time',
+    'que time',
+    'quem tem',
+    'time tem',
+    'time que tem',
+    'melhor media',
+    'maior media',
+    'maior numero',
+    'ranking',
+    'top ',
+    'lider',
+    'lidera',
+  ].some((term) => normalized.includes(term));
+}
+
 function askedCards(text: string): boolean {
   const normalized = normalize(text);
   return ['cartao', 'cartoes', 'juiz', 'arbitro'].some((term) => normalized.includes(term));
@@ -371,6 +396,82 @@ function formatLeagueStats(label: string, stats: LocalTeamStats[], half: 'first'
   return `${label}:\n\n- Media total dos jogos: ${avgTotal} escanteios.\n- Media a favor por time: ${avgFor} escanteios.\n- Media contra por time: ${avgAgainst} escanteios.\n- Por tempo estimado: ${avgFirstTotal} no 1o tempo e ${avgSecondTotal} no 2o tempo.\n- Over 8.5: ${over85}% | Over 9.5: ${over95}% | Over 10.5: ${over105}%.\n- Base: ${stats.length} times e ${sample} registros de jogos analisados.`;
 }
 
+function wantsTotalCornerAverage(text: string): boolean {
+  const normalized = normalize(text);
+  return [
+    'media total',
+    'total medio',
+    'total de escanteios',
+    'escanteios no jogo',
+    'jogo inteiro',
+  ].some((term) => normalized.includes(term));
+}
+
+function formatBestCornerTeams(
+  label: string,
+  stats: LocalTeamStats[],
+  half: 'first' | 'second' | null,
+  question: string,
+  overall = false
+): string {
+  const totalMetric = wantsTotalCornerAverage(question);
+  const valueFor = (item: LocalTeamStats): number => {
+    if (half === 'first') return firstHalf(item);
+    if (half === 'second') return secondHalf(item);
+    if (totalMetric) return item.avgTotalCorners;
+    return item.avgCornersFor;
+  };
+  const metricLabel =
+    half === 'first'
+      ? 'media a favor no 1o tempo'
+      : half === 'second'
+        ? 'media a favor no 2o tempo'
+        : totalMetric
+          ? 'media total de escanteios nos jogos'
+          : 'media de escanteios a favor';
+
+  const ranked = stats
+    .filter((item) => Number.isFinite(valueFor(item)))
+    .sort((a, b) => valueFor(b) - valueFor(a));
+
+  if (ranked.length === 0) {
+    return `Nao encontrei ranking local de escanteios para ${label}.`;
+  }
+
+  const leader = ranked[0];
+  const rows = ranked
+    .slice(0, 5)
+    .map((item, index) => {
+      const source = overall ? ` (${item.league ?? label})` : '';
+      return `${index + 1}. ${item.team}${source}: ${oneDecimal(valueFor(item))} escanteios`;
+    })
+    .join('\n');
+
+  return `${overall ? 'Na base local inteira' : `No ${label}`}, o time com melhor ${metricLabel} e ${leader.team}, com ${oneDecimal(valueFor(leader))} escanteios.\n\nTop 5:\n${rows}`;
+}
+
+function bestCornerTeamReply(question: string, ctx: string): string | null {
+  if (!askedBestCornerTeam(question)) return null;
+
+  const half = requestedHalf(question);
+  const directSet = bestStatsSetForLeague(question, question);
+  const contextualSet = !directSet && ctx ? bestStatsSetForLeague(ctx, ctx) : null;
+  const set = directSet ?? contextualSet;
+
+  if (set) {
+    return formatBestCornerTeams(set.label, set.stats, half, question);
+  }
+
+  const allStats = STATS_SETS.flatMap((statsSet) =>
+    statsSet.stats.map((item) => ({
+      ...item,
+      league: item.league ?? statsSet.label,
+    }))
+  );
+
+  return formatBestCornerTeams('base local', allStats, half, question, true);
+}
+
 function bestStatsForTeam(
   team: string,
   question: string,
@@ -449,6 +550,9 @@ function addedTimeReply(question: string, ctx: string): string | null {
 
 function statsReply(question: string, ctx: string): string | null {
   if (!askedStats(question)) return null;
+  const bestTeam = bestCornerTeamReply(question, ctx);
+  if (bestTeam) return bestTeam;
+
   const combined = scopeForQuestion(question, ctx);
   const team = mentionedTeams(combined)
     .map((name) => ({ name, pos: latestMention(combined, name) }))
