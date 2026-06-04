@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Trophy, Calendar, MapPin, Users, Radio, RefreshCw, Loader2 } from 'lucide-react';
+import { Trophy, Calendar, MapPin, Users, Radio, RefreshCw, Loader2, ExternalLink, Search } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -16,6 +16,47 @@ type DisplayMatch = {
   flag?: string;
   homeTeam: WCTeam;
   awayTeam: WCTeam;
+};
+
+type FifaSquadPlayer = {
+  number: number;
+  position: 'GK' | 'DF' | 'MF' | 'FW';
+  playerName: string;
+  shirtName: string;
+  dateOfBirth: string;
+  club: string;
+  heightCm: number | null;
+};
+
+type FifaSquad = {
+  team: string;
+  code: string;
+  coach?: {
+    name: string;
+    nationality: string;
+  };
+  players: FifaSquadPlayer[];
+};
+
+type FifaSquadsResponse = {
+  source: {
+    url: string;
+    articleUrl: string;
+    lastModified: string | null;
+    footerUpdatedAt: string | null;
+    version: string | null;
+  };
+  generatedAt: string;
+  totalTeams: number;
+  totalPlayers: number;
+  teams: FifaSquad[];
+};
+
+const POSITION_LABELS: Record<FifaSquadPlayer['position'], string> = {
+  GK: 'Goleiros',
+  DF: 'Defensores',
+  MF: 'Meias',
+  FW: 'Atacantes',
 };
 
 const TEAM_FLAGS: Record<string, string> = {
@@ -193,6 +234,21 @@ function formatMatchTime(isoString: string): string {
   }).format(date);
 }
 
+function formatSourceDate(value?: string | null): string {
+  if (!value) return 'data nao informada';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat('pt-BR', {
+    timeZone: 'America/Sao_Paulo',
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).format(date);
+}
+
 function normalizeTeamName(value: string): string {
   return value
     .toLowerCase()
@@ -258,7 +314,7 @@ export function WorldCupPage() {
 
       {/* Main Tabs */}
       <Tabs defaultValue="grupos" className="space-y-4">
-        <TabsList className="grid w-full grid-cols-5">
+        <TabsList className="grid w-full grid-cols-6">
           <TabsTrigger value="grupos" className="gap-2">
             <Users className="w-4 h-4" />
             <span className="hidden sm:inline">Grupos</span>
@@ -274,6 +330,10 @@ export function WorldCupPage() {
           <TabsTrigger value="resultados" className="gap-2">
             <Trophy className="w-4 h-4" />
             <span className="hidden sm:inline">Resultados</span>
+          </TabsTrigger>
+          <TabsTrigger value="elencos" className="gap-2">
+            <Users className="w-4 h-4" />
+            <span className="hidden sm:inline">Elencos</span>
           </TabsTrigger>
           <TabsTrigger value="sedes" className="gap-2">
             <MapPin className="w-4 h-4" />
@@ -461,6 +521,11 @@ export function WorldCupPage() {
           </Card>
         </TabsContent>
 
+        {/* Elencos Tab */}
+        <TabsContent value="elencos" className="space-y-4">
+          <WorldCupSquads />
+        </TabsContent>
+
         {/* Sedes Tab */}
         <TabsContent value="sedes" className="space-y-4">
           <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-3">
@@ -570,6 +635,201 @@ function BrazilMatches() {
         </div>
       ))}
     </>
+  );
+}
+
+function WorldCupSquads() {
+  const [data, setData] = useState<FifaSquadsResponse | null>(null);
+  const [selectedCode, setSelectedCode] = useState('BRA');
+  const [query, setQuery] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  async function load(forceRefresh = false) {
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/fifa/world-cup/squads${forceRefresh ? '?refresh=1' : ''}`);
+      if (!res.ok) throw new Error('Nao foi possivel carregar os elencos oficiais agora.');
+      const response = (await res.json()) as FifaSquadsResponse;
+      setData(response);
+      if (!response.teams.some((team) => team.code === selectedCode)) {
+        setSelectedCode(response.teams[0]?.code ?? 'BRA');
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Erro desconhecido');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const selectedTeam = data?.teams.find((team) => team.code === selectedCode) ?? data?.teams[0];
+  const filteredTeams =
+    data?.teams.filter((team) => {
+      const term = normalizeTeamName(query);
+      if (!term) return true;
+      return normalizeTeamName(`${team.team} ${team.code}`).includes(term);
+    }) ?? [];
+
+  return (
+    <Card className="overflow-hidden border-emerald-500/20">
+      <div className="p-4 border-b border-border bg-emerald-500/5">
+        <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4">
+          <div>
+            <h3 className="font-bold text-lg flex items-center gap-2">
+              <Users className="w-5 h-5 text-emerald-400" />
+              Elencos oficiais FIFA
+            </h3>
+            <p className="text-sm text-muted-foreground mt-1">
+              Convocacoes extraidas do Football Data Platform e atualizadas com cache diario.
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Button variant="outline" size="sm" onClick={() => load(true)} disabled={loading}>
+              {loading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <RefreshCw className="w-4 h-4 mr-2" />}
+              Atualizar
+            </Button>
+            {data && (
+              <Button variant="outline" size="sm" asChild>
+                <a href={data.source.url} target="_blank" rel="noreferrer">
+                  <ExternalLink className="w-4 h-4 mr-2" />
+                  PDF oficial
+                </a>
+              </Button>
+            )}
+          </div>
+        </div>
+
+        {data && (
+          <div className="grid sm:grid-cols-3 gap-3 mt-4">
+            <div className="rounded-lg bg-muted/40 p-3">
+              <div className="text-xs text-muted-foreground">Selecoes</div>
+              <div className="text-xl font-bold text-emerald-400">{data.totalTeams}</div>
+            </div>
+            <div className="rounded-lg bg-muted/40 p-3">
+              <div className="text-xs text-muted-foreground">Jogadores</div>
+              <div className="text-xl font-bold text-emerald-400">{data.totalPlayers}</div>
+            </div>
+            <div className="rounded-lg bg-muted/40 p-3">
+              <div className="text-xs text-muted-foreground">Fonte atualizada</div>
+              <div className="text-sm font-semibold">
+                {formatSourceDate(data.source.lastModified)}
+              </div>
+              {data.source.version && (
+                <div className="text-xs text-muted-foreground">Versao {data.source.version}</div>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {loading && !data ? (
+        <div className="flex items-center justify-center py-10">
+          <Loader2 className="w-6 h-6 animate-spin text-emerald-500" />
+          <span className="ml-2 text-muted-foreground">Carregando elencos oficiais...</span>
+        </div>
+      ) : error ? (
+        <div className="text-center py-10 space-y-3">
+          <p className="text-red-400">{error}</p>
+          <Button variant="outline" onClick={() => load()}>
+            <RefreshCw className="w-4 h-4 mr-2" />
+            Tentar novamente
+          </Button>
+        </div>
+      ) : data && selectedTeam ? (
+        <div className="grid lg:grid-cols-[280px_1fr]">
+          <aside className="border-r border-border p-4 space-y-3">
+            <label className="text-xs font-medium text-muted-foreground">Buscar selecao</label>
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+              <input
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder="Brasil, Argentina..."
+                className="w-full rounded-lg border border-border bg-muted/40 pl-9 pr-3 py-2 text-sm outline-none focus:border-emerald-500"
+              />
+            </div>
+            <div className="max-h-[560px] overflow-auto pr-1 space-y-1">
+              {filteredTeams.map((team) => (
+                <button
+                  key={team.code}
+                  type="button"
+                  onClick={() => setSelectedCode(team.code)}
+                  className={`w-full text-left rounded-lg px-3 py-2 text-sm transition-colors ${
+                    selectedTeam.code === team.code
+                      ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                      : 'bg-muted/20 hover:bg-muted/50 border border-transparent'
+                  }`}
+                >
+                  <span className="font-semibold">{team.team}</span>
+                  <span className="text-muted-foreground ml-2">{team.code}</span>
+                </button>
+              ))}
+            </div>
+          </aside>
+
+          <section className="p-4 space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
+              <div>
+                <h4 className="text-xl font-bold">{selectedTeam.team}</h4>
+                <p className="text-sm text-muted-foreground">
+                  {selectedTeam.players.length} convocados oficiais
+                  {selectedTeam.coach?.name ? ` • Tecnico: ${selectedTeam.coach.name}` : ''}
+                </p>
+              </div>
+              <Badge className="bg-emerald-500/20 text-emerald-300 border-emerald-500/30">
+                FIFA {data.source.version ? `v${data.source.version}` : ''}
+              </Badge>
+            </div>
+
+            {(['GK', 'DF', 'MF', 'FW'] as FifaSquadPlayer['position'][]).map((position) => {
+              const players = selectedTeam.players.filter((player) => player.position === position);
+              if (players.length === 0) return null;
+              return (
+                <div key={position} className="rounded-xl border border-border overflow-hidden">
+                  <div className="px-4 py-2 bg-muted/40 font-semibold text-sm">
+                    {POSITION_LABELS[position]} <span className="text-muted-foreground">({players.length})</span>
+                  </div>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead className="text-xs text-muted-foreground bg-muted/20">
+                        <tr>
+                          <th className="px-3 py-2 text-left">#</th>
+                          <th className="px-3 py-2 text-left">Jogador</th>
+                          <th className="px-3 py-2 text-left">Camisa</th>
+                          <th className="px-3 py-2 text-left">Clube</th>
+                          <th className="px-3 py-2 text-left">Nascimento</th>
+                          <th className="px-3 py-2 text-left">Altura</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-border">
+                        {players.map((player) => (
+                          <tr key={`${selectedTeam.code}-${player.number}-${player.playerName}`} className="hover:bg-muted/30">
+                            <td className="px-3 py-2 text-muted-foreground">{player.number}</td>
+                            <td className="px-3 py-2 font-semibold">{player.playerName}</td>
+                            <td className="px-3 py-2">{player.shirtName}</td>
+                            <td className="px-3 py-2 text-muted-foreground">{player.club}</td>
+                            <td className="px-3 py-2 text-muted-foreground">{player.dateOfBirth}</td>
+                            <td className="px-3 py-2 text-muted-foreground">
+                              {player.heightCm ? `${player.heightCm} cm` : '-'}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              );
+            })}
+          </section>
+        </div>
+      ) : null}
+    </Card>
   );
 }
 

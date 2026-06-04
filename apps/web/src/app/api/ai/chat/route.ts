@@ -11,6 +11,7 @@ import {
   sulAmericanaTeamStats,
 } from '@/data/cornerStats';
 import { SCORES365_COMPETITIONS } from '@/app/api/utils/scores365';
+import { findFifaSquad, getFifaWorldCupSquads, type FifaSquad, type FifaSquadPlayer } from '@/lib/fifaWorldCup';
 
 export const maxDuration = 60;
 
@@ -190,6 +191,57 @@ function askedDataUpdate(text: string): boolean {
     'sofascore',
   ];
   return updateTerms.some((term) => normalized.includes(term));
+}
+
+function askedWorldCupSquad(text: string): boolean {
+  const normalized = normalize(text);
+  const squadTerms = [
+    'convocacao',
+    'convocacoes',
+    'convocados',
+    'convocado',
+    'elenco',
+    'elencos',
+    'lista de jogadores',
+    'jogadores convocados',
+    'quem foi chamado',
+    'selecionados',
+    'squad',
+    'goleiros',
+    'defensores',
+    'zagueiros',
+    'laterais',
+    'meias',
+    'atacantes',
+  ];
+  const worldCupTerms = ['copa do mundo', 'mundial', 'fifa', 'selecao', 'selecoes'];
+  const teamHintTerms = [
+    'brasil',
+    'argentina',
+    'franca',
+    'inglaterra',
+    'alemanha',
+    'espanha',
+    'portugal',
+    'marrocos',
+    'haiti',
+    'escocia',
+    'eua',
+  ];
+  return (
+    squadTerms.some((term) => normalized.includes(term)) &&
+    (worldCupTerms.some((term) => normalized.includes(term)) ||
+      teamHintTerms.some((term) => normalized.includes(term)))
+  );
+}
+
+function requestedSquadPosition(text: string): FifaSquadPlayer['position'] | null {
+  const normalized = normalize(text);
+  if (['goleiro', 'goleiros', 'goalkeeper', 'gk'].some((term) => normalized.includes(term))) return 'GK';
+  if (['defensor', 'defensores', 'zagueiro', 'zagueiros', 'lateral', 'laterais', 'df'].some((term) => normalized.includes(term))) return 'DF';
+  if (['meia', 'meias', 'meio campo', 'meio-campo', 'mf'].some((term) => normalized.includes(term))) return 'MF';
+  if (['atacante', 'atacantes', 'forward', 'fw'].some((term) => normalized.includes(term))) return 'FW';
+  return null;
 }
 
 function askedUpcoming(text: string): boolean {
@@ -376,11 +428,67 @@ function coverageReply(): string {
     return `- ${set.label}: ${teams.length} times com media geral e por tempo.`;
   }).join('\n');
 
-  return `Ligas integradas no app:\n\n${formatCatalog()}\n\nBases estatisticas carregadas:\n${statsLines}\n\nA IA tenta responder primeiro por esses dados locais. O Gemini so entra quando a pergunta pede interpretacao aberta ou quando o dado nao existe na base.`;
+  return `Ligas integradas no app:\n\n${formatCatalog()}\n\nBases estatisticas carregadas:\n${statsLines}\n\nCopa do Mundo:\n- Elencos oficiais da FIFA com cache diario pela rota /api/fifa/world-cup/squads.\n\nA IA tenta responder primeiro por esses dados locais. O Gemini so entra quando a pergunta pede interpretacao aberta ou quando o dado nao existe na base.`;
+}
+
+const SQUAD_POSITION_LABELS: Record<FifaSquadPlayer['position'], string> = {
+  GK: 'Goleiros',
+  DF: 'Defensores',
+  MF: 'Meias',
+  FW: 'Atacantes',
+};
+
+function squadPlayerLine(player: FifaSquadPlayer): string {
+  const height = player.heightCm ? `, ${player.heightCm} cm` : '';
+  return `${player.number}. ${player.playerName} (${player.club}${height})`;
+}
+
+function formatSquad(squad: FifaSquad, position: FifaSquadPlayer['position'] | null, sourceDate: string | null): string {
+  const sourceLine = sourceDate ? `\nFonte FIFA atualizada em: ${sourceDate}.` : '';
+  const coachLine = squad.coach?.name ? `\nTecnico: ${squad.coach.name} (${squad.coach.nationality}).` : '';
+
+  if (position) {
+    const players = squad.players.filter((player) => player.position === position);
+    if (players.length === 0) return `Nao encontrei ${SQUAD_POSITION_LABELS[position].toLowerCase()} para ${squad.team} na lista oficial.`;
+
+    return `${SQUAD_POSITION_LABELS[position]} de ${squad.team} na Copa do Mundo 2026:\n\n${players
+      .map((player) => `- ${squadPlayerLine(player)}`)
+      .join('\n')}${coachLine}${sourceLine}`;
+  }
+
+  const sections = (['GK', 'DF', 'MF', 'FW'] as FifaSquadPlayer['position'][])
+    .map((pos) => {
+      const players = squad.players.filter((player) => player.position === pos);
+      if (players.length === 0) return '';
+      return `${SQUAD_POSITION_LABELS[pos]}:\n${players.map((player) => `- ${squadPlayerLine(player)}`).join('\n')}`;
+    })
+    .filter(Boolean)
+    .join('\n\n');
+
+  return `Convocacao oficial de ${squad.team} para a Copa do Mundo 2026:\n\n${sections}${coachLine}${sourceLine}`;
+}
+
+async function worldCupSquadReply(question: string, ctx: string): Promise<string | null> {
+  if (!askedWorldCupSquad(question)) return null;
+
+  const combined = scopeForQuestion(question, ctx);
+  const data = await getFifaWorldCupSquads();
+  const squad = findFifaSquad(data, combined);
+  const sourceDate = data.source.footerUpdatedAt ?? data.source.lastModified;
+
+  if (!squad) {
+    const sampleTeams = data.teams
+      .slice(0, 12)
+      .map((team) => team.team)
+      .join(', ');
+    return `Sim. Tenho a lista oficial da FIFA com ${data.totalTeams} selecoes e ${data.totalPlayers} jogadores, atualizada diariamente pela rota da aplicacao.\n\nExemplos de selecoes carregadas: ${sampleTeams}.\n\nPergunte assim: "convocados do Brasil na Copa" ou "goleiros da Argentina na Copa".`;
+  }
+
+  return formatSquad(squad, requestedSquadPosition(question), sourceDate);
 }
 
 function dataUpdateReply(): string {
-  return `Os dados do app entram por camadas, sempre priorizando fonte local e fonte ao vivo antes de IA externa.\n\n- Tempo Real: busca jogos ao vivo na hora pela API da 365Scores, pela API publica do SofaScore e, se a chave gratuita estiver configurada, pela API-Football. A tela atualiza automaticamente a cada 30 segundos.\n- Estatisticas ao vivo do jogo: quando a fonte entrega estatisticas do evento, o app mostra escanteios, finalizacoes, posse, cartoes e outros numeros disponiveis. Se a fonte nao enviar, eu aviso que nao tenho em vez de inventar.\n- Previsao de Acrescimo: primeiro tento usar tempo real de bola rolando ou play-by-play com parada e retomada. Quando isso nao existe, uso acrescimo anunciado pela fonte ao vivo, como 45+X, 90+X ou campo extra. Nesse caso eu mostro o acrescimo, mas aviso que o tempo total de bola parada nao foi enviado.\n- Proximos jogos, resultados e tabelas: vem das rotas de 365Scores/SofaScore e tambem da base local onde ja temos agenda, chaveamentos e estatisticas historicas.\n- Base local: medias de escanteios por time, por competicao e por tempo ficam nos arquivos de dados do app e no banco quando o admin sincroniza/importa jogos.\n- Admin/sincronizacao: o painel admin usa DATABASE_URL para gravar dados; a rota de cron chama a sincronizacao geral quando CRON_SECRET esta configurado.\n- Gemini: so deve entrar quando a pergunta precisa de interpretacao aberta ou quando a base local nao tem a resposta direta. Para medias, proximos jogos, cartoes e acrescimos, eu tento resolver localmente primeiro.`;
+  return `Os dados do app entram por camadas, sempre priorizando fonte local e fonte ao vivo antes de IA externa.\n\n- FIFA oficial: os elencos/convocacoes da Copa do Mundo vem do PDF oficial do FIFA Football Data Platform. A rota /api/fifa/world-cup/squads faz cache por 24h e o cron diario tambem tenta aquecer essa fonte.\n- Tempo Real: busca jogos ao vivo na hora pela API da 365Scores, pela API publica do SofaScore e, se a chave gratuita estiver configurada, pela API-Football. A tela atualiza automaticamente a cada 30 segundos.\n- Estatisticas ao vivo do jogo: quando a fonte entrega estatisticas do evento, o app mostra escanteios, finalizacoes, posse, cartoes e outros numeros disponiveis. Se a fonte nao enviar, eu aviso que nao tenho em vez de inventar.\n- Previsao de Acrescimo: primeiro tento usar tempo real de bola rolando ou play-by-play com parada e retomada. Quando isso nao existe, uso acrescimo anunciado pela fonte ao vivo, como 45+X, 90+X ou campo extra. Nesse caso eu mostro o acrescimo, mas aviso que o tempo total de bola parada nao foi enviado.\n- Proximos jogos, resultados e tabelas: vem das rotas de 365Scores/SofaScore e tambem da base local onde ja temos agenda, chaveamentos e estatisticas historicas.\n- Base local: medias de escanteios por time, por competicao e por tempo ficam nos arquivos de dados do app e no banco quando o admin sincroniza/importa jogos.\n- Admin/sincronizacao: o painel admin usa DATABASE_URL para gravar dados; a rota de cron chama a sincronizacao geral quando CRON_SECRET esta configurado.\n- Gemini: so deve entrar quando a pergunta precisa de interpretacao aberta ou quando a base local nao tem a resposta direta. Para medias, proximos jogos, cartoes, convocacoes e acrescimos, eu tento resolver localmente primeiro.`;
 }
 
 function cornerMethodReply(): string {
@@ -739,9 +847,11 @@ function cardsReply(question: string, ctx: string): string | null {
   return `Dados locais de cartoes:\n\n${lines.join('\n')}`;
 }
 
-function localReply(question: string, ctx: string): string | null {
+async function localReply(question: string, ctx: string): Promise<string | null> {
   if (askedDataUpdate(question)) return dataUpdateReply();
   if (askedCoverage(question)) return coverageReply();
+  const squad = await worldCupSquadReply(question, ctx);
+  if (squad) return squad;
   if (askedAddedTime(question)) return addedTimeReply(question, ctx);
   if (askedCards(question)) return cardsReply(question, ctx);
   if (askedUpcoming(question)) return upcomingReply(question, ctx);
@@ -752,6 +862,8 @@ function localReply(question: string, ctx: string): string | null {
   if (isFollowUpQuestion(question) && ctx) {
     const contextualQuestion = `${ctx} ${question}`;
     if (askedDataUpdate(ctx)) return dataUpdateReply();
+    const contextualSquad = await worldCupSquadReply(contextualQuestion, '');
+    if (contextualSquad) return contextualSquad;
     if (askedAddedTime(ctx)) return addedTimeReply(contextualQuestion, '');
     if (askedCards(ctx)) return cardsReply(contextualQuestion, '');
     if (askedUpcoming(ctx)) return upcomingReply(contextualQuestion, '');
@@ -763,9 +875,9 @@ function localReply(question: string, ctx: string): string | null {
   return null;
 }
 
-function fallbackReply(question: string, ctx: string): string {
+async function fallbackReply(question: string, ctx: string): Promise<string> {
   return (
-    localReply(question, ctx) ??
+    (await localReply(question, ctx)) ??
     `Nao encontrei uma resposta direta na base local para essa pergunta.\n\nPara eu acertar melhor, cite time, competicao e periodo quando fizer sentido. Exemplos:\n- "media do Fluminense na Libertadores no 1o tempo"\n- "proximo jogo do Fluminense na Libertadores"\n- "previsao de cartoes para Sao Paulo x Palmeiras"`
   );
 }
@@ -797,12 +909,12 @@ export async function POST(request: NextRequest) {
     }
 
     const ctx = context(messages);
-    const local = localReply(lastUser.content, ctx);
+    const local = await localReply(lastUser.content, ctx);
     if (local) return NextResponse.json({ reply: local, provider: 'local-first' });
 
     const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) {
-      return NextResponse.json({ reply: fallbackReply(lastUser.content, ctx), provider: 'local-fallback' });
+      return NextResponse.json({ reply: await fallbackReply(lastUser.content, ctx), provider: 'local-fallback' });
     }
 
     const response = await fetch(
@@ -833,7 +945,7 @@ export async function POST(request: NextRequest) {
           ? 'O Gemini gratuito atingiu o limite agora. Respondi com os dados locais do app.'
           : `O Gemini retornou erro ${response.status}. Respondi com os dados locais do app.`;
       return NextResponse.json({
-        reply: `${prefix}\n\n${fallbackReply(lastUser.content, ctx)}`,
+        reply: `${prefix}\n\n${await fallbackReply(lastUser.content, ctx)}`,
         provider: 'local-fallback',
       });
     }
@@ -842,7 +954,7 @@ export async function POST(request: NextRequest) {
       candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
     };
     return NextResponse.json({
-      reply: data.candidates?.[0]?.content?.parts?.[0]?.text ?? fallbackReply(lastUser.content, ctx),
+      reply: data.candidates?.[0]?.content?.parts?.[0]?.text ?? (await fallbackReply(lastUser.content, ctx)),
       provider: 'gemini',
     });
   } catch (error) {
