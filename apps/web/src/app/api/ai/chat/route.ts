@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getHeadToHead, teamStats } from '@/data/teamCornerStats';
+import { getHeadToHead, headToHeadData, teamStats, type HeadToHead } from '@/data/teamCornerStats';
 import { currentUpcomingMatches, type CurrentFixture } from '@/data/currentFixtures';
 import { findReferee, getRefereeStatsSummary } from '@/data/brazilianReferees';
 import { findTeamCardStats } from '@/data/teamCardStats';
@@ -86,7 +86,7 @@ function isContextAnchor(text: string): boolean {
   const normalized = normalize(text);
   if (!normalized || isFollowUpQuestion(text)) return false;
   if (hasExplicitStatsScope(text)) return true;
-  if (askedBestCornerLeague(text) || askedBestCornerTeam(text)) return true;
+  if (askedBestCornerConfrontation(text) || askedBestCornerLeague(text) || askedBestCornerTeam(text)) return true;
   return askedUpcoming(text) || askedCards(text) || askedAddedTime(text) || askedWorldCupSquad(text);
 }
 
@@ -290,6 +290,43 @@ function askedStats(text: string): boolean {
   return normalized.includes('media') || normalized.includes('medias');
 }
 
+function askedBestCornerConfrontation(text: string): boolean {
+  const normalized = normalize(text);
+  const asksCornerAverage =
+    normalized.includes('escanteio') ||
+    normalized.includes('corner') ||
+    normalized.includes('media') ||
+    normalized.includes('medias');
+  if (!asksCornerAverage) return false;
+
+  const asksConfrontation = [
+    'confronto',
+    'confrontos',
+    'duelo',
+    'duelos',
+    'h2h',
+    'frente a frente',
+    'jogo entre',
+    'partida entre',
+  ].some((term) => normalized.includes(term));
+  if (!asksConfrontation) return false;
+
+  return [
+    'maior media',
+    'melhor media',
+    'mais escanteios',
+    'melhor',
+    'maior',
+    'mais',
+    'ranking',
+    'top ',
+    'lider',
+    'lidera',
+    'teve a maior',
+    'tem a maior',
+  ].some((term) => normalized.includes(term));
+}
+
 function askedBestCornerTeam(text: string): boolean {
   const normalized = normalize(text);
   if (askedBestCornerLeague(text)) return false;
@@ -344,6 +381,7 @@ function asksExplicitTeamRanking(text: string): boolean {
 
 function askedBestCornerLeague(text: string): boolean {
   const normalized = normalize(text);
+  if (askedBestCornerConfrontation(text)) return false;
   const asksCornerAverage =
     normalized.includes('escanteio') ||
     normalized.includes('corner') ||
@@ -749,6 +787,67 @@ function bestCornerLeagueReply(question: string): string | null {
   return formatBestCornerLeagues(requestedHalf(question), question);
 }
 
+function teamStatsCandidates(team: string): { stats: LocalTeamStats; league: string; setLabel: string }[] {
+  const teamKey = normalize(team);
+  return STATS_SETS.flatMap((set) =>
+    set.stats
+      .filter((stats) => {
+        const statsKey = normalize(stats.team);
+        return statsKey === teamKey || statsKey.includes(teamKey) || teamKey.includes(statsKey);
+      })
+      .map((stats) => ({ stats, setLabel: set.label, league: stats.league ?? set.label }))
+  );
+}
+
+function headToHeadLeague(h2h: HeadToHead): string {
+  const homeCandidates = teamStatsCandidates(h2h.homeTeam);
+  const awayCandidates = teamStatsCandidates(h2h.awayTeam);
+
+  for (const home of homeCandidates) {
+    const sameSet = awayCandidates.find((away) => away.setLabel === home.setLabel);
+    if (sameSet) return home.setLabel;
+  }
+
+  const home = homeCandidates[0];
+  const away = awayCandidates[0];
+  if (home && away && normalize(home.league) === normalize(away.league)) return home.league;
+  return home?.setLabel ?? away?.setLabel ?? 'base local';
+}
+
+function sameLeagueScope(value: string, label: string): boolean {
+  const normalizedValue = normalize(value);
+  const normalizedLabel = normalize(label);
+  return normalizedValue === normalizedLabel || normalizedValue.includes(normalizedLabel);
+}
+
+function bestCornerConfrontationReply(question: string, ctx: string): string | null {
+  if (!askedBestCornerConfrontation(question)) return null;
+
+  const combined = scopeForQuestion(question, ctx);
+  const set = bestStatsSetForLeague(question, combined);
+  const ranked = headToHeadData
+    .map((h2h) => ({ h2h, league: headToHeadLeague(h2h) }))
+    .filter((row) => !set || sameLeagueScope(row.league, set.label))
+    .sort((a, b) => b.h2h.avgTotalCorners - a.h2h.avgTotalCorners);
+
+  if (ranked.length === 0) {
+    const scope = set ? ` para ${set.label}` : '';
+    return `Nao encontrei confrontos com historico local de escanteios${scope}.`;
+  }
+
+  const leader = ranked[0];
+  const scope = set ? ` no ${set.label}` : ' na base local';
+  const rows = ranked
+    .slice(0, 5)
+    .map(
+      ({ h2h, league }, index) =>
+        `${index + 1}. ${h2h.homeTeam} x ${h2h.awayTeam}: ${oneDecimal(h2h.avgTotalCorners)} escanteios (${h2h.matches.length} jogos, ${league})`
+    )
+    .join('\n');
+
+  return `O confronto com maior media total de escanteios${scope} e ${leader.h2h.homeTeam} x ${leader.h2h.awayTeam}, com ${oneDecimal(leader.h2h.avgTotalCorners)} escanteios por jogo.\n\nTop 5 confrontos:\n${rows}`;
+}
+
 function bestStatsForTeam(
   team: string,
   question: string,
@@ -827,6 +926,9 @@ function addedTimeReply(question: string, ctx: string): string | null {
 
 function statsReply(question: string, ctx: string): string | null {
   if (!askedStats(question)) return null;
+  const bestConfrontation = bestCornerConfrontationReply(question, ctx);
+  if (bestConfrontation) return bestConfrontation;
+
   const bestLeague = bestCornerLeagueReply(question);
   if (bestLeague) return bestLeague;
 
