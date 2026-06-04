@@ -9,6 +9,11 @@ const nextConfig = {
   typescript: {
     ignoreBuildErrors: true,
   },
+  outputFileTracingIncludes: {
+    '/api/ai/chat': ['../../node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs'],
+    '/api/cron/daily-update': ['../../node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs'],
+    '/api/fifa/world-cup/squads': ['../../node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs'],
+  },
   env: {
     NEXT_PUBLIC_CREATE_BASE_URL: process.env.NEXT_PUBLIC_CREATE_BASE_URL,
     NEXT_PUBLIC_CREATE_HOST: process.env.NEXT_PUBLIC_CREATE_HOST,
