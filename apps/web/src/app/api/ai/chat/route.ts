@@ -70,11 +70,24 @@ function unique(values: string[]): string[] {
 
 function context(messages: ChatMessage[]): string {
   const userMessages = messages.filter((message) => message.role === 'user');
-  return userMessages
-    .slice(0, -1)
-    .slice(-6)
-    .map((message) => message.content)
-    .join(' ');
+  const previous = userMessages.slice(0, -1).slice(-8);
+  const focused: string[] = [];
+
+  for (let index = previous.length - 1; index >= 0; index -= 1) {
+    const content = previous[index]?.content ?? '';
+    focused.unshift(content);
+    if (isContextAnchor(content)) break;
+  }
+
+  return focused.join(' ');
+}
+
+function isContextAnchor(text: string): boolean {
+  const normalized = normalize(text);
+  if (!normalized || isFollowUpQuestion(text)) return false;
+  if (hasExplicitStatsScope(text)) return true;
+  if (askedBestCornerLeague(text) || askedBestCornerTeam(text)) return true;
+  return askedUpcoming(text) || askedCards(text) || askedAddedTime(text) || askedWorldCupSquad(text);
 }
 
 function oneDecimal(value: number): number {
@@ -114,6 +127,10 @@ function leagueAliases(label: string): string[] {
 function mentionsLeague(text: string, league: string): boolean {
   const normalized = normalize(text);
   return leagueAliases(league).some((alias) => normalized.includes(alias));
+}
+
+function hasExplicitStatsScope(text: string): boolean {
+  return STATS_SETS.some((set) => mentionsLeague(text, set.label)) || mentionedTeams(text).length > 0;
 }
 
 function bestStatsSetForLeague(
@@ -471,8 +488,14 @@ function requestedHalf(text: string): 'first' | 'second' | null {
   return latestSecond > latestFirst ? 'second' : 'first';
 }
 
+function shouldUseContextForQuestion(question: string): boolean {
+  if (isFollowUpQuestion(question)) return true;
+  if (hasExplicitStatsScope(question)) return false;
+  return askedStats(question) && (requestedHalf(question) !== null || normalize(question).includes('media'));
+}
+
 function scopeForQuestion(question: string, ctx: string): string {
-  return isFollowUpQuestion(question) && ctx ? `${ctx} ${question}` : question;
+  return shouldUseContextForQuestion(question) && ctx ? `${ctx} ${question}` : question;
 }
 
 function formatCatalog(): string {
