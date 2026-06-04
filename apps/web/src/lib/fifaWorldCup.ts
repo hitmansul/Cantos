@@ -34,12 +34,16 @@ export type FifaSquadsData = {
     footerUpdatedAt: string | null;
     version: string | null;
     updateCadence: string;
+    fallback?: boolean;
+    fallbackReason?: string;
   };
   generatedAt: string;
   totalTeams: number;
   totalPlayers: number;
   teams: FifaSquad[];
 };
+
+import { getFifaWorldCupSquadsSnapshot } from '@/data/fifaWorldCupSquadsSnapshot';
 
 type PdfTextItem = {
   str: string;
@@ -350,23 +354,46 @@ async function parsePdf(buffer: ArrayBuffer, lastModified: string | null): Promi
   };
 }
 
+function getSnapshotData(reason: unknown): FifaSquadsData {
+  const fallbackReason = reason instanceof Error ? reason.message : 'Falha ao atualizar fonte oficial em tempo real';
+  const data = structuredClone(getFifaWorldCupSquadsSnapshot() as FifaSquadsData);
+  return {
+    ...data,
+    generatedAt: new Date().toISOString(),
+    source: {
+      ...data.source,
+      fallback: true,
+      fallbackReason,
+      updateCadence:
+        'Tentativa de atualizacao diaria pela FIFA; usando snapshot oficial versionado quando a fonte online falha',
+    },
+  };
+}
+
 export async function getFifaWorldCupSquads(forceRefresh = false): Promise<FifaSquadsData> {
   if (!forceRefresh && squadsCache && squadsCache.expiresAt > Date.now()) {
     return squadsCache.data;
   }
 
-  const response = await fetch(FIFA_SQUAD_LIST_URL, {
-    headers: { Accept: 'application/pdf' },
-    next: { revalidate: 86400 },
-  });
+  try {
+    const response = await fetch(FIFA_SQUAD_LIST_URL, {
+      headers: { Accept: 'application/pdf' },
+      next: { revalidate: 86400 },
+    });
 
-  if (!response.ok) {
-    throw new Error(`FIFA squad list returned ${response.status}`);
+    if (!response.ok) {
+      throw new Error(`FIFA squad list returned ${response.status}`);
+    }
+
+    const data = await parsePdf(await response.arrayBuffer(), response.headers.get('last-modified'));
+    squadsCache = { data, expiresAt: Date.now() + DAY_MS };
+    return data;
+  } catch (error) {
+    console.error('[fifaWorldCup] official squad refresh failed, using snapshot:', error);
+    const fallbackData = getSnapshotData(error);
+    squadsCache = { data: fallbackData, expiresAt: Date.now() + DAY_MS };
+    return fallbackData;
   }
-
-  const data = await parsePdf(await response.arrayBuffer(), response.headers.get('last-modified'));
-  squadsCache = { data, expiresAt: Date.now() + DAY_MS };
-  return data;
 }
 
 export function findFifaSquad(data: FifaSquadsData, query: string): FifaSquad | null {

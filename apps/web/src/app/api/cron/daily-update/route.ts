@@ -30,6 +30,8 @@ export async function GET(request: NextRequest) {
         totalTeams: data.totalTeams,
         totalPlayers: data.totalPlayers,
         lastModified: data.source.lastModified,
+        fallback: data.source.fallback ?? false,
+        fallbackReason: data.source.fallbackReason,
       }))
       .catch((error) => ({
         success: false,
