@@ -81,9 +81,30 @@ function sideOdd(bookmaker: OddsBookmaker, side: OddsSide): number | null {
   return bookmaker[side];
 }
 
+function bestSideOdd(event: OddsEvent, side: OddsSide): number | null {
+  const values = event.bookmakers
+    .map((bookmaker) => sideOdd(bookmaker, side))
+    .filter((value): value is number => typeof value === 'number' && Number.isFinite(value));
+  return values.length > 0 ? Math.max(...values) : null;
+}
+
+function bookmakerFocusOdd(bookmaker: OddsBookmaker, focusSide: OddsSide): number {
+  return sideOdd(bookmaker, focusSide) ?? bookmaker.home ?? bookmaker.draw ?? bookmaker.away ?? 0;
+}
+
 function WorldCupOddsEventCard({ event }: { event: OddsEvent }) {
+  const [showAllBookmakers, setShowAllBookmakers] = useState(false);
   const bet365 = event.bookmakers.find((bookmaker) => bookmaker.name.toLowerCase().includes('bet365'));
-  const visibleBookmakers = useMemo(() => event.bookmakers.slice(0, 4), [event.bookmakers]);
+  const focusSide = event.bestPick?.side ?? 'home';
+  const visibleBookmakers = useMemo(() => {
+    const sorted = [...event.bookmakers].sort((a, b) => {
+      const oddDiff = bookmakerFocusOdd(b, focusSide) - bookmakerFocusOdd(a, focusSide);
+      if (oddDiff !== 0) return oddDiff;
+      return a.name.localeCompare(b.name, 'pt-BR');
+    });
+    return showAllBookmakers ? sorted : sorted.slice(0, 8);
+  }, [event.bookmakers, focusSide, showAllBookmakers]);
+  const hiddenBookmakerCount = Math.max(0, event.bookmakers.length - visibleBookmakers.length);
 
   return (
     <Card className="p-4 space-y-4 border-emerald-500/20 bg-emerald-950/10">
@@ -101,6 +122,9 @@ function WorldCupOddsEventCard({ event }: { event: OddsEvent }) {
             <Badge variant="outline" className="text-emerald-300">
               odds reais
             </Badge>
+            <Badge variant="outline" className="text-blue-300">
+              {event.bookmakers.length} casas
+            </Badge>
           </div>
           <h3 className="text-lg font-bold">
             {event.homeTeam} x {event.awayTeam}
@@ -112,7 +136,7 @@ function WorldCupOddsEventCard({ event }: { event: OddsEvent }) {
           <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm">
             <div className="flex items-center gap-2 font-semibold text-emerald-300">
               <TrendingUp className="h-4 w-4" />
-              Melhor alerta
+              Melhor valor detectado
             </div>
             <div className="mt-1 text-foreground">
               {event.bestPick.label} em {event.bestPick.bookmaker}
@@ -144,13 +168,18 @@ function WorldCupOddsEventCard({ event }: { event: OddsEvent }) {
           <div className="mb-2 flex items-center justify-between gap-2">
             <div className="flex items-center gap-2 text-sm font-semibold">
               <BadgeDollarSign className="h-4 w-4 text-amber-300" />
-              Casas
+              Comparacao de casas
             </div>
-            {bet365 && (
-              <Badge className="bg-emerald-500/20 text-emerald-300">
-                Bet365 real
+            <div className="flex flex-wrap items-center justify-end gap-2">
+              <Badge variant="outline" className="text-blue-300">
+                melhores odds destacadas
               </Badge>
-            )}
+              {bet365 && (
+                <Badge className="bg-emerald-500/20 text-emerald-300">
+                  Bet365 disponivel
+                </Badge>
+              )}
+            </div>
           </div>
           <div className="overflow-x-auto">
             <table className="w-full min-w-[520px] text-sm">
@@ -167,11 +196,23 @@ function WorldCupOddsEventCard({ event }: { event: OddsEvent }) {
                 {visibleBookmakers.map((bookmaker) => (
                   <tr key={bookmaker.name}>
                     <td className="py-2 font-medium">{bookmaker.name}</td>
-                    {(['home', 'draw', 'away'] as OddsSide[]).map((side) => (
-                      <td key={side} className="py-2 text-center font-semibold">
-                        {sideOdd(bookmaker, side)?.toFixed(2) ?? '-'}
-                      </td>
-                    ))}
+                    {(['home', 'draw', 'away'] as OddsSide[]).map((side) => {
+                      const odd = sideOdd(bookmaker, side);
+                      const isBestOdd = odd !== null && odd === bestSideOdd(event, side);
+                      return (
+                        <td key={side} className="py-2 text-center font-semibold">
+                          <span
+                            className={
+                              isBestOdd
+                                ? 'inline-flex min-w-[3.5rem] items-center justify-center rounded-full bg-emerald-500/20 px-2 py-1 text-emerald-300'
+                                : 'inline-flex min-w-[3.5rem] items-center justify-center px-2 py-1'
+                            }
+                          >
+                            {odd?.toFixed(2) ?? '-'}
+                          </span>
+                        </td>
+                      );
+                    })}
                     <td className="py-2 text-center">
                       <Badge variant="outline" className="text-emerald-300">
                         real
@@ -182,6 +223,18 @@ function WorldCupOddsEventCard({ event }: { event: OddsEvent }) {
               </tbody>
             </table>
           </div>
+          {event.bookmakers.length > 8 && (
+            <div className="mt-3 flex justify-end">
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => setShowAllBookmakers((current) => !current)}
+              >
+                {showAllBookmakers ? 'Recolher casas' : `Mostrar mais ${hiddenBookmakerCount} casas`}
+              </Button>
+            </div>
+          )}
         </div>
       </div>
     </Card>

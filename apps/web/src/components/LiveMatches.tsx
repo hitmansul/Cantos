@@ -332,6 +332,15 @@ function LiveMatchCard({
               </Badge>
             </div>
           )}
+          {!addedTime && (
+            <Badge
+              variant="outline"
+              className="mt-2 justify-center border-border/70 bg-background/40 text-[11px] text-muted-foreground"
+              title="A fonte ao vivo ainda nao enviou paradas, retomadas ou acrescimo anunciado para este jogo."
+            >
+              Previsao de Acrescimo indisponivel
+            </Badge>
+          )}
         </div>
         <div className="min-w-0">
           <p className="font-semibold leading-tight break-words" title={match.awayTeam.name}>

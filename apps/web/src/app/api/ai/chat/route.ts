@@ -56,6 +56,63 @@ type Scores365UpcomingMatch = {
   country: string;
 };
 
+type AiOddsSide = 'home' | 'draw' | 'away';
+
+type AiOddsBookmaker = {
+  name: string;
+  home: number | null;
+  draw: number | null;
+  away: number | null;
+};
+
+type AiOddsEvent = {
+  id: string;
+  startTime: string;
+  roundName?: string;
+  homeTeam: string;
+  awayTeam: string;
+  bookmakers: AiOddsBookmaker[];
+  bestPick?: {
+    side: AiOddsSide;
+    label: string;
+    bookmaker: string;
+    odd: number;
+    edgePct: number;
+  } | null;
+};
+
+type AiOddsResponse = {
+  configured: boolean;
+  source: 'api-football' | 'the-odds-api' | 'not-configured';
+  note?: string;
+  events?: AiOddsEvent[];
+};
+
+type AiLiveMatch = {
+  id: number;
+  minute: number | string;
+  statusText: string;
+  competition?: string;
+  homeTeam: { name: string; score: number };
+  awayTeam: { name: string; score: number };
+  stoppage?: {
+    totalStoppedMs: number;
+    totalStoppedMinutes: number;
+    predictedAddedMinutes: number;
+    kind?: 'calculated-stoppage' | 'announced-added-time';
+    source:
+      | '365scores-actual-play-time'
+      | '365scores-sportradar'
+      | '365scores-announced-added-time'
+      | 'sofascore-announced-added-time'
+      | 'api-football-announced-added-time';
+  };
+};
+
+type AiLiveResponse = {
+  matches?: AiLiveMatch[];
+};
+
 function normalize(value: string): string {
   return value
     .toLowerCase()
@@ -293,6 +350,24 @@ function askedDataUpdate(text: string): boolean {
     'sofascore',
   ];
   return updateTerms.some((term) => normalized.includes(term));
+}
+
+function askedOdds(text: string): boolean {
+  const normalized = normalize(text);
+  return [
+    'odd',
+    'odds',
+    'cotacao',
+    'cotacoes',
+    'casa de aposta',
+    'casas de aposta',
+    'aposta',
+    'bet365',
+    'pinnacle',
+    'betano',
+    'william hill',
+    'marathonbet',
+  ].some((term) => normalized.includes(term));
 }
 
 function askedWorldCupSquad(text: string): boolean {
@@ -636,7 +711,7 @@ function coverageReply(): string {
     return `- ${set.label}: ${teams.length} times com media geral e por tempo.`;
   }).join('\n');
 
-  return `Ligas integradas no app:\n\n${formatCatalog()}\n\nBases estatisticas carregadas:\n${statsLines}\n\nCopa do Mundo:\n- Elencos oficiais da FIFA com cache diario pela rota /api/fifa/world-cup/squads.\n\nA IA tenta responder primeiro por esses dados locais. O Gemini so entra quando a pergunta pede interpretacao aberta ou quando o dado nao existe na base.`;
+  return `Ligas integradas no app:\n\n${formatCatalog()}\n\nBases estatisticas carregadas:\n${statsLines}\n\nCopa do Mundo:\n- Elencos oficiais da FIFA com cache diario pela rota /api/fifa/world-cup/squads.\n- Odds reais da Copa via API-Football quando a fonte retorna casas de aposta para os jogos.\n\nTempo Real:\n- Placar, tempo, estatisticas e acrescimos tentam usar API-Football, 365Scores e SofaScore em camadas. Se uma fonte nao trouxer um numero, eu tento a outra; se nenhuma trouxer, aviso que nao tenho.\n\nA IA tenta responder primeiro por esses dados locais e pelas rotas internas. O Gemini so entra quando a pergunta pede interpretacao aberta ou quando o dado nao existe na base.`;
 }
 
 const SQUAD_POSITION_LABELS: Record<FifaSquadPlayer['position'], string> = {
@@ -696,7 +771,7 @@ async function worldCupSquadReply(question: string, ctx: string): Promise<string
 }
 
 function dataUpdateReply(): string {
-  return `Os dados do app entram por camadas, sempre priorizando fonte local e fonte ao vivo antes de IA externa.\n\n- FIFA oficial: os elencos/convocacoes da Copa do Mundo vem do PDF oficial do FIFA Football Data Platform. A rota /api/fifa/world-cup/squads faz cache por 24h e o cron diario tambem tenta aquecer essa fonte.\n- Tempo Real: busca jogos ao vivo na hora pela API da 365Scores, pela API publica do SofaScore e, se a chave gratuita estiver configurada, pela API-Football. A tela atualiza automaticamente a cada 30 segundos.\n- Estatisticas ao vivo do jogo: quando a fonte entrega estatisticas do evento, o app mostra escanteios, finalizacoes, posse, cartoes e outros numeros disponiveis. Se a fonte nao enviar, eu aviso que nao tenho em vez de inventar.\n- Previsao de Acrescimo: primeiro tento usar tempo real de bola rolando ou play-by-play com parada e retomada. Quando isso nao existe, uso acrescimo anunciado pela fonte ao vivo, como 45+X, 90+X ou campo extra. Nesse caso eu mostro o acrescimo, mas aviso que o tempo total de bola parada nao foi enviado.\n- Proximos jogos, resultados e tabelas: vem das rotas de 365Scores/SofaScore e tambem da base local onde ja temos agenda, chaveamentos e estatisticas historicas.\n- Base local: medias de escanteios por time, por competicao e por tempo ficam nos arquivos de dados do app e no banco quando o admin sincroniza/importa jogos.\n- Admin/sincronizacao: o painel admin usa DATABASE_URL para gravar dados; a rota de cron chama a sincronizacao geral quando CRON_SECRET esta configurado.\n- Gemini: so deve entrar quando a pergunta precisa de interpretacao aberta ou quando a base local nao tem a resposta direta. Para medias, proximos jogos, cartoes, convocacoes e acrescimos, eu tento resolver localmente primeiro.`;
+  return `Os dados do app entram por camadas, sempre priorizando fonte local e fonte ao vivo antes de IA externa.\n\n- FIFA oficial: os elencos/convocacoes da Copa do Mundo vem do PDF oficial do FIFA Football Data Platform. A rota /api/fifa/world-cup/squads faz cache por 24h e o cron diario tambem tenta aquecer essa fonte.\n- Tempo Real: busca jogos ao vivo na hora pela API da 365Scores, pela API publica do SofaScore e pela API-Football. A tela atualiza automaticamente a cada 30 segundos.\n- Estatisticas ao vivo do jogo: quando a API-Football nao entrega algum detalhe, o app continua tentando completar com 365Scores/SofaScore. Se nenhuma fonte enviar escanteios, finalizacoes, posse, cartoes ou outro numero do evento, eu aviso que nao tenho em vez de inventar.\n- Previsao de Acrescimo: primeiro tento usar tempo real de bola rolando ou play-by-play com parada e retomada. Quando isso nao existe, uso acrescimo anunciado pela fonte ao vivo, como 45+X, 90+X ou campo extra. Nesse caso eu mostro o acrescimo, mas aviso que o tempo total de bola parada nao foi enviado.\n- Odds e alertas: as odds reais da Copa do Mundo vem da API-Football quando ela retorna casas de aposta para o jogo. A tela compara as casas recebidas; eu nao crio odd estimada.\n- Proximos jogos, resultados e tabelas: vem das rotas de 365Scores/SofaScore/API-Football e tambem da base local onde ja temos agenda, chaveamentos e estatisticas historicas.\n- Base local: medias de escanteios por time, por competicao e por tempo ficam nos arquivos de dados do app e no banco quando o admin sincroniza/importa jogos.\n- Admin/sincronizacao: o painel admin usa DATABASE_URL para gravar dados; a rota de cron chama a sincronizacao geral quando CRON_SECRET esta configurado.\n- Gemini: so deve entrar quando a pergunta precisa de interpretacao aberta ou quando a base local/API nao tem a resposta direta. Para medias, proximos jogos, cartoes, convocacoes, odds e acrescimos, eu tento resolver localmente primeiro.`;
 }
 
 function cornerMethodReply(): string {
@@ -1230,11 +1305,181 @@ function cardsReply(question: string, ctx: string): string | null {
   return `Dados locais de cartoes:\n\n${lines.join('\n')}`;
 }
 
-async function localReply(question: string, ctx: string): Promise<string | null> {
+function formatAiMinute(value: number): string {
+  if (!Number.isFinite(value) || value <= 0) return '0 min';
+  return `${oneDecimal(value).toString().replace('.', ',')} min`;
+}
+
+function oddValue(bookmaker: AiOddsBookmaker, side: AiOddsSide): number | null {
+  return bookmaker[side];
+}
+
+function bestOdd(event: AiOddsEvent, side: AiOddsSide): { bookmaker: string; odd: number } | null {
+  const candidates = event.bookmakers
+    .map((bookmaker) => {
+      const odd = oddValue(bookmaker, side);
+      return odd ? { bookmaker: bookmaker.name, odd } : null;
+    })
+    .filter((item): item is { bookmaker: string; odd: number } => Boolean(item))
+    .sort((a, b) => b.odd - a.odd);
+
+  return candidates[0] ?? null;
+}
+
+function bestAnyOdd(bookmaker: AiOddsBookmaker): number {
+  return Math.max(bookmaker.home ?? 0, bookmaker.draw ?? 0, bookmaker.away ?? 0);
+}
+
+function oddsEventScore(question: string, event: AiOddsEvent): number {
+  const normalized = normalize(question);
+  const names = [event.homeTeam, event.awayTeam];
+  let score = 0;
+
+  for (const name of names) {
+    const team = normalize(name);
+    if (team && normalized.includes(team)) score += 8;
+    for (const part of team.split(' ').filter((value) => value.length >= 4)) {
+      if (normalized.includes(part)) score += 2;
+    }
+  }
+
+  if (event.roundName && normalized.includes(normalize(event.roundName))) score += 2;
+  return score;
+}
+
+function formatBookmakerLine(event: AiOddsEvent, bookmaker: AiOddsBookmaker): string {
+  const home = bookmaker.home?.toFixed(2) ?? '-';
+  const draw = bookmaker.draw?.toFixed(2) ?? '-';
+  const away = bookmaker.away?.toFixed(2) ?? '-';
+  return `${bookmaker.name}: ${event.homeTeam} ${home} | empate ${draw} | ${event.awayTeam} ${away}`;
+}
+
+async function worldCupOddsReply(question: string, origin: string): Promise<string | null> {
+  if (!askedOdds(question)) return null;
+
+  try {
+    const response = await fetch(`${origin}/api/odds/world-cup`, { cache: 'no-store' });
+    if (!response.ok) return null;
+
+    const data = (await response.json()) as AiOddsResponse;
+    const events = data.events ?? [];
+    if (!data.configured) {
+      return 'As odds reais ainda nao estao configuradas. Quando a fonte estiver ligada, eu comparo as casas e nao crio cotacoes estimadas.';
+    }
+    if (events.length === 0) {
+      return data.note ?? 'A fonte de odds esta conectada, mas nao retornou cotacoes reais da Copa do Mundo agora.';
+    }
+
+    const scored = events
+      .map((event) => ({ event, score: oddsEventScore(question, event) }))
+      .sort((a, b) => b.score - a.score || Date.parse(a.event.startTime) - Date.parse(b.event.startTime));
+    const hasSpecificMatch = scored.some((item) => item.score > 0);
+    const selected = (hasSpecificMatch ? scored.filter((item) => item.score > 0) : scored)
+      .slice(0, hasSpecificMatch ? 3 : 5)
+      .map((item) => item.event);
+
+    const sourceLabel = data.source === 'api-football' ? 'API-Football' : 'fonte de odds configurada';
+    const lines = selected
+      .map((event) => {
+        const bestHome = bestOdd(event, 'home');
+        const bestDraw = bestOdd(event, 'draw');
+        const bestAway = bestOdd(event, 'away');
+        const bestSummary = [
+          bestHome ? `${event.homeTeam}: ${bestHome.odd.toFixed(2)} (${bestHome.bookmaker})` : null,
+          bestDraw ? `empate: ${bestDraw.odd.toFixed(2)} (${bestDraw.bookmaker})` : null,
+          bestAway ? `${event.awayTeam}: ${bestAway.odd.toFixed(2)} (${bestAway.bookmaker})` : null,
+        ]
+          .filter(Boolean)
+          .join(' | ');
+        const topBookmakers = [...event.bookmakers]
+          .sort((a, b) => bestAnyOdd(b) - bestAnyOdd(a))
+          .slice(0, 4)
+          .map((bookmaker) => formatBookmakerLine(event, bookmaker))
+          .join('; ');
+
+        return `- ${event.homeTeam} x ${event.awayTeam} (${format365Date(event.startTime)}): melhores odds -> ${bestSummary}.\n  Comparacao: ${topBookmakers}.`;
+      })
+      .join('\n');
+
+    return `Odds reais da Copa do Mundo via ${sourceLabel}:\n\n${lines}\n\nEu mostro apenas cotacoes reais retornadas pela fonte. Quando uma casa nao aparece, e porque ela nao veio na resposta daquele jogo.`;
+  } catch (error) {
+    console.error('AI odds reply error:', error);
+    return null;
+  }
+}
+
+function liveMatchQuestionScore(question: string, match: AiLiveMatch): number {
+  const normalized = normalize(question);
+  const names = [match.homeTeam.name, match.awayTeam.name];
+  let score = 0;
+
+  for (const name of names) {
+    const team = normalize(name);
+    if (team && normalized.includes(team)) score += 8;
+    for (const part of team.split(' ').filter((value) => value.length >= 4)) {
+      if (normalized.includes(part)) score += 2;
+    }
+  }
+
+  if (match.competition && normalized.includes(normalize(match.competition))) score += 2;
+  return score;
+}
+
+function liveAddedTimeText(match: AiLiveMatch): string {
+  const minute = typeof match.minute === 'number' ? `${match.minute}'` : match.minute || match.statusText;
+  const title = `${match.homeTeam.name} ${match.homeTeam.score} x ${match.awayTeam.score} ${match.awayTeam.name} (${match.competition ?? 'ao vivo'}, ${minute})`;
+
+  if (!match.stoppage) {
+    return `${title}:\n\n- A fonte trouxe placar e tempo, mas nao enviou tempo de bola parada, paradas/retomadas ou acrescimo anunciado para esse evento agora.\n- Por isso eu nao mostro Previsao de Acrescimo para esse jogo em vez de inventar um numero.`;
+  }
+
+  if (match.stoppage.kind === 'announced-added-time') {
+    return `${title}:\n\n- Previsao de Acrescimo: +${formatAiMinute(match.stoppage.predictedAddedMinutes)}.\n- Fonte: acrescimo anunciado pela fonte ao vivo.\n- Tempo total de bola parada: nao informado pela API.`;
+  }
+
+  return `${title}:\n\n- Tempo total de bola parada: ${formatAiMinute(match.stoppage.totalStoppedMinutes)}.\n- Previsao de Acrescimo: +${formatAiMinute(match.stoppage.predictedAddedMinutes)}.\n- Regra: 80% do tempo total parado identificado pela fonte ao vivo.`;
+}
+
+async function liveAddedTimeReply(question: string, ctx: string, origin: string): Promise<string | null> {
+  if (!askedAddedTime(question)) return null;
+
+  try {
+    const response = await fetch(`${origin}/api/365scores/live`, { cache: 'no-store' });
+    if (!response.ok) return null;
+    const data = (await response.json()) as AiLiveResponse;
+    const matches = data.matches ?? [];
+    if (matches.length === 0) return null;
+
+    const scoped = scopeForQuestion(question, ctx);
+    const scored = matches
+      .map((match) => ({ match, score: liveMatchQuestionScore(scoped, match) }))
+      .sort((a, b) => b.score - a.score || Number(Boolean(b.match.stoppage)) - Number(Boolean(a.match.stoppage)));
+
+    const hasSpecificMatch = scored.some((item) => item.score > 0);
+    const selected = hasSpecificMatch
+      ? scored.find((item) => item.score > 0)?.match
+      : scored.find((item) => item.match.stoppage)?.match;
+
+    if (!selected) {
+      return 'Consultei os jogos ao vivo agora. Nenhum deles veio com tempo de bola parada, paradas/retomadas ou acrescimo anunciado suficiente para calcular Previsao de Acrescimo. Quando a fonte enviar esse dado, ele aparece na aba Tempo Real.';
+    }
+
+    return liveAddedTimeText(selected);
+  } catch (error) {
+    console.error('AI live added time error:', error);
+    return null;
+  }
+}
+
+async function localReply(question: string, ctx: string, origin: string): Promise<string | null> {
   if (askedDataUpdate(question)) return dataUpdateReply();
   if (askedCoverage(question)) return coverageReply();
   const squad = await worldCupSquadReply(question, ctx);
   if (squad) return squad;
+  const odds = await worldCupOddsReply(question, origin);
+  if (odds) return odds;
+  const liveAdded = await liveAddedTimeReply(question, ctx, origin);
+  if (liveAdded) return liveAdded;
   if (askedAddedTime(question)) return addedTimeReply(question, ctx);
   if (askedCards(question)) return cardsReply(question, ctx);
   if (askedUpcoming(question)) return upcomingReply(question, ctx);
@@ -1247,6 +1492,14 @@ async function localReply(question: string, ctx: string): Promise<string | null>
     if (askedDataUpdate(ctx)) return dataUpdateReply();
     const contextualSquad = await worldCupSquadReply(contextualQuestion, '');
     if (contextualSquad) return contextualSquad;
+    if (askedOdds(ctx)) {
+      const contextualOdds = await worldCupOddsReply(contextualQuestion, origin);
+      if (contextualOdds) return contextualOdds;
+    }
+    if (askedAddedTime(ctx)) {
+      const contextualLiveAdded = await liveAddedTimeReply(contextualQuestion, '', origin);
+      if (contextualLiveAdded) return contextualLiveAdded;
+    }
     if (askedAddedTime(ctx)) return addedTimeReply(contextualQuestion, '');
     if (askedCards(ctx)) return cardsReply(contextualQuestion, '');
     if (askedUpcoming(ctx)) return upcomingReply(contextualQuestion, '');
@@ -1258,9 +1511,9 @@ async function localReply(question: string, ctx: string): Promise<string | null>
   return null;
 }
 
-async function fallbackReply(question: string, ctx: string): Promise<string> {
+async function fallbackReply(question: string, ctx: string, origin: string): Promise<string> {
   return (
-    (await localReply(question, ctx)) ??
+    (await localReply(question, ctx, origin)) ??
     `Nao encontrei uma resposta direta na base local para essa pergunta.\n\nPara eu acertar melhor, cite time, competicao e periodo quando fizer sentido. Exemplos:\n- "media do Fluminense na Libertadores no 1o tempo"\n- "proximo jogo do Fluminense na Libertadores"\n- "previsao de cartoes para Sao Paulo x Palmeiras"`
   );
 }
@@ -1292,12 +1545,13 @@ export async function POST(request: NextRequest) {
     }
 
     const ctx = context(messages);
-    const local = await localReply(lastUser.content, ctx);
+    const origin = new URL(request.url).origin;
+    const local = await localReply(lastUser.content, ctx, origin);
     if (local) return NextResponse.json({ reply: local, provider: 'local-first' });
 
     const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) {
-      return NextResponse.json({ reply: await fallbackReply(lastUser.content, ctx), provider: 'local-fallback' });
+      return NextResponse.json({ reply: await fallbackReply(lastUser.content, ctx, origin), provider: 'local-fallback' });
     }
 
     const response = await fetch(
@@ -1328,7 +1582,7 @@ export async function POST(request: NextRequest) {
           ? 'O Gemini gratuito atingiu o limite agora. Respondi com os dados locais do app.'
           : `O Gemini retornou erro ${response.status}. Respondi com os dados locais do app.`;
       return NextResponse.json({
-        reply: `${prefix}\n\n${await fallbackReply(lastUser.content, ctx)}`,
+        reply: `${prefix}\n\n${await fallbackReply(lastUser.content, ctx, origin)}`,
         provider: 'local-fallback',
       });
     }
@@ -1337,7 +1591,9 @@ export async function POST(request: NextRequest) {
       candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
     };
     return NextResponse.json({
-      reply: data.candidates?.[0]?.content?.parts?.[0]?.text ?? (await fallbackReply(lastUser.content, ctx)),
+      reply:
+        data.candidates?.[0]?.content?.parts?.[0]?.text ??
+        (await fallbackReply(lastUser.content, ctx, origin)),
       provider: 'gemini',
     });
   } catch (error) {
