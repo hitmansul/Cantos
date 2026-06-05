@@ -54,6 +54,85 @@ const STATIC_UPCOMING_MATCHES: Record<string, NormalizedUpcomingMatch[]> = {
       awayTeam: { id: 42, name: 'Arsenal', shortName: 'Arsenal' },
     },
   ],
+  brasileirao_b: [
+    {
+      id: 72060501,
+      startTime: '2026-06-05T23:00:00+00:00',
+      roundName: 'Rodada 12',
+      homeTeam: { id: 0, name: 'Operario-PR', shortName: 'OPER' },
+      awayTeam: { id: 0, name: 'Juventude', shortName: 'JUV' },
+    },
+    {
+      id: 72060601,
+      startTime: '2026-06-06T14:00:00+00:00',
+      roundName: 'Rodada 12',
+      homeTeam: { id: 0, name: 'Criciuma', shortName: 'CRI' },
+      awayTeam: { id: 0, name: 'Londrina', shortName: 'LON' },
+    },
+    {
+      id: 72060701,
+      startTime: '2026-06-07T19:00:00+00:00',
+      roundName: 'Rodada 12',
+      homeTeam: { id: 0, name: 'CRB', shortName: 'CRB' },
+      awayTeam: { id: 0, name: 'Sao Bernardo-SP', shortName: 'SBE' },
+    },
+    {
+      id: 72060801,
+      startTime: '2026-06-08T23:00:00+00:00',
+      roundName: 'Rodada 12',
+      homeTeam: { id: 0, name: 'Vila Nova', shortName: 'VNO' },
+      awayTeam: { id: 0, name: 'Botafogo-SP', shortName: 'BOT' },
+    },
+    {
+      id: 72060802,
+      startTime: '2026-06-08T23:00:00+00:00',
+      roundName: 'Rodada 12',
+      homeTeam: { id: 0, name: 'America-MG', shortName: 'AME' },
+      awayTeam: { id: 0, name: 'Atletico-GO', shortName: 'ACG' },
+    },
+    {
+      id: 72060901,
+      startTime: '2026-06-09T22:00:00+00:00',
+      roundName: 'Rodada 12',
+      homeTeam: { id: 0, name: 'Ponte Preta', shortName: 'PON' },
+      awayTeam: { id: 0, name: 'Cuiaba', shortName: 'CUI' },
+    },
+    {
+      id: 72060902,
+      startTime: '2026-06-09T22:00:00+00:00',
+      roundName: 'Rodada 12',
+      homeTeam: { id: 0, name: 'Nautico', shortName: 'NAU' },
+      awayTeam: { id: 0, name: 'Fortaleza', shortName: 'FOR' },
+    },
+    {
+      id: 72061001,
+      startTime: '2026-06-10T23:00:00+00:00',
+      roundName: 'Rodada 12',
+      homeTeam: { id: 0, name: 'Goias', shortName: 'GOI' },
+      awayTeam: { id: 0, name: 'Novorizontino', shortName: 'NOV' },
+    },
+    {
+      id: 72061002,
+      startTime: '2026-06-10T23:00:00+00:00',
+      roundName: 'Rodada 12',
+      homeTeam: { id: 0, name: 'Ceara', shortName: 'CEA' },
+      awayTeam: { id: 0, name: 'Avai', shortName: 'AVA' },
+    },
+    {
+      id: 72061201,
+      startTime: '2026-06-12T00:00:00+00:00',
+      roundName: 'Rodada 12',
+      homeTeam: { id: 0, name: 'Sport Recife', shortName: 'SPT' },
+      awayTeam: { id: 0, name: 'Athletic Club', shortName: 'ATH' },
+    },
+    {
+      id: 72061202,
+      startTime: '2026-06-12T22:00:00+00:00',
+      roundName: 'Rodada 13',
+      homeTeam: { id: 0, name: 'Atletico-GO', shortName: 'ACG' },
+      awayTeam: { id: 0, name: 'CRB', shortName: 'CRB' },
+    },
+  ],
 };
 
 function normalizeGame(game: Raw365UpcomingGame): NormalizedUpcomingMatch {
@@ -81,19 +160,42 @@ function isFutureOrLive(startTime: string, statusId?: number, now = Date.now()):
   return Number.isFinite(timestamp) && timestamp >= now;
 }
 
+function compact(value: string): string {
+  return value
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]/g, '');
+}
+
+function matchKey(match: NormalizedUpcomingMatch): string {
+  const date = Number.isFinite(Date.parse(match.startTime))
+    ? new Date(match.startTime).toISOString().slice(0, 10)
+    : match.startTime.slice(0, 10);
+  return [
+    date,
+    compact(match.homeTeam.name),
+    compact(match.awayTeam.name),
+  ].join('|');
+}
+
 function mergeStaticUpcoming(
   league: string,
   matches: NormalizedUpcomingMatch[],
   now = Date.now()
 ): NormalizedUpcomingMatch[] {
   const merged = new Map<number, NormalizedUpcomingMatch>();
+  const seenByMatch = new Set<string>();
   for (const match of matches) {
     merged.set(match.id, match);
+    seenByMatch.add(matchKey(match));
   }
 
   for (const match of STATIC_UPCOMING_MATCHES[league] ?? []) {
-    if (isFutureOrLive(match.startTime, undefined, now)) {
+    const key = matchKey(match);
+    if (isFutureOrLive(match.startTime, undefined, now) && !seenByMatch.has(key)) {
       merged.set(match.id, match);
+      seenByMatch.add(key);
     }
   }
 

@@ -66,8 +66,10 @@ type MatchOddsOffer = {
 
 type MatchOddsMarket = {
   id: string;
+  category: 'corners' | 'cards';
   marketName: string;
   selectionLabel: string;
+  lineValue: number | null;
   offers: MatchOddsOffer[];
 };
 
@@ -141,6 +143,25 @@ function isCornerMarket(name: string): boolean {
   return normalized.includes('corner') || normalized.includes('corners') || normalized.includes('escanteio');
 }
 
+function isCardMarket(name: string): boolean {
+  const normalized = normalize(name);
+  return (
+    normalized.includes('card') ||
+    normalized.includes('cards') ||
+    normalized.includes('cartao') ||
+    normalized.includes('cartoes') ||
+    normalized.includes('booking') ||
+    normalized.includes('yellow') ||
+    normalized.includes('red')
+  );
+}
+
+function marketCategory(name: string): MatchOddsMarket['category'] | null {
+  if (isCornerMarket(name)) return 'corners';
+  if (isCardMarket(name)) return 'cards';
+  return null;
+}
+
 function isSameTeam(source: string, candidate: string): boolean {
   const a = compact(source);
   const b = compact(candidate);
@@ -166,6 +187,18 @@ function dateOnly(value: string | null): string | null {
 function apiFootballBookmakers(item: ApiFootballOddsItem) {
   if (Array.isArray(item.bookmakers)) return item.bookmakers;
   return item.bookmaker ? [item.bookmaker] : [];
+}
+
+function lineNumber(value: string): number | null {
+  const match = value.replace(',', '.').match(/\d+(?:\.\d+)?/);
+  if (!match) return null;
+  const parsed = Number(match[0].replace(',', '.'));
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function lineMatches(market: MatchOddsMarket, preferredLine: number | null): boolean {
+  if (preferredLine === null || market.lineValue === null) return false;
+  return Math.abs(market.lineValue - preferredLine) < 0.01;
 }
 
 function candidateLeagues(competition: string | null): LeagueConfig[] {
@@ -234,25 +267,30 @@ async function oddsForLeagueDate(league: LeagueConfig, date: string | null): Pro
   return data?.response ?? [];
 }
 
-function marketsFromOdds(items: ApiFootballOddsItem[]): MatchOddsMarket[] {
+function marketsFromOdds(items: ApiFootballOddsItem[], preferredLine: string | null): MatchOddsMarket[] {
   const markets = new Map<string, MatchOddsMarket>();
+  const preferredLineNumber = preferredLine ? lineNumber(preferredLine) : null;
 
   for (const item of items) {
     for (const bookmaker of apiFootballBookmakers(item)) {
       for (const bet of bookmaker.bets ?? []) {
-        if (!isCornerMarket(bet.name)) continue;
+        const category = marketCategory(bet.name);
+        if (!category) continue;
 
         for (const value of bet.values ?? []) {
           const odd = parseOdd(value.odd);
           if (!odd) continue;
+          const parsedLine = lineNumber(`${bet.name} ${value.value}`);
 
           const key = `${normalize(bet.name)}|${normalize(value.value)}`;
           const market =
             markets.get(key) ??
             {
               id: key,
+              category,
               marketName: bet.name,
               selectionLabel: value.value,
+              lineValue: parsedLine,
               offers: [],
             };
 
@@ -271,8 +309,14 @@ function marketsFromOdds(items: ApiFootballOddsItem[]): MatchOddsMarket[] {
       offers: market.offers.sort((a, b) => b.odd - a.odd || a.bookmaker.localeCompare(b.bookmaker)),
     }))
     .filter((market) => market.offers.length > 0)
-    .sort((a, b) => b.offers[0].odd - a.offers[0].odd)
-    .slice(0, 12);
+    .sort((a, b) => {
+      const aLineMatch = lineMatches(a, preferredLineNumber) ? 0 : 1;
+      const bLineMatch = lineMatches(b, preferredLineNumber) ? 0 : 1;
+      if (aLineMatch !== bLineMatch) return aLineMatch - bLineMatch;
+      if (a.category !== b.category) return a.category === 'corners' ? -1 : 1;
+      return b.offers[0].odd - a.offers[0].odd;
+    })
+    .slice(0, 16);
 }
 
 export async function GET(request: NextRequest) {
@@ -280,6 +324,7 @@ export async function GET(request: NextRequest) {
   const away = request.nextUrl.searchParams.get('away') ?? '';
   const date = dateOnly(request.nextUrl.searchParams.get('date'));
   const competition = request.nextUrl.searchParams.get('competition');
+  const line = request.nextUrl.searchParams.get('line');
 
   if (!isApiFootballConfigured()) {
     return NextResponse.json({
@@ -319,7 +364,7 @@ export async function GET(request: NextRequest) {
       odds = leagueDateOdds.filter((item) => item.fixture.id === match.fixture.fixture.id);
     }
 
-    const markets = marketsFromOdds(odds);
+    const markets = marketsFromOdds(odds, line);
 
     return NextResponse.json({
       configured: true,

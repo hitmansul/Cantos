@@ -242,8 +242,10 @@ type MatchOddsOffer = {
 
 type MatchOddsMarket = {
   id: string;
+  category: "corners" | "cards";
   marketName: string;
   selectionLabel: string;
+  lineValue: number | null;
   offers: MatchOddsOffer[];
 };
 
@@ -253,7 +255,7 @@ type MatchOddsResponse = {
   markets: MatchOddsMarket[];
 };
 
-function MatchOddsPanel({ match }: { match: NextMatch }) {
+function MatchOddsPanel({ match, recommendedLine }: { match: NextMatch; recommendedLine: string }) {
   const [data, setData] = useState<MatchOddsResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -270,6 +272,7 @@ function MatchOddsPanel({ match }: { match: NextMatch }) {
         away: match.awayTeam,
         date: match.date.slice(0, 10),
         competition: match.competition ?? "",
+        line: recommendedLine,
       });
 
       try {
@@ -291,14 +294,14 @@ function MatchOddsPanel({ match }: { match: NextMatch }) {
     return () => {
       cancelled = true;
     };
-  }, [match.awayTeam, match.competition, match.date, match.homeTeam]);
+  }, [match.awayTeam, match.competition, match.date, match.homeTeam, recommendedLine]);
 
   if (loading) {
     return (
       <div className="rounded-lg border border-border bg-muted/20 p-3 text-sm text-muted-foreground">
         <div className="flex items-center gap-2">
           <Loader2 className="h-4 w-4 animate-spin" />
-          Buscando odds de escanteios das casas...
+          Buscando odds reais da linha selecionada...
         </div>
       </div>
     );
@@ -315,7 +318,7 @@ function MatchOddsPanel({ match }: { match: NextMatch }) {
   if (!data?.configured || !data.found || data.markets.length === 0) {
     return (
       <div className="rounded-lg border border-border bg-muted/20 p-3 text-sm text-muted-foreground">
-        Sem odds de escanteios para este jogo agora.
+        Sem odds reais de escanteios ou cartões para este jogo agora.
       </div>
     );
   }
@@ -325,16 +328,30 @@ function MatchOddsPanel({ match }: { match: NextMatch }) {
       <div className="mb-3 flex items-center justify-between gap-2">
         <h4 className="flex items-center gap-2 text-sm font-semibold text-emerald-300">
           <BadgeDollarSign className="h-4 w-4" />
-          Odds de escanteios das casas
+          Odds da linha e cartões
         </h4>
         <Badge variant="outline">{data.markets.length} linhas</Badge>
       </div>
 
       <div className="space-y-3">
-        {data.markets.slice(0, 4).map((market) => (
+        {data.markets.slice(0, 6).map((market) => (
           <div key={market.id} className="rounded-md border border-border/70 bg-background/30 p-3">
             <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
               <div>
+                <div className="mb-1 flex flex-wrap items-center gap-2">
+                  <Badge
+                    className={
+                      market.category === "corners"
+                        ? "bg-emerald-500/15 text-emerald-300 border-emerald-500/30"
+                        : "bg-amber-500/15 text-amber-300 border-amber-500/30"
+                    }
+                  >
+                    {market.category === "corners" ? "Escanteios" : "Cartões"}
+                  </Badge>
+                  {market.lineValue !== null && (
+                    <Badge variant="outline">linha {market.lineValue.toFixed(1)}</Badge>
+                  )}
+                </div>
                 <p className="text-sm font-semibold">{market.marketName}</p>
                 <p className="text-xs text-muted-foreground">{market.selectionLabel}</p>
               </div>
@@ -545,7 +562,7 @@ function PredictionCard({ prediction, onSelect }: PredictionCardProps) {
             </div>
           </div>
 
-          <MatchOddsPanel match={prediction.match} />
+          <MatchOddsPanel match={prediction.match} recommendedLine={prediction.recommendation.market} />
 
           {/* Action Button */}
           {onSelect && (

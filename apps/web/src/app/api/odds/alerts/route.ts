@@ -102,6 +102,19 @@ type OddsAlert = {
   bookmakers: OddsOffer[];
 };
 
+type OddsFilterOptions = {
+  leagues: Array<{
+    key: string;
+    leagueName: string;
+    country: string;
+  }>;
+  teams: Array<{
+    leagueKey: string;
+    team: string;
+  }>;
+  bookmakers: string[];
+};
+
 type OddsAlertsResponse = {
   configured: boolean;
   source: 'api-football' | 'not-configured';
@@ -115,6 +128,7 @@ type OddsAlertsResponse = {
     bookmakersCompared: number;
   };
   alerts: OddsAlert[];
+  options: OddsFilterOptions;
   lastUpdated: string;
 };
 
@@ -131,8 +145,8 @@ const MAX_ODDS_PAGES_PER_LEAGUE = 2;
 const MAX_ALERTS = 90;
 const CACHE_TTL_MS = 15 * 60 * 1000;
 const DATE_FOCUSED_ODDS_DAYS = 5;
-const CORNER_MEDIAN_EDGE_THRESHOLD = 8;
-const CORNER_MIN_ABSOLUTE_GAP = 0.12;
+const CORNER_MEDIAN_EDGE_THRESHOLD = 12;
+const CORNER_MIN_ABSOLUTE_GAP = 0.25;
 const NON_CORNER_MEDIAN_EDGE_THRESHOLD = 35;
 const NON_CORNER_SECOND_BEST_EDGE_THRESHOLD = 35;
 const NON_CORNER_MIN_ABSOLUTE_GAP = 1;
@@ -498,6 +512,47 @@ function scopedLeagues(scope: LeagueScope) {
   return LEAGUES;
 }
 
+function emptyOptions(): OddsFilterOptions {
+  return {
+    leagues: [],
+    teams: [],
+    bookmakers: [],
+  };
+}
+
+function buildFilterOptions(
+  leagues: ApiFootballLeagueConfig[],
+  groups: OddsMarketGroup[]
+): OddsFilterOptions {
+  const leagueOptions = leagues
+    .map((league) => ({
+      key: `${league.country}|${league.name}`,
+      leagueName: league.name,
+      country: league.country,
+    }))
+    .sort((a, b) => `${a.country} ${a.leagueName}`.localeCompare(`${b.country} ${b.leagueName}`));
+
+  const teamMap = new Map<string, { leagueKey: string; team: string }>();
+  const bookmakerSet = new Set<string>();
+
+  for (const group of groups) {
+    const leagueKey = `${group.country}|${group.leagueName}`;
+    teamMap.set(`${leagueKey}|${group.homeTeam}`, { leagueKey, team: group.homeTeam });
+    teamMap.set(`${leagueKey}|${group.awayTeam}`, { leagueKey, team: group.awayTeam });
+    for (const offer of group.offers) {
+      if (offer.bookmaker.trim()) bookmakerSet.add(offer.bookmaker.trim());
+    }
+  }
+
+  return {
+    leagues: leagueOptions,
+    teams: Array.from(teamMap.values()).sort((a, b) =>
+      `${a.leagueKey} ${a.team}`.localeCompare(`${b.leagueKey} ${b.team}`)
+    ),
+    bookmakers: Array.from(bookmakerSet).sort((a, b) => a.localeCompare(b)),
+  };
+}
+
 async function buildResponse(scope: LeagueScope): Promise<OddsAlertsResponse> {
   if (!isApiFootballConfigured()) {
     return {
@@ -513,6 +568,7 @@ async function buildResponse(scope: LeagueScope): Promise<OddsAlertsResponse> {
         bookmakersCompared: 0,
       },
       alerts: [],
+      options: emptyOptions(),
       lastUpdated: new Date().toISOString(),
     };
   }
@@ -520,6 +576,7 @@ async function buildResponse(scope: LeagueScope): Promise<OddsAlertsResponse> {
   const leagues = scopedLeagues(scope);
   const groupSets = await mapLimit(leagues, 4, safeGroupsForLeague);
   const groups = groupSets.flat();
+  const options = buildFilterOptions(leagues, groups);
   const alerts = groups
     .map(alertFromGroup)
     .filter((alert): alert is OddsAlert => alert !== null)
@@ -547,6 +604,7 @@ async function buildResponse(scope: LeagueScope): Promise<OddsAlertsResponse> {
       bookmakersCompared,
     },
     alerts,
+    options,
     lastUpdated: new Date().toISOString(),
   };
 }

@@ -27,9 +27,17 @@ function toTimestamp(date: string): string {
   return date.includes(' ') ? date.replace(' ', 'T') + ':00' : `${date}T12:00:00`;
 }
 
+function localFixtureMs(date: string): number {
+  const iso = date.includes(' ') ? `${date.replace(' ', 'T')}:00-03:00` : `${date}T12:00:00-03:00`;
+  const ms = Date.parse(iso);
+  return Number.isFinite(ms) ? ms : 0;
+}
+
 function localFixturesForLeague(league: TheSportsDBFixturesProps['league']): TheSportsDBFixture[] {
   return currentUpcomingMatches
     .filter((match) => match.leagueKey === league)
+    .filter((match) => localFixtureMs(match.date) >= Date.now() - 6 * 60 * 60 * 1000)
+    .sort((a, b) => localFixtureMs(a.date) - localFixtureMs(b.date))
     .map((match, index) => ({
       id: `local-${league}-${index}-${match.homeTeam}-${match.awayTeam}`,
       homeTeam: match.homeTeam,

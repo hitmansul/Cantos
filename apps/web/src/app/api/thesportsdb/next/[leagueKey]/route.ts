@@ -6,6 +6,7 @@ import {
   type TheSportsDBEvent,
 } from '@/app/api/utils/thesportsdb';
 import { brazilianFixtures } from '@/data/brazilianFixtures';
+import { currentUpcomingMatches } from '@/data/currentFixtures';
 import { SCORES365_COMPETITIONS, scores365Get } from '@/app/api/utils/scores365';
 import sql from '@/app/api/utils/sql';
 
@@ -69,14 +70,16 @@ export async function GET(
           venue: m.venue || null,
         }));
 
-        return NextResponse.json({
-          league: leagueKey,
-          leagueName: league.name,
-          season: league.season,
-          fixtures,
-          source: 'database',
-          lastUpdated: new Date().toISOString(),
-        });
+        if (leagueKey !== 'brasileirao_b' || fixtures.length >= 6) {
+          return NextResponse.json({
+            league: leagueKey,
+            leagueName: league.name,
+            season: league.season,
+            fixtures,
+            source: 'database',
+            lastUpdated: new Date().toISOString(),
+          });
+        }
       }
     } catch (e) {
       console.error('DB fetch error for Brazilian fixtures, trying 365Scores:', e);
@@ -133,14 +136,16 @@ export async function GET(
 
             fixtures365.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
 
-            return NextResponse.json({
-              league: leagueKey,
-              leagueName: league.name,
-              season: league.season,
-              fixtures: fixtures365,
-              source: '365scores',
-              lastUpdated: new Date().toISOString(),
-            });
+            if (leagueKey !== 'brasileirao_b' || fixtures365.length >= 6) {
+              return NextResponse.json({
+                league: leagueKey,
+                leagueName: league.name,
+                season: league.season,
+                fixtures: fixtures365,
+                source: '365scores',
+                lastUpdated: new Date().toISOString(),
+              });
+            }
           }
         }
       }
@@ -149,7 +154,18 @@ export async function GET(
     }
 
     // Final fallback to static file
-    const localMatches = brazilianFixtures[leagueKey as keyof typeof brazilianFixtures] || [];
+    const currentLocalMatches = currentUpcomingMatches.filter((match) => match.leagueKey === leagueKey);
+    const localMatches = (currentLocalMatches.length > 0
+      ? currentLocalMatches
+      : brazilianFixtures[leagueKey as keyof typeof brazilianFixtures] || []) as Array<{
+      id?: string | number;
+      homeTeam: string;
+      awayTeam: string;
+      date: string;
+      round?: string | number;
+      referee?: string | null;
+      venue?: string | null;
+    }>;
     const now = new Date();
     now.setHours(0, 0, 0, 0);
 
@@ -171,7 +187,11 @@ export async function GET(
       date: match.date.split(' ')[0],
       time: match.date.split(' ')[1] || '00:00',
       timestamp: match.date.includes('T') ? match.date : match.date.replace(' ', 'T') + ':00',
-      round: match.round ? `Rodada ${match.round}` : 'Rodada',
+      round: match.round
+        ? String(match.round).startsWith('Rodada')
+          ? String(match.round)
+          : `Rodada ${match.round}`
+        : 'Rodada',
       referee: match.referee || null,
       venue: match.venue || null,
     }));

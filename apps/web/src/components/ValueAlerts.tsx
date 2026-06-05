@@ -5,9 +5,12 @@ import {
   AlertTriangle,
   BadgeDollarSign,
   BarChart3,
+  Check,
+  ChevronDown,
   Filter,
   Loader2,
   RefreshCw,
+  Search,
   ShieldCheck,
   Target,
   Trophy,
@@ -18,13 +21,6 @@ import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
 
 type MarketType = 'corners' | 'other';
 type AlertConfidence = 'alta' | 'moderada' | 'fraca';
@@ -69,6 +65,18 @@ type OddsAlertsResponse = {
     bookmakersCompared: number;
   };
   alerts: OddsAlert[];
+  options: {
+    leagues: Array<{
+      key: string;
+      leagueName: string;
+      country: string;
+    }>;
+    teams: Array<{
+      leagueKey: string;
+      team: string;
+    }>;
+    bookmakers: string[];
+  };
   lastUpdated: string;
 };
 
@@ -138,6 +146,182 @@ function groupByLeague(alerts: OddsAlert[]) {
       return acc;
     },
     []
+  );
+}
+
+type FilterOption = {
+  value: string;
+  label: string;
+  description?: string;
+};
+
+function SearchableSingleFilter({
+  id,
+  label,
+  value,
+  options,
+  allLabel,
+  onChange,
+}: {
+  id: string;
+  label: string;
+  value: string;
+  options: FilterOption[];
+  allLabel: string;
+  onChange: (value: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [search, setSearch] = useState('');
+  const selected = options.find((option) => option.value === value);
+  const term = normalizeFilter(search);
+  const filtered = options.filter((option) => {
+    if (!term) return true;
+    return normalizeFilter(`${option.label} ${option.description ?? ''}`).includes(term);
+  });
+
+  function select(nextValue: string) {
+    onChange(nextValue);
+    setSearch('');
+    setOpen(false);
+  }
+
+  return (
+    <div className="relative space-y-2">
+      <label className="text-xs font-medium text-muted-foreground" htmlFor={id}>
+        {label}
+      </label>
+      <button
+        id={id}
+        type="button"
+        onClick={() => setOpen((current) => !current)}
+        className="flex h-10 w-full items-center justify-between gap-2 rounded-md border border-input bg-background px-3 py-2 text-left text-sm ring-offset-background hover:bg-muted/30 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
+      >
+        <span className="min-w-0 truncate">
+          {value === 'all' ? allLabel : selected ? selected.label : allLabel}
+        </span>
+        <ChevronDown className={`h-4 w-4 shrink-0 transition-transform ${open ? 'rotate-180' : ''}`} />
+      </button>
+
+      {open && (
+        <div className="absolute z-40 mt-1 w-full rounded-lg border border-border bg-background p-2 shadow-xl">
+          <div className="relative mb-2">
+            <Search className="absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder="Digite para buscar..."
+              className="h-9 pl-8"
+              autoFocus
+            />
+          </div>
+
+          <div className="max-h-64 overflow-y-auto">
+            <button
+              type="button"
+              onClick={() => select('all')}
+              className="flex w-full items-center justify-between gap-2 rounded-md px-2 py-2 text-left text-sm hover:bg-muted/50"
+            >
+              <span>{allLabel}</span>
+              {value === 'all' && <Check className="h-4 w-4 text-emerald-300" />}
+            </button>
+
+            {filtered.length === 0 ? (
+              <p className="px-2 py-3 text-sm text-muted-foreground">Nenhuma opcao encontrada.</p>
+            ) : (
+              filtered.map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  onClick={() => select(option.value)}
+                  className="flex w-full items-center justify-between gap-2 rounded-md px-2 py-2 text-left text-sm hover:bg-muted/50"
+                >
+                  <span className="min-w-0">
+                    <span className="block truncate font-medium">{option.label}</span>
+                    {option.description && (
+                      <span className="block truncate text-xs text-muted-foreground">{option.description}</span>
+                    )}
+                  </span>
+                  {value === option.value && <Check className="h-4 w-4 shrink-0 text-emerald-300" />}
+                </button>
+              ))
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function BookmakerMultiFilter({
+  options,
+  selectedBookmakers,
+  onToggle,
+  search,
+  onSearchChange,
+}: {
+  options: string[];
+  selectedBookmakers: string[];
+  onToggle: (bookmaker: string, checked: boolean) => void;
+  search: string;
+  onSearchChange: (value: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const term = normalizeFilter(search);
+  const filtered = options.filter((bookmaker) => !term || normalizeFilter(bookmaker).includes(term));
+
+  return (
+    <div className="relative space-y-2">
+      <label className="text-xs font-medium text-muted-foreground" htmlFor="odds-bookmaker-filter">
+        Casas de apostas
+      </label>
+      <button
+        id="odds-bookmaker-filter"
+        type="button"
+        onClick={() => setOpen((current) => !current)}
+        className="flex h-10 w-full items-center justify-between gap-2 rounded-md border border-input bg-background px-3 py-2 text-left text-sm ring-offset-background hover:bg-muted/30 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
+      >
+        <span className="min-w-0 truncate">
+          {selectedBookmakers.length > 0 ? `${selectedBookmakers.length} casas selecionadas` : 'Todas as casas'}
+        </span>
+        <ChevronDown className={`h-4 w-4 shrink-0 transition-transform ${open ? 'rotate-180' : ''}`} />
+      </button>
+
+      {open && (
+        <div className="absolute z-40 mt-1 w-full rounded-lg border border-border bg-background p-2 shadow-xl">
+          <div className="relative mb-2">
+            <Search className="absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              value={search}
+              onChange={(event) => onSearchChange(event.target.value)}
+              placeholder="Buscar casa..."
+              className="h-9 pl-8"
+              autoFocus
+            />
+          </div>
+
+          <div className="max-h-64 overflow-y-auto">
+            {filtered.length === 0 ? (
+              <p className="px-2 py-3 text-sm text-muted-foreground">Nenhuma casa encontrada.</p>
+            ) : (
+              <div className="grid gap-1">
+                {filtered.map((bookmaker) => (
+                  <label
+                    key={bookmaker}
+                    className="flex min-w-0 cursor-pointer items-center gap-2 rounded-md px-2 py-2 text-sm hover:bg-muted/50"
+                  >
+                    <Checkbox
+                      checked={selectedBookmakers.includes(bookmaker)}
+                      onCheckedChange={(checked) => onToggle(bookmaker, checked === true)}
+                    />
+                    <span className="truncate">{bookmaker}</span>
+                  </label>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -264,40 +448,61 @@ export function ValueAlerts({ scope = 'all' }: ValueAlertsProps) {
   }, [scope]);
 
   const leagueOptions = useMemo(() => {
+    const fromCatalog = data?.options.leagues ?? [];
+    if (fromCatalog.length > 0) {
+      return fromCatalog.map((league) => ({
+        value: league.key,
+        label: league.leagueName,
+        description: league.country,
+      }));
+    }
+
     const alerts = data?.alerts ?? [];
     return [...new Set(alerts.map((alert) => `${alert.country}|${alert.leagueName}`))]
       .map((key) => {
         const [country, leagueName] = key.split('|');
-        return { key, country, leagueName };
+        return { value: key, label: leagueName, description: country };
       })
-      .sort((a, b) => `${a.country} ${a.leagueName}`.localeCompare(`${b.country} ${b.leagueName}`));
-  }, [data?.alerts]);
+      .sort((a, b) => `${a.description} ${a.label}`.localeCompare(`${b.description} ${b.label}`));
+  }, [data?.alerts, data?.options.leagues]);
 
   const teamOptions = useMemo(() => {
-    const alerts = data?.alerts ?? [];
-    return [...new Set(alerts.flatMap((alert) => [alert.homeTeam, alert.awayTeam]))].sort((a, b) =>
-      a.localeCompare(b)
-    );
-  }, [data?.alerts]);
+    const teams = data?.options.teams ?? [];
+    const scopedTeams =
+      leagueFilter === 'all' ? teams : teams.filter((team) => team.leagueKey === leagueFilter);
+
+    const uniqueTeams =
+      scopedTeams.length > 0
+        ? [...new Set(scopedTeams.map((team) => team.team))]
+        : [
+            ...new Set(
+              (data?.alerts ?? [])
+                .filter((alert) => leagueFilter === 'all' || `${alert.country}|${alert.leagueName}` === leagueFilter)
+                .flatMap((alert) => [alert.homeTeam, alert.awayTeam])
+            ),
+          ];
+
+    return uniqueTeams
+      .sort((a, b) => a.localeCompare(b))
+      .map((team) => ({ value: team, label: team }));
+  }, [data?.alerts, data?.options.teams, leagueFilter]);
 
   const bookmakerOptions = useMemo(() => {
-    const alerts = data?.alerts ?? [];
-    return [...new Set(alerts.flatMap((alert) => alert.bookmakers.map((bookmaker) => bookmaker.bookmaker)))].sort(
-      (a, b) => a.localeCompare(b)
-    );
-  }, [data?.alerts]);
-
-  const filteredBookmakerOptions = useMemo(() => {
-    const term = normalizeFilter(bookmakerSearch);
-    if (!term) return bookmakerOptions;
-    return bookmakerOptions.filter((bookmaker) => normalizeFilter(bookmaker).includes(term));
-  }, [bookmakerOptions, bookmakerSearch]);
+    const catalog = data?.options.bookmakers ?? [];
+    const fallback = data?.alerts.flatMap((alert) => alert.bookmakers.map((bookmaker) => bookmaker.bookmaker)) ?? [];
+    return [...new Set([...catalog, ...fallback])].sort((a, b) => a.localeCompare(b));
+  }, [data?.alerts, data?.options.bookmakers]);
 
   function toggleBookmaker(bookmaker: string, checked: boolean) {
     setSelectedBookmakers((current) => {
       if (checked) return current.includes(bookmaker) ? current : [...current, bookmaker].sort((a, b) => a.localeCompare(b));
       return current.filter((item) => item !== bookmaker);
     });
+  }
+
+  function changeLeagueFilter(value: string) {
+    setLeagueFilter(value);
+    setTeamFilter('all');
   }
 
   function clearFilters() {
@@ -471,78 +676,31 @@ export function ValueAlerts({ scope = 'all' }: ValueAlertsProps) {
         </div>
 
         <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.4fr)]">
-          <div className="space-y-2">
-            <label className="text-xs font-medium text-muted-foreground" htmlFor="odds-league-filter">
-              Liga
-            </label>
-            <Select value={leagueFilter} onValueChange={setLeagueFilter}>
-              <SelectTrigger id="odds-league-filter" className="w-full">
-                <SelectValue placeholder="Todas as ligas" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">Todas as ligas</SelectItem>
-                {leagueOptions.map((league) => (
-                  <SelectItem key={league.key} value={league.key}>
-                    {league.leagueName} - {league.country}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
+          <SearchableSingleFilter
+            id="odds-league-filter"
+            label="Liga"
+            value={leagueFilter}
+            options={leagueOptions}
+            allLabel="Todas as ligas"
+            onChange={changeLeagueFilter}
+          />
 
-          <div className="space-y-2">
-            <label className="text-xs font-medium text-muted-foreground" htmlFor="odds-team-filter">
-              Time
-            </label>
-            <Select value={teamFilter} onValueChange={setTeamFilter}>
-              <SelectTrigger id="odds-team-filter" className="w-full">
-                <SelectValue placeholder="Todos os times" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">Todos os times</SelectItem>
-                {teamOptions.map((team) => (
-                  <SelectItem key={team} value={team}>
-                    {team}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
+          <SearchableSingleFilter
+            id="odds-team-filter"
+            label="Time"
+            value={teamFilter}
+            options={teamOptions}
+            allLabel={leagueFilter === 'all' ? 'Todos os times' : 'Todos os times da liga'}
+            onChange={setTeamFilter}
+          />
 
-          <div className="space-y-2">
-            <label className="text-xs font-medium text-muted-foreground" htmlFor="odds-bookmaker-filter">
-              Casas de apostas
-            </label>
-            <Input
-              id="odds-bookmaker-filter"
-              value={bookmakerSearch}
-              onChange={(event) => setBookmakerSearch(event.target.value)}
-              placeholder="Buscar casa..."
-            />
-            <div className="max-h-36 overflow-y-auto rounded-lg border border-border/70 bg-background/20 p-2">
-              {filteredBookmakerOptions.length === 0 ? (
-                <p className="px-2 py-3 text-sm text-muted-foreground">Nenhuma casa encontrada.</p>
-              ) : (
-                <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
-                  {filteredBookmakerOptions.map((bookmaker) => (
-                    <label
-                      key={bookmaker}
-                      className="flex min-w-0 cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-muted/40"
-                    >
-                      <Checkbox
-                        checked={selectedBookmakers.includes(bookmaker)}
-                        onCheckedChange={(checked) => toggleBookmaker(bookmaker, checked === true)}
-                      />
-                      <span className="truncate">{bookmaker}</span>
-                    </label>
-                  ))}
-                </div>
-              )}
-            </div>
-            {selectedBookmakers.length > 0 && (
-              <p className="text-xs text-muted-foreground">{selectedBookmakers.length} casas selecionadas.</p>
-            )}
-          </div>
+          <BookmakerMultiFilter
+            options={bookmakerOptions}
+            selectedBookmakers={selectedBookmakers}
+            onToggle={toggleBookmaker}
+            search={bookmakerSearch}
+            onSearchChange={setBookmakerSearch}
+          />
         </div>
       </Card>
 
