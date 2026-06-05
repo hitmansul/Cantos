@@ -752,7 +752,7 @@ function coverageReply(): string {
     return `- ${set.label}: ${teams.length} times com media geral e por tempo.`;
   }).join('\n');
 
-  return `Ligas integradas no app:\n\n${formatCatalog()}\n\nBases estatisticas carregadas:\n${statsLines}\n\nCopa do Mundo:\n- Elencos oficiais da FIFA com cache diario pela rota /api/fifa/world-cup/squads.\n\nOdds e alertas:\n- Odds reais via API-Football para as ligas integradas quando a fonte retorna casas e mercados para os jogos.\n- Linhas de escanteios sao prioridade. Outros mercados so aparecem quando uma casa paga bem acima das demais.\n\nTempo Real:\n- Placar, tempo, estatisticas e acrescimos tentam usar API-Football, 365Scores e SofaScore em camadas. Se uma fonte nao trouxer um numero, eu tento a outra; se nenhuma trouxer, aviso que nao tenho.\n\nA IA tenta responder primeiro por esses dados locais e pelas rotas internas. O Gemini so entra quando a pergunta pede interpretacao aberta ou quando o dado nao existe na base.`;
+  return `Ligas integradas no app:\n\n${formatCatalog()}\n\nBases estatisticas carregadas:\n${statsLines}\n\nCopa do Mundo:\n- Elencos oficiais da FIFA com cache diario pela rota de elencos da Copa.\n\nOdds e alertas:\n- Odds reais para as ligas integradas quando a fonte retorna casas e mercados para os jogos.\n- Linhas de escanteios sao prioridade. Outros mercados so aparecem quando uma casa paga bem acima das demais.\n\nTempo Real:\n- Placar, tempo, estatisticas e acrescimos tentam usar fontes ao vivo em camadas. Se uma fonte nao trouxer um numero, eu tento a outra; se nenhuma trouxer, aviso que nao tenho.\n\nA IA tenta responder primeiro por esses dados locais e pelas rotas internas. O Gemini so entra quando a pergunta pede interpretacao aberta ou quando o dado nao existe na base.`;
 }
 
 const SQUAD_POSITION_LABELS: Record<FifaSquadPlayer['position'], string> = {
@@ -812,7 +812,7 @@ async function worldCupSquadReply(question: string, ctx: string): Promise<string
 }
 
 function dataUpdateReply(): string {
-  return `Os dados do app entram por camadas, sempre priorizando fonte local e fonte ao vivo antes de IA externa.\n\n- FIFA oficial: os elencos/convocacoes da Copa do Mundo vem do PDF oficial do FIFA Football Data Platform. A rota /api/fifa/world-cup/squads faz cache por 24h e o cron diario tambem tenta aquecer essa fonte.\n- Tempo Real: busca jogos ao vivo na hora pela API da 365Scores, pela API publica do SofaScore e pela API-Football. A tela atualiza automaticamente a cada 30 segundos.\n- Estatisticas ao vivo do jogo: quando a API-Football nao entrega algum detalhe, o app continua tentando completar com 365Scores/SofaScore. Se nenhuma fonte enviar escanteios, finalizacoes, posse, cartoes ou outro numero do evento, eu aviso que nao tenho em vez de inventar.\n- Previsao de Acrescimo: primeiro tento usar tempo real de bola rolando ou play-by-play com parada e retomada. Quando isso nao existe, uso acrescimo anunciado pela fonte ao vivo, como 45+X, 90+X ou campo extra. Nesse caso eu mostro o acrescimo, mas aviso que o tempo total de bola parada nao foi enviado.\n- Odds e alertas: odds reais vem da API-Football quando ela retorna casas de aposta e mercados para o jogo. A tela prioriza linhas de escanteios e so mostra outros mercados se uma casa pagar bem acima das demais. Eu nao crio odd estimada.\n- Proximos jogos, resultados e tabelas: vem das rotas de 365Scores/SofaScore/API-Football e tambem da base local onde ja temos agenda, chaveamentos e estatisticas historicas.\n- Base local: medias de escanteios por time, por competicao e por tempo ficam nos arquivos de dados do app e no banco quando o admin sincroniza/importa jogos.\n- Admin/sincronizacao: o painel admin usa DATABASE_URL para gravar dados; a rota de cron chama a sincronizacao geral quando CRON_SECRET esta configurado.\n- Gemini: so deve entrar quando a pergunta precisa de interpretacao aberta ou quando a base local/API nao tem a resposta direta. Para medias, proximos jogos, cartoes, convocacoes, odds e acrescimos, eu tento resolver localmente primeiro.`;
+  return `Os dados do app entram por camadas, sempre priorizando fonte local e fonte ao vivo antes de IA externa.\n\n- FIFA oficial: os elencos/convocacoes da Copa do Mundo vem do PDF oficial do FIFA Football Data Platform. A rota de elencos faz cache por 24h e a atualizacao diaria tambem tenta aquecer essa fonte.\n- Tempo Real: busca jogos ao vivo na hora em fontes de placar e estatisticas. A tela atualiza automaticamente a cada 30 segundos.\n- Estatisticas ao vivo do jogo: quando uma fonte nao entrega algum detalhe, o app tenta completar com outra. Se nenhuma fonte enviar escanteios, finalizacoes, posse, cartoes ou outro numero do evento, eu aviso que nao tenho em vez de inventar.\n- Previsao de Acrescimo: primeiro tento usar tempo real de bola rolando ou play-by-play com parada e retomada. Quando isso nao existe, uso acrescimo anunciado pela fonte ao vivo, como 45+X, 90+X ou campo extra. Nesse caso eu mostro o acrescimo, mas aviso que o tempo total de bola parada nao foi enviado.\n- Odds e alertas: odds reais entram quando a fonte retorna casas de aposta e mercados para o jogo. A tela prioriza linhas de escanteios e so mostra outros mercados se uma casa pagar bem acima das demais. Eu nao crio odd estimada.\n- Proximos jogos, resultados e tabelas: vem das fontes ao vivo e tambem da base local onde ja temos agenda, chaveamentos e estatisticas historicas.\n- Base local: medias de escanteios por time, por competicao e por tempo ficam nos arquivos de dados do app e no banco quando o admin sincroniza/importa jogos.\n- Admin/sincronizacao: o painel admin usa DATABASE_URL para gravar dados; a rota de cron chama a sincronizacao geral quando CRON_SECRET esta configurado.\n- Gemini: so deve entrar quando a pergunta precisa de interpretacao aberta ou quando a base local/API nao tem a resposta direta. Para medias, proximos jogos, cartoes, convocacoes, odds e acrescimos, eu tento resolver localmente primeiro.`;
 }
 
 function cornerMethodReply(): string {
@@ -1443,10 +1443,10 @@ async function oddsAlertsReply(question: string, origin: string): Promise<string
     const data = (await response.json()) as AiOddsAlertsResponse;
     const alerts = data.alerts ?? [];
     if (!data.configured) {
-      return 'As odds reais ainda nao estao configuradas. Quando a API-Football estiver ligada, eu comparo as casas e nao crio cotacoes estimadas.';
+      return 'As odds reais ainda nao estao configuradas. Quando a fonte estiver ligada, eu comparo as casas e nao crio cotacoes estimadas.';
     }
     if (alerts.length === 0) {
-      return data.note ?? 'A API-Football esta conectada, mas nao retornou odds reais com comparacao suficiente agora.';
+      return data.note ?? 'A fonte de odds esta conectada, mas nao retornou cotacoes com comparacao suficiente agora.';
     }
 
     const normalized = normalize(question);
@@ -1472,7 +1472,7 @@ async function oddsAlertsReply(question: string, origin: string): Promise<string
 
     const lines = selected.map(formatOddsAlertLine).join('\n');
 
-    return `Odds reais via API-Football:\n\n${lines}\n\nEu priorizo linhas de escanteios. Outros mercados so entram quando uma casa esta pagando bem acima das demais. Nao crio odds estimadas.`;
+    return `Odds reais encontradas:\n\n${lines}\n\nEu priorizo linhas de escanteios. Outros mercados so entram quando uma casa esta pagando bem acima das demais. Nao crio odds estimadas.`;
   } catch (error) {
     console.error('AI odds reply error:', error);
     return null;

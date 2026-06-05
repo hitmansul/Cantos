@@ -1,7 +1,7 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import { Target, TrendingUp, Calendar, ChevronDown, ChevronUp, BarChart3, AlertCircle, Check, Filter, X, Search } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { Target, TrendingUp, Calendar, ChevronDown, ChevronUp, BarChart3, AlertCircle, Check, Filter, X, Search, BadgeDollarSign, Loader2 } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -235,6 +235,131 @@ interface PredictionCardProps {
   onSelect?: (home: string, away: string) => void;
 }
 
+type MatchOddsOffer = {
+  bookmaker: string;
+  odd: number;
+};
+
+type MatchOddsMarket = {
+  id: string;
+  marketName: string;
+  selectionLabel: string;
+  offers: MatchOddsOffer[];
+};
+
+type MatchOddsResponse = {
+  configured: boolean;
+  found: boolean;
+  markets: MatchOddsMarket[];
+};
+
+function MatchOddsPanel({ match }: { match: NextMatch }) {
+  const [data, setData] = useState<MatchOddsResponse | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadOdds() {
+      setLoading(true);
+      setError(null);
+
+      const params = new URLSearchParams({
+        home: match.homeTeam,
+        away: match.awayTeam,
+        date: match.date.slice(0, 10),
+        competition: match.competition ?? "",
+      });
+
+      try {
+        const response = await fetch(`/api/odds/match?${params}`, { cache: "no-store" });
+        if (!response.ok) throw new Error("Nao foi possivel carregar as odds deste jogo agora.");
+        const payload = (await response.json()) as MatchOddsResponse;
+        if (!cancelled) setData(payload);
+      } catch (caught) {
+        if (!cancelled) {
+          setError(caught instanceof Error ? caught.message : "Nao foi possivel carregar as odds deste jogo agora.");
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+
+    loadOdds();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [match.awayTeam, match.competition, match.date, match.homeTeam]);
+
+  if (loading) {
+    return (
+      <div className="rounded-lg border border-border bg-muted/20 p-3 text-sm text-muted-foreground">
+        <div className="flex items-center gap-2">
+          <Loader2 className="h-4 w-4 animate-spin" />
+          Buscando odds de escanteios das casas...
+        </div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="rounded-lg border border-border bg-muted/20 p-3 text-sm text-muted-foreground">
+        {error}
+      </div>
+    );
+  }
+
+  if (!data?.configured || !data.found || data.markets.length === 0) {
+    return (
+      <div className="rounded-lg border border-border bg-muted/20 p-3 text-sm text-muted-foreground">
+        Sem odds de escanteios para este jogo agora.
+      </div>
+    );
+  }
+
+  return (
+    <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/5 p-3">
+      <div className="mb-3 flex items-center justify-between gap-2">
+        <h4 className="flex items-center gap-2 text-sm font-semibold text-emerald-300">
+          <BadgeDollarSign className="h-4 w-4" />
+          Odds de escanteios das casas
+        </h4>
+        <Badge variant="outline">{data.markets.length} linhas</Badge>
+      </div>
+
+      <div className="space-y-3">
+        {data.markets.slice(0, 4).map((market) => (
+          <div key={market.id} className="rounded-md border border-border/70 bg-background/30 p-3">
+            <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <p className="text-sm font-semibold">{market.marketName}</p>
+                <p className="text-xs text-muted-foreground">{market.selectionLabel}</p>
+              </div>
+              <Badge className="bg-emerald-500/15 text-emerald-300 border-emerald-500/30">
+                melhor {market.offers[0]?.odd.toFixed(2)}
+              </Badge>
+            </div>
+            <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+              {market.offers.slice(0, 6).map((offer) => (
+                <div
+                  key={`${market.id}-${offer.bookmaker}`}
+                  className="flex min-w-0 items-center justify-between gap-2 rounded-md bg-muted/30 px-2 py-1.5"
+                >
+                  <span className="truncate text-xs text-muted-foreground">{offer.bookmaker}</span>
+                  <span className="text-sm font-bold">{offer.odd.toFixed(2)}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function PredictionCard({ prediction, onSelect }: PredictionCardProps) {
   const [expanded, setExpanded] = useState(false);
   
@@ -419,6 +544,8 @@ function PredictionCard({ prediction, onSelect }: PredictionCardProps) {
               ))}
             </div>
           </div>
+
+          <MatchOddsPanel match={prediction.match} />
 
           {/* Action Button */}
           {onSelect && (

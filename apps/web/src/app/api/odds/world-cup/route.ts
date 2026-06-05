@@ -411,10 +411,10 @@ export async function GET() {
       hasRealBet365,
       note:
         apiFootballRealEvents.length === 0
-          ? 'API-Football conectada, mas nenhuma odd real da Copa do Mundo foi retornada agora.'
+          ? 'Nenhuma odd da Copa do Mundo foi retornada agora.'
           : hasRealBet365
-            ? 'Odds reais da Copa encontradas na API-Football, incluindo Bet365 quando disponivel.'
-            : 'Odds reais da Copa encontradas na API-Football, mas a Bet365 nao foi retornada agora.',
+            ? 'Odds da Copa encontradas, incluindo Bet365 quando disponivel.'
+            : 'Odds da Copa encontradas, mas a Bet365 nao foi retornada agora.',
       events: apiFootballRealEvents,
       lastUpdated: new Date().toISOString(),
     });

@@ -24,7 +24,7 @@ import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Button } from '@/components/ui/button';
-import { WorldCupOddsAlerts } from '@/components/WorldCupOddsAlerts';
+import { ValueAlerts } from '@/components/ValueAlerts';
 
 type WCTeam = { country: string; flag: string };
 
@@ -692,7 +692,7 @@ export function WorldCupPage() {
 
         {/* Odds Tab */}
         <TabsContent value="odds" className="space-y-4">
-          <WorldCupOddsAlerts />
+          <ValueAlerts scope="world_cup" />
         </TabsContent>
 
         {/* Sedes Tab */}

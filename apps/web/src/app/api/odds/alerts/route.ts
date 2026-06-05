@@ -130,9 +130,12 @@ type ApiFootballLeagueConfig = {
 const MAX_ODDS_PAGES_PER_LEAGUE = 2;
 const MAX_ALERTS = 90;
 const CACHE_TTL_MS = 15 * 60 * 1000;
-const NON_CORNER_MEDIAN_EDGE_THRESHOLD = 30;
-const NON_CORNER_SECOND_BEST_EDGE_THRESHOLD = 30;
-const NON_CORNER_MIN_ABSOLUTE_GAP = 0.75;
+const DATE_FOCUSED_ODDS_DAYS = 5;
+const CORNER_MEDIAN_EDGE_THRESHOLD = 8;
+const CORNER_MIN_ABSOLUTE_GAP = 0.12;
+const NON_CORNER_MEDIAN_EDGE_THRESHOLD = 35;
+const NON_CORNER_SECOND_BEST_EDGE_THRESHOLD = 35;
+const NON_CORNER_MIN_ABSOLUTE_GAP = 1;
 const NON_CORNER_MIN_BOOKMAKERS = 3;
 const DEFAULT_DAYS_AHEAD = 60;
 
@@ -262,6 +265,17 @@ function hasStrongNonCornerDistortion(offers: OddsOffer[], medianOdd: number): b
   );
 }
 
+function hasMeaningfulCornerDifference(offers: OddsOffer[], medianOdd: number): boolean {
+  const best = offers[0];
+  const secondBest = offers[1];
+  if (!best || !secondBest) return false;
+
+  const medianEdgePct = medianOdd > 0 ? ((best.odd / medianOdd) - 1) * 100 : 0;
+  const absoluteGap = best.odd - secondBest.odd;
+
+  return medianEdgePct >= CORNER_MEDIAN_EDGE_THRESHOLD || absoluteGap >= CORNER_MIN_ABSOLUTE_GAP;
+}
+
 function lineLabel(marketName: string, selectionLabel: string): string {
   const normalizedMarket = normalize(marketName);
   const normalizedSelection = normalize(selectionLabel);
@@ -348,7 +362,28 @@ async function oddsForLeague(league: ApiFootballLeagueConfig) {
     items.push(...(nextPage?.response ?? []));
   }
 
-  return items;
+  const { from } = dateRange();
+  for (let day = 0; day < DATE_FOCUSED_ODDS_DAYS; day += 1) {
+    const date = toIsoDate(addDays(new Date(`${from}T12:00:00.000Z`), day));
+    const datePage = await apiFootballGet<ApiFootballOddsItem[]>('/odds', {
+      params: {
+        league: league.apiFootballLeagueId,
+        season: league.season,
+        date,
+      },
+      revalidate: 900,
+      timeoutMs: 12_000,
+    });
+    items.push(...(datePage?.response ?? []));
+  }
+
+  const seen = new Set<string>();
+  return items.filter((item) => {
+    const key = `${item.fixture.id}|${item.bookmakers?.length ?? 0}|${item.bookmaker?.name ?? ''}|${item.league?.id ?? ''}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 async function groupsForLeague(league: ApiFootballLeagueConfig): Promise<OddsMarketGroup[]> {
@@ -405,6 +440,15 @@ async function groupsForLeague(league: ApiFootballLeagueConfig): Promise<OddsMar
   return [...groups.values()];
 }
 
+async function safeGroupsForLeague(league: ApiFootballLeagueConfig): Promise<OddsMarketGroup[]> {
+  try {
+    return await groupsForLeague(league);
+  } catch (error) {
+    console.warn('[odds-alerts] league failed:', league.key, error);
+    return [];
+  }
+}
+
 function alertFromGroup(group: OddsMarketGroup): OddsAlert | null {
   const offers = group.offers
     .filter((offer) => Number.isFinite(offer.odd) && offer.odd > 1)
@@ -416,6 +460,7 @@ function alertFromGroup(group: OddsMarketGroup): OddsAlert | null {
   const med = median(offers.map((offer) => offer.odd));
   const edgePct = med > 0 ? Math.max(0, Math.round(((best.odd / med) - 1) * 100)) : 0;
 
+  if (group.marketType === 'corners' && !hasMeaningfulCornerDifference(offers, med)) return null;
   if (group.marketType === 'other' && !hasStrongNonCornerDistortion(offers, med)) return null;
 
   const compared = offers.length;
@@ -459,7 +504,7 @@ async function buildResponse(scope: LeagueScope): Promise<OddsAlertsResponse> {
       configured: false,
       source: 'not-configured',
       focus: 'corner-lines',
-      note: 'API-Football nao configurada. A tela nao mostra odds estimadas.',
+      note: 'Fonte de odds nao configurada. A tela nao mostra cotacoes estimadas.',
       summary: {
         leaguesChecked: 0,
         eventsChecked: 0,
@@ -473,7 +518,7 @@ async function buildResponse(scope: LeagueScope): Promise<OddsAlertsResponse> {
   }
 
   const leagues = scopedLeagues(scope);
-  const groupSets = await mapLimit(leagues, 4, groupsForLeague);
+  const groupSets = await mapLimit(leagues, 4, safeGroupsForLeague);
   const groups = groupSets.flat();
   const alerts = groups
     .map(alertFromGroup)
@@ -493,7 +538,7 @@ async function buildResponse(scope: LeagueScope): Promise<OddsAlertsResponse> {
     note:
       cornerAlerts > 0
         ? 'Odds reais encontradas. Escanteios aparecem primeiro; outros mercados so entram quando uma casa paga muito acima das demais.'
-        : 'API-Football conectada, mas nenhum mercado real de escanteios foi retornado agora nas ligas consultadas. Outros mercados so aparecem quando uma casa paga muito acima das demais.',
+        : 'Nenhum mercado real de escanteios foi retornado agora nas ligas consultadas. Outros mercados so aparecem quando uma casa paga muito acima das demais.',
     summary: {
       leaguesChecked: leagues.length,
       eventsChecked,

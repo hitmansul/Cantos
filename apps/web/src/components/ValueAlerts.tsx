@@ -73,6 +73,11 @@ type OddsAlertsResponse = {
 };
 
 type AlertTab = 'corners' | 'other';
+type OddsScope = 'all' | 'world_cup';
+
+type ValueAlertsProps = {
+  scope?: OddsScope;
+};
 
 function formatDate(value: string): string {
   const date = new Date(value);
@@ -226,7 +231,7 @@ function OddsAlertCard({ alert, selectedBookmakers }: { alert: OddsAlert; select
   );
 }
 
-export function ValueAlerts() {
+export function ValueAlerts({ scope = 'all' }: ValueAlertsProps) {
   const [data, setData] = useState<OddsAlertsResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -240,8 +245,10 @@ export function ValueAlerts() {
     setLoading(true);
     setError(null);
     try {
-      const response = await fetch('/api/odds/alerts', { cache: 'no-store' });
-      if (!response.ok) throw new Error('Nao foi possivel buscar odds reais agora.');
+      const params = new URLSearchParams();
+      if (scope !== 'all') params.set('scope', scope);
+      const response = await fetch(`/api/odds/alerts${params.size ? `?${params}` : ''}`, { cache: 'no-store' });
+      if (!response.ok) throw new Error('Nao foi possivel carregar as odds agora.');
       const payload = (await response.json()) as OddsAlertsResponse;
       setData(payload);
       if (payload.summary.cornerAlerts === 0 && payload.summary.otherValueAlerts > 0) setTab('other');
@@ -254,7 +261,7 @@ export function ValueAlerts() {
 
   useEffect(() => {
     load();
-  }, []);
+  }, [scope]);
 
   const leagueOptions = useMemo(() => {
     const alerts = data?.alerts ?? [];
@@ -356,7 +363,7 @@ export function ValueAlerts() {
             <div>
               <h3 className="text-lg font-semibold">Odds reais nao configuradas</h3>
               <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
-                Configure a chave da API-Football para comparar odds reais. A aplicacao nao cria cotacoes estimadas.
+                Configure a fonte de odds para comparar cotacoes reais. A aplicacao nao cria cotacoes estimadas.
               </p>
             </div>
           </div>
@@ -385,7 +392,7 @@ export function ValueAlerts() {
           </div>
           <div className="flex flex-wrap gap-2">
             <Badge className="bg-emerald-500/20 text-emerald-300 border-emerald-500/30">
-              API-Football
+              Fonte real conectada
             </Badge>
             <Badge variant="outline">{data.summary.leaguesChecked} ligas</Badge>
             <Badge variant="outline">{data.summary.eventsChecked} jogos</Badge>
@@ -550,7 +557,7 @@ export function ValueAlerts() {
                 : 'Nenhuma distorcao forte em outros mercados agora'}
           </p>
           <p className="mx-auto mt-2 max-w-2xl text-sm text-muted-foreground">
-            A tela so mostra odds recebidas de fonte real. Se a API-Football nao enviar o mercado/casa para um jogo,
+            A tela so mostra odds recebidas de fonte real. Se a fonte nao enviar o mercado/casa para um jogo,
             ele fica fora da lista.
           </p>
         </Card>
