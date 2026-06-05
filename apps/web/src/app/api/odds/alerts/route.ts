@@ -1,5 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { apiFootballGet, isApiFootballConfigured } from '../../utils/apiFootball';
+import {
+  brazilianTeamStats,
+  championsLeagueTeamStats,
+  conferenceLeagueTeamStats,
+  copaDoBrasilTeamStats,
+  europaLeagueTeamStats,
+  libertadoresTeamStats,
+  serieBTeamStats,
+  sulAmericanaTeamStats,
+  type TeamCornerStats,
+} from '@/data/cornerStats';
+import { currentUpcomingMatches } from '@/data/currentFixtures';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -183,6 +195,17 @@ const LEAGUES: ApiFootballLeagueConfig[] = [
   { key: 'liga_mx', apiFootballLeagueId: 262, season: 2025, name: 'Liga MX', country: 'Mexico' },
   { key: 'amistoso_internacional', apiFootballLeagueId: 10, season: 2026, name: 'Amistosos Internacionais', country: 'FIFA' },
 ];
+
+const LOCAL_TEAM_STATS_BY_LEAGUE: Record<string, TeamCornerStats[]> = {
+  brasileirao_a: brazilianTeamStats,
+  brasileirao_b: serieBTeamStats,
+  copa_do_brasil: copaDoBrasilTeamStats,
+  libertadores: libertadoresTeamStats,
+  sudamericana: sulAmericanaTeamStats,
+  champions_league: championsLeagueTeamStats,
+  europa_league: europaLeagueTeamStats,
+  conference_league: conferenceLeagueTeamStats,
+};
 
 let responseCache: { expiresAt: number; scope: LeagueScope; body: OddsAlertsResponse } | null = null;
 
@@ -512,12 +535,44 @@ function scopedLeagues(scope: LeagueScope) {
   return LEAGUES;
 }
 
-function emptyOptions(): OddsFilterOptions {
-  return {
-    leagues: [],
-    teams: [],
-    bookmakers: [],
-  };
+function leagueOptionKey(league: Pick<ApiFootballLeagueConfig, 'country' | 'name'>): string {
+  return `${league.country}|${league.name}`;
+}
+
+function addTeamOption(
+  teamMap: Map<string, { leagueKey: string; team: string }>,
+  leagueKey: string,
+  team: string | null | undefined
+) {
+  const cleanTeam = team?.trim();
+  if (!cleanTeam) return;
+  teamMap.set(`${leagueKey}|${cleanTeam}`, { leagueKey, team: cleanTeam });
+}
+
+function addLocalTeamOptions(
+  leagues: ApiFootballLeagueConfig[],
+  teamMap: Map<string, { leagueKey: string; team: string }>
+) {
+  const leagueByInternalKey = new Map(leagues.map((league) => [league.key, league]));
+
+  for (const [internalKey, stats] of Object.entries(LOCAL_TEAM_STATS_BY_LEAGUE)) {
+    const league = leagueByInternalKey.get(internalKey);
+    if (!league) continue;
+
+    const optionKey = leagueOptionKey(league);
+    for (const teamStats of stats) {
+      addTeamOption(teamMap, optionKey, teamStats.team);
+    }
+  }
+
+  for (const match of currentUpcomingMatches) {
+    const league = leagueByInternalKey.get(match.leagueKey);
+    if (!league) continue;
+
+    const optionKey = leagueOptionKey(league);
+    addTeamOption(teamMap, optionKey, match.homeTeam);
+    addTeamOption(teamMap, optionKey, match.awayTeam);
+  }
 }
 
 function buildFilterOptions(
@@ -526,7 +581,7 @@ function buildFilterOptions(
 ): OddsFilterOptions {
   const leagueOptions = leagues
     .map((league) => ({
-      key: `${league.country}|${league.name}`,
+      key: leagueOptionKey(league),
       leagueName: league.name,
       country: league.country,
     }))
@@ -537,12 +592,14 @@ function buildFilterOptions(
 
   for (const group of groups) {
     const leagueKey = `${group.country}|${group.leagueName}`;
-    teamMap.set(`${leagueKey}|${group.homeTeam}`, { leagueKey, team: group.homeTeam });
-    teamMap.set(`${leagueKey}|${group.awayTeam}`, { leagueKey, team: group.awayTeam });
+    addTeamOption(teamMap, leagueKey, group.homeTeam);
+    addTeamOption(teamMap, leagueKey, group.awayTeam);
     for (const offer of group.offers) {
       if (offer.bookmaker.trim()) bookmakerSet.add(offer.bookmaker.trim());
     }
   }
+
+  addLocalTeamOptions(leagues, teamMap);
 
   return {
     leagues: leagueOptions,
@@ -554,6 +611,8 @@ function buildFilterOptions(
 }
 
 async function buildResponse(scope: LeagueScope): Promise<OddsAlertsResponse> {
+  const leagues = scopedLeagues(scope);
+
   if (!isApiFootballConfigured()) {
     return {
       configured: false,
@@ -568,12 +627,11 @@ async function buildResponse(scope: LeagueScope): Promise<OddsAlertsResponse> {
         bookmakersCompared: 0,
       },
       alerts: [],
-      options: emptyOptions(),
+      options: buildFilterOptions(leagues, []),
       lastUpdated: new Date().toISOString(),
     };
   }
 
-  const leagues = scopedLeagues(scope);
   const groupSets = await mapLimit(leagues, 4, safeGroupsForLeague);
   const groups = groupSets.flat();
   const options = buildFilterOptions(leagues, groups);
