@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { apiFootballGet, isApiFootballConfigured } from '../../utils/apiFootball';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -34,6 +35,67 @@ type NormalizedBookmaker = {
   draw: number | null;
   away: number | null;
 };
+
+type ApiFootballFixture = {
+  fixture: {
+    id: number;
+    date: string;
+    timestamp: number;
+  };
+  league?: {
+    round?: string;
+  };
+  teams: {
+    home: { name: string };
+    away: { name: string };
+  };
+};
+
+type ApiFootballOddValue = {
+  value: string;
+  odd: string;
+};
+
+type ApiFootballBet = {
+  id?: number;
+  name: string;
+  values?: ApiFootballOddValue[];
+};
+
+type ApiFootballBookmaker = {
+  id?: number;
+  name: string;
+  bets?: ApiFootballBet[];
+};
+
+type ApiFootballOddsItem = {
+  fixture: {
+    id: number;
+    date?: string;
+    timestamp?: number;
+  };
+  league?: {
+    round?: string;
+  };
+  bookmakers?: ApiFootballBookmaker[];
+  bookmaker?: ApiFootballBookmaker;
+};
+
+type NormalizedOddsEvent = {
+  id: string;
+  startTime: string;
+  roundName?: string;
+  homeTeam: string;
+  awayTeam: string;
+  fairOdds: ReturnType<typeof fairOdds>;
+  bookmakers: NormalizedBookmaker[];
+  bestPick: ReturnType<typeof bestPick>;
+  source: 'real';
+};
+
+const WORLD_CUP_LEAGUE_ID = 1;
+const WORLD_CUP_SEASON = 2026;
+const MAX_API_FOOTBALL_ODDS_PAGES = 6;
 
 const STRENGTH: Record<string, number> = {
   argentina: 86,
@@ -84,6 +146,16 @@ function roundOdd(value: number): number {
   return Math.round(value * 100) / 100;
 }
 
+function toIsoDate(date: Date) {
+  return date.toISOString().slice(0, 10);
+}
+
+function addDays(date: Date, days: number) {
+  const next = new Date(date);
+  next.setUTCDate(next.getUTCDate() + days);
+  return next;
+}
+
 function oddsFromProbability(probability: number, margin = 1.06): number {
   return roundOdd(1 / Math.max(0.01, probability * margin));
 }
@@ -131,6 +203,164 @@ function realBookmakers(event: OddsApiEvent): NormalizedBookmaker[] {
     .filter((bookmaker) => bookmaker.home || bookmaker.draw || bookmaker.away);
 }
 
+function parseDecimalOdd(value: string | number | null | undefined) {
+  if (value === undefined || value === null) return null;
+  const numberValue = Number(String(value).replace(',', '.'));
+  return Number.isFinite(numberValue) && numberValue > 1 ? roundOdd(numberValue) : null;
+}
+
+function fixtureDateRange() {
+  const today = new Date();
+  return {
+    from: toIsoDate(today),
+    to: toIsoDate(addDays(today, 45)),
+  };
+}
+
+async function apiFootballWorldCupFixtures() {
+  const { from, to } = fixtureDateRange();
+  const data = await apiFootballGet<ApiFootballFixture[]>('/fixtures', {
+    params: {
+      league: WORLD_CUP_LEAGUE_ID,
+      season: WORLD_CUP_SEASON,
+      from,
+      to,
+      timezone: 'America/Sao_Paulo',
+    },
+    revalidate: 600,
+    timeoutMs: 12_000,
+  });
+
+  const fixtureMap = new Map<number, ApiFootballFixture>();
+  for (const fixture of data?.response ?? []) {
+    fixtureMap.set(fixture.fixture.id, fixture);
+  }
+  return fixtureMap;
+}
+
+async function apiFootballWorldCupOdds() {
+  const firstPage = await apiFootballGet<ApiFootballOddsItem[]>('/odds', {
+    params: {
+      league: WORLD_CUP_LEAGUE_ID,
+      season: WORLD_CUP_SEASON,
+      page: 1,
+    },
+    revalidate: 600,
+    timeoutMs: 12_000,
+  });
+
+  if (!firstPage) return [];
+
+  const items = [...(firstPage.response ?? [])];
+  const totalPages = Math.min(firstPage.paging?.total ?? 1, MAX_API_FOOTBALL_ODDS_PAGES);
+
+  for (let page = 2; page <= totalPages; page += 1) {
+    const nextPage = await apiFootballGet<ApiFootballOddsItem[]>('/odds', {
+      params: {
+        league: WORLD_CUP_LEAGUE_ID,
+        season: WORLD_CUP_SEASON,
+        page,
+      },
+      revalidate: 600,
+      timeoutMs: 12_000,
+    });
+    items.push(...(nextPage?.response ?? []));
+  }
+
+  return items;
+}
+
+function apiFootballBookmakers(item: ApiFootballOddsItem) {
+  if (Array.isArray(item.bookmakers)) return item.bookmakers;
+  return item.bookmaker ? [item.bookmaker] : [];
+}
+
+function isMatchWinnerBet(bet: ApiFootballBet) {
+  const name = normalize(bet.name);
+  return bet.id === 1 || name.includes('match winner') || name.includes('winner') || name.includes('1x2');
+}
+
+function apiFootballBookmakerOdds(
+  bookmaker: ApiFootballBookmaker,
+  fixture: ApiFootballFixture
+): NormalizedBookmaker | null {
+  const bet = bookmaker.bets?.find(isMatchWinnerBet);
+  if (!bet?.values?.length) return null;
+
+  const homeTeam = normalize(fixture.teams.home.name);
+  const awayTeam = normalize(fixture.teams.away.name);
+
+  const findOdd = (side: OddsSide) => {
+    for (const value of bet.values ?? []) {
+      const normalizedValue = normalize(value.value);
+      const isHome =
+        side === 'home' &&
+        (normalizedValue === 'home' ||
+          normalizedValue === '1' ||
+          normalizedValue === homeTeam ||
+          normalizedValue.includes(homeTeam) ||
+          homeTeam.includes(normalizedValue));
+      const isDraw = side === 'draw' && (normalizedValue === 'draw' || normalizedValue === 'x');
+      const isAway =
+        side === 'away' &&
+        (normalizedValue === 'away' ||
+          normalizedValue === '2' ||
+          normalizedValue === awayTeam ||
+          normalizedValue.includes(awayTeam) ||
+          awayTeam.includes(normalizedValue));
+
+      if (isHome || isDraw || isAway) return parseDecimalOdd(value.odd);
+    }
+    return null;
+  };
+
+  const odds = {
+    name: bookmaker.name,
+    source: 'real' as const,
+    home: findOdd('home'),
+    draw: findOdd('draw'),
+    away: findOdd('away'),
+  };
+
+  return odds.home || odds.draw || odds.away ? odds : null;
+}
+
+async function apiFootballEvents(): Promise<NormalizedOddsEvent[] | null> {
+  if (!isApiFootballConfigured()) return null;
+
+  const [fixtures, oddsItems] = await Promise.all([apiFootballWorldCupFixtures(), apiFootballWorldCupOdds()]);
+
+  return oddsItems
+    .map((item) => {
+      const fixture = fixtures.get(item.fixture.id);
+      if (!fixture) return null;
+
+      const bookmakers = apiFootballBookmakers(item)
+        .map((bookmaker) => apiFootballBookmakerOdds(bookmaker, fixture))
+        .filter((bookmaker): bookmaker is NormalizedBookmaker => Boolean(bookmaker));
+
+      if (bookmakers.length === 0) return null;
+
+      const fair = fairOdds(fixture.teams.home.name, fixture.teams.away.name);
+      const event: NormalizedOddsEvent = {
+        id: String(fixture.fixture.id),
+        startTime: fixture.fixture.date,
+        homeTeam: fixture.teams.home.name,
+        awayTeam: fixture.teams.away.name,
+        fairOdds: fair,
+        bookmakers,
+        bestPick: bestPick(fair, bookmakers),
+        source: 'real' as const,
+      };
+
+      const roundName = item.league?.round ?? fixture.league?.round;
+      if (roundName) event.roundName = roundName;
+      return event;
+    })
+    .filter((event): event is NormalizedOddsEvent => event !== null)
+    .sort((a, b) => Date.parse(a.startTime) - Date.parse(b.startTime));
+}
+
 async function oddsApiEvents(): Promise<OddsApiEvent[] | null> {
   const apiKey = process.env.THE_ODDS_API_KEY ?? process.env.ODDS_API_KEY;
   if (!apiKey) return null;
@@ -168,6 +398,28 @@ function bestPick(
 }
 
 export async function GET() {
+  const apiFootballRealEvents = await apiFootballEvents();
+
+  if (apiFootballRealEvents !== null) {
+    const hasRealBet365 = apiFootballRealEvents.some((event) =>
+      event.bookmakers.some((bookmaker) => normalize(bookmaker.name).includes('bet365'))
+    );
+
+    return NextResponse.json({
+      configured: true,
+      source: 'api-football',
+      hasRealBet365,
+      note:
+        apiFootballRealEvents.length === 0
+          ? 'API-Football conectada, mas nenhuma odd real da Copa do Mundo foi retornada agora.'
+          : hasRealBet365
+            ? 'Odds reais da Copa encontradas na API-Football, incluindo Bet365 quando disponivel.'
+            : 'Odds reais da Copa encontradas na API-Football, mas a Bet365 nao foi retornada agora.',
+      events: apiFootballRealEvents,
+      lastUpdated: new Date().toISOString(),
+    });
+  }
+
   const realEvents = await oddsApiEvents();
 
   if (realEvents === null) {

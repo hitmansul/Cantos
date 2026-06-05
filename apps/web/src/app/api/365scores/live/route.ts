@@ -5,6 +5,7 @@
  * Sofascore's /sport/football/events/live returns ALL live football matches globally.
  */
 import { NextResponse } from 'next/server';
+import { apiFootballGet } from '../../utils/apiFootball';
 
 interface LiveMatch {
   id: number;
@@ -102,6 +103,24 @@ interface PlayByPlayMessage {
   Timeline?: string;
 }
 
+interface ApiFootballLiveFixture {
+  fixture: {
+    id: number;
+    status: { elapsed?: number; extra?: number; short?: string; long?: string };
+  };
+  league: { id: number; name: string; country: string };
+  teams: {
+    home: { id: number; name: string };
+    away: { id: number; name: string };
+  };
+  goals: { home: number | null; away: number | null };
+}
+
+interface ApiFootballTeamStatistics {
+  team: { id: number; name?: string };
+  statistics: Array<{ type: string; value: number | string | null }>;
+}
+
 const SCORES365_HEADERS = {
   'User-Agent':
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
@@ -123,9 +142,23 @@ const SCORES365_COUNTRIES: Record<number, string> = {
 };
 
 const MAX_STOPPAGE_ENRICHMENT = 24;
+const MAX_API_FOOTBALL_STATS_ENRICHMENT = 8;
+const LIVE_CACHE_TTL_MS = 45_000;
 const STOPPAGE_MIN_DURATION_MS = 15_000;
 const STOPPAGE_MAX_OPEN_DURATION_MS = 7 * 60_000;
 const STOPPAGE_FETCH_TIMEOUT_MS = 4_500;
+
+let liveResponseCache:
+  | {
+      expiresAt: number;
+      body: {
+        matches: LiveMatch[];
+        count: number;
+        lastUpdated: string;
+        sources: { scores365: number; sofascore: number; apiFootball: number };
+      };
+    }
+  | undefined;
 
 const STOPPAGE_START_TERMS = [
   'interrupted',
@@ -363,6 +396,88 @@ function extractCornersFromRows(rows: LiveStatRow[]) {
   if (home === null || away === null) return undefined;
 
   return { home, away, total: home + away };
+}
+
+function apiFootballStatValue(value: number | string | null) {
+  if (value === undefined || value === null || value === '') return '-';
+  return String(value);
+}
+
+function extractApiFootballRows(
+  stats: ApiFootballTeamStatistics[],
+  homeTeamId: number,
+  awayTeamId: number
+): LiveStatRow[] {
+  const rows = new Map<string, LiveStatRow>();
+
+  for (const teamStats of stats) {
+    const side = teamStats.team.id === homeTeamId ? 'home' : teamStats.team.id === awayTeamId ? 'away' : null;
+    if (!side) continue;
+
+    teamStats.statistics.forEach((stat, index) => {
+      const key = normalizeText(stat.type);
+      const current =
+        rows.get(key) ??
+        ({
+          key,
+          label: stat.type,
+          home: '-',
+          away: '-',
+          order: index,
+          categoryOrder: 0,
+          category: 'API-Football',
+          isMajor: ['corner kicks', 'shots on goal', 'ball possession', 'yellow cards', 'red cards'].includes(key),
+        } satisfies LiveStatRow);
+
+      current[side] = apiFootballStatValue(stat.value);
+      rows.set(key, current);
+    });
+  }
+
+  return [...rows.values()].sort((a, b) => a.order - b.order || a.label.localeCompare(b.label, 'pt-BR'));
+}
+
+async function fetchApiFootballStats(match: LiveMatch): Promise<Pick<LiveMatch, 'corners' | 'liveStats' | 'statsSource'> | null> {
+  const response = await apiFootballGet<ApiFootballTeamStatistics[]>('/fixtures/statistics', {
+    params: { fixture: match.sourceIds?.apiFootball ?? match.id },
+    cache: 'no-store',
+    timeoutMs: 8_000,
+  });
+
+  const stats = response?.response ?? [];
+  if (stats.length === 0) return null;
+
+  const liveStats = extractApiFootballRows(stats, match.homeTeam.id, match.awayTeam.id);
+  if (liveStats.length === 0) return null;
+
+  return {
+    corners: extractCornersFromRows(liveStats) ?? match.corners,
+    liveStats,
+    statsSource: 'api-football',
+  };
+}
+
+async function enrichWithApiFootballStats(matches: LiveMatch[]): Promise<LiveMatch[]> {
+  const enrichedMatches = [...matches];
+  const candidates = enrichedMatches
+    .map((match, index) => ({ match, index }))
+    .filter(({ match }) => Boolean(match.sourceIds?.apiFootball))
+    .slice(0, MAX_API_FOOTBALL_STATS_ENRICHMENT);
+
+  await Promise.all(
+    candidates.map(async ({ match, index }) => {
+      const stats = await fetchApiFootballStats(match);
+      if (!stats) return;
+      enrichedMatches[index] = {
+        ...match,
+        corners: stats.corners,
+        liveStats: stats.liveStats,
+        statsSource: stats.statsSource,
+      };
+    })
+  );
+
+  return enrichedMatches;
 }
 
 async function enrichWith365Stats(matches: LiveMatch[]): Promise<LiveMatch[]> {
@@ -723,64 +838,14 @@ async function fetchFromSofascore(): Promise<LiveMatch[]> {
 // ── API-Football live (for corner stats) ──────────────────────────────────────
 
 async function fetchFromApiFootball(): Promise<LiveMatch[]> {
-  const API_KEY = process.env.API_FOOTBALL_KEY || process.env.RAPIDAPI_KEY;
-  if (!API_KEY) return [];
-
   try {
-    const res = await fetch('https://v3.football.api-sports.io/fixtures?live=all', {
-      headers: {
-        'x-apisports-key': API_KEY,
-        'x-rapidapi-key': API_KEY,
-        'x-rapidapi-host': 'v3.football.api-sports.io',
-      },
+    const data = await apiFootballGet<ApiFootballLiveFixture[]>('/fixtures', {
+      params: { live: 'all' },
       cache: 'no-store',
+      timeoutMs: 12_000,
     });
 
-    if (!res.ok) return [];
-
-    const data = (await res.json()) as {
-      errors?: Record<string, string>;
-      response?: Array<{
-        fixture: {
-          id: number;
-          status: { elapsed?: number; extra?: number; short?: string; long?: string };
-        };
-        league: { id: number; name: string; country: string };
-        teams: {
-          home: { id: number; name: string };
-          away: { id: number; name: string };
-        };
-        goals: { home: number | null; away: number | null };
-        statistics?: Array<{
-          team: { id: number };
-          statistics: Array<{ type: string; value: number | string | null }>;
-        }>;
-      }>;
-    };
-
-    if (data.errors && Object.keys(data.errors).length > 0) return [];
-
-    return (data.response ?? []).map((item) => {
-      // Extract corner stats
-      let corners: { home: number; away: number; total: number } | undefined = undefined;
-      if (item.statistics && item.statistics.length >= 2) {
-        const homeStats = item.statistics[0]?.statistics ?? [];
-        const awayStats = item.statistics[1]?.statistics ?? [];
-        const homeCornersRaw = homeStats.find((s) => s.type === 'Corner Kicks')?.value;
-        const awayCornersRaw = awayStats.find((s) => s.type === 'Corner Kicks')?.value;
-        const hc =
-          typeof homeCornersRaw === 'number'
-            ? homeCornersRaw
-            : parseInt(String(homeCornersRaw ?? ''), 10);
-        const ac =
-          typeof awayCornersRaw === 'number'
-            ? awayCornersRaw
-            : parseInt(String(awayCornersRaw ?? ''), 10);
-        if (!isNaN(hc) && !isNaN(ac)) {
-          corners = { home: hc, away: ac, total: hc + ac };
-        }
-      }
-
+    const matches = (data?.response ?? []).map((item) => {
       const announcedAddedTime = calculateAnnouncedAddedTime(
         typeof item.fixture.status.extra === 'number'
           ? item.fixture.status.extra
@@ -809,13 +874,13 @@ async function fetchFromApiFootball(): Promise<LiveMatch[]> {
         },
         competition: `${item.league.name} (${item.league.country})`,
         competitionId: item.league.id,
-        corners,
-        statsSource: corners ? 'api-football' : undefined,
         source: 'api-football',
         sourceIds: { apiFootball: item.fixture.id },
         stoppage: announcedAddedTime,
       };
     });
+
+    return enrichWithApiFootballStats(matches);
   } catch (err) {
     console.error('[live/api-football] error:', err);
     return [];
@@ -826,6 +891,13 @@ async function fetchFromApiFootball(): Promise<LiveMatch[]> {
 
 export async function GET() {
   try {
+    if (liveResponseCache && liveResponseCache.expiresAt > Date.now()) {
+      return NextResponse.json({
+        ...liveResponseCache.body,
+        cached: true,
+      });
+    }
+
     const [scores365Result, sofascoreResult, apiFootballResult] = await Promise.allSettled([
       fetchFrom365Scores(),
       fetchFromSofascore(),
@@ -854,7 +926,7 @@ export async function GET() {
     for (const match of sfMatches) addOrMerge(match);
     for (const match of afMatches) addOrMerge(match);
 
-    return NextResponse.json({
+    const body = {
       matches: allMatches,
       count: allMatches.length,
       lastUpdated: new Date().toISOString(),
@@ -863,7 +935,14 @@ export async function GET() {
         sofascore: sfMatches.length,
         apiFootball: afMatches.length,
       },
-    });
+    };
+
+    liveResponseCache = {
+      expiresAt: Date.now() + LIVE_CACHE_TTL_MS,
+      body,
+    };
+
+    return NextResponse.json(body);
   } catch (error) {
     console.error('[live] error:', error);
     return NextResponse.json(

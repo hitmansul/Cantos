@@ -37,7 +37,7 @@ type OddsEvent = {
 
 type OddsResponse = {
   configured: boolean;
-  source: 'the-odds-api' | 'not-configured';
+  source: 'api-football' | 'the-odds-api' | 'not-configured';
   hasRealBet365: boolean;
   note: string;
   events: OddsEvent[];
@@ -261,8 +261,8 @@ export function WorldCupOddsAlerts() {
             <p className="mt-1 max-w-3xl text-sm text-muted-foreground">{data.note}</p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <Badge className={data.source === 'the-odds-api' ? 'bg-emerald-500/20 text-emerald-300' : 'bg-amber-500/15 text-amber-300'}>
-              {data.source === 'the-odds-api' ? 'Fonte real conectada' : 'Fonte real pendente'}
+            <Badge className={data.source !== 'not-configured' ? 'bg-emerald-500/20 text-emerald-300' : 'bg-amber-500/15 text-amber-300'}>
+              {data.source !== 'not-configured' ? 'Fonte real conectada' : 'Fonte real pendente'}
             </Badge>
             <Badge variant="outline">{data.events.length} jogos</Badge>
             <Button variant="outline" size="sm" onClick={load}>
