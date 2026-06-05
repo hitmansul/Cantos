@@ -88,6 +88,39 @@ type AiOddsResponse = {
   events?: AiOddsEvent[];
 };
 
+type AiOddsAlert = {
+  id: string;
+  startTime: string;
+  leagueName: string;
+  country: string;
+  homeTeam: string;
+  awayTeam: string;
+  marketType: 'corners' | 'other';
+  marketName: string;
+  lineLabel: string;
+  bestBookmaker: string;
+  bestOdd: number;
+  medianOdd: number;
+  secondBestOdd: number | null;
+  edgePct: number;
+  bookmakersCompared: number;
+  bookmakers: Array<{ bookmaker: string; odd: number }>;
+};
+
+type AiOddsAlertsResponse = {
+  configured: boolean;
+  source: 'api-football' | 'not-configured';
+  note?: string;
+  summary?: {
+    leaguesChecked: number;
+    eventsChecked: number;
+    cornerAlerts: number;
+    otherValueAlerts: number;
+    bookmakersCompared: number;
+  };
+  alerts?: AiOddsAlert[];
+};
+
 type AiLiveMatch = {
   id: number;
   minute: number | string;
@@ -362,6 +395,14 @@ function askedOdds(text: string): boolean {
     'casa de aposta',
     'casas de aposta',
     'aposta',
+    'bookmaker',
+    'mercado',
+    'linha de escanteio',
+    'linha de escanteios',
+    'linhas de escanteio',
+    'linhas de escanteios',
+    'over ',
+    'under ',
     'bet365',
     'pinnacle',
     'betano',
@@ -711,7 +752,7 @@ function coverageReply(): string {
     return `- ${set.label}: ${teams.length} times com media geral e por tempo.`;
   }).join('\n');
 
-  return `Ligas integradas no app:\n\n${formatCatalog()}\n\nBases estatisticas carregadas:\n${statsLines}\n\nCopa do Mundo:\n- Elencos oficiais da FIFA com cache diario pela rota /api/fifa/world-cup/squads.\n- Odds reais da Copa via API-Football quando a fonte retorna casas de aposta para os jogos.\n\nTempo Real:\n- Placar, tempo, estatisticas e acrescimos tentam usar API-Football, 365Scores e SofaScore em camadas. Se uma fonte nao trouxer um numero, eu tento a outra; se nenhuma trouxer, aviso que nao tenho.\n\nA IA tenta responder primeiro por esses dados locais e pelas rotas internas. O Gemini so entra quando a pergunta pede interpretacao aberta ou quando o dado nao existe na base.`;
+  return `Ligas integradas no app:\n\n${formatCatalog()}\n\nBases estatisticas carregadas:\n${statsLines}\n\nCopa do Mundo:\n- Elencos oficiais da FIFA com cache diario pela rota /api/fifa/world-cup/squads.\n\nOdds e alertas:\n- Odds reais via API-Football para as ligas integradas quando a fonte retorna casas e mercados para os jogos.\n- Linhas de escanteios sao prioridade. Outros mercados so aparecem quando uma casa paga bem acima das demais.\n\nTempo Real:\n- Placar, tempo, estatisticas e acrescimos tentam usar API-Football, 365Scores e SofaScore em camadas. Se uma fonte nao trouxer um numero, eu tento a outra; se nenhuma trouxer, aviso que nao tenho.\n\nA IA tenta responder primeiro por esses dados locais e pelas rotas internas. O Gemini so entra quando a pergunta pede interpretacao aberta ou quando o dado nao existe na base.`;
 }
 
 const SQUAD_POSITION_LABELS: Record<FifaSquadPlayer['position'], string> = {
@@ -771,7 +812,7 @@ async function worldCupSquadReply(question: string, ctx: string): Promise<string
 }
 
 function dataUpdateReply(): string {
-  return `Os dados do app entram por camadas, sempre priorizando fonte local e fonte ao vivo antes de IA externa.\n\n- FIFA oficial: os elencos/convocacoes da Copa do Mundo vem do PDF oficial do FIFA Football Data Platform. A rota /api/fifa/world-cup/squads faz cache por 24h e o cron diario tambem tenta aquecer essa fonte.\n- Tempo Real: busca jogos ao vivo na hora pela API da 365Scores, pela API publica do SofaScore e pela API-Football. A tela atualiza automaticamente a cada 30 segundos.\n- Estatisticas ao vivo do jogo: quando a API-Football nao entrega algum detalhe, o app continua tentando completar com 365Scores/SofaScore. Se nenhuma fonte enviar escanteios, finalizacoes, posse, cartoes ou outro numero do evento, eu aviso que nao tenho em vez de inventar.\n- Previsao de Acrescimo: primeiro tento usar tempo real de bola rolando ou play-by-play com parada e retomada. Quando isso nao existe, uso acrescimo anunciado pela fonte ao vivo, como 45+X, 90+X ou campo extra. Nesse caso eu mostro o acrescimo, mas aviso que o tempo total de bola parada nao foi enviado.\n- Odds e alertas: as odds reais da Copa do Mundo vem da API-Football quando ela retorna casas de aposta para o jogo. A tela compara as casas recebidas; eu nao crio odd estimada.\n- Proximos jogos, resultados e tabelas: vem das rotas de 365Scores/SofaScore/API-Football e tambem da base local onde ja temos agenda, chaveamentos e estatisticas historicas.\n- Base local: medias de escanteios por time, por competicao e por tempo ficam nos arquivos de dados do app e no banco quando o admin sincroniza/importa jogos.\n- Admin/sincronizacao: o painel admin usa DATABASE_URL para gravar dados; a rota de cron chama a sincronizacao geral quando CRON_SECRET esta configurado.\n- Gemini: so deve entrar quando a pergunta precisa de interpretacao aberta ou quando a base local/API nao tem a resposta direta. Para medias, proximos jogos, cartoes, convocacoes, odds e acrescimos, eu tento resolver localmente primeiro.`;
+  return `Os dados do app entram por camadas, sempre priorizando fonte local e fonte ao vivo antes de IA externa.\n\n- FIFA oficial: os elencos/convocacoes da Copa do Mundo vem do PDF oficial do FIFA Football Data Platform. A rota /api/fifa/world-cup/squads faz cache por 24h e o cron diario tambem tenta aquecer essa fonte.\n- Tempo Real: busca jogos ao vivo na hora pela API da 365Scores, pela API publica do SofaScore e pela API-Football. A tela atualiza automaticamente a cada 30 segundos.\n- Estatisticas ao vivo do jogo: quando a API-Football nao entrega algum detalhe, o app continua tentando completar com 365Scores/SofaScore. Se nenhuma fonte enviar escanteios, finalizacoes, posse, cartoes ou outro numero do evento, eu aviso que nao tenho em vez de inventar.\n- Previsao de Acrescimo: primeiro tento usar tempo real de bola rolando ou play-by-play com parada e retomada. Quando isso nao existe, uso acrescimo anunciado pela fonte ao vivo, como 45+X, 90+X ou campo extra. Nesse caso eu mostro o acrescimo, mas aviso que o tempo total de bola parada nao foi enviado.\n- Odds e alertas: odds reais vem da API-Football quando ela retorna casas de aposta e mercados para o jogo. A tela prioriza linhas de escanteios e so mostra outros mercados se uma casa pagar bem acima das demais. Eu nao crio odd estimada.\n- Proximos jogos, resultados e tabelas: vem das rotas de 365Scores/SofaScore/API-Football e tambem da base local onde ja temos agenda, chaveamentos e estatisticas historicas.\n- Base local: medias de escanteios por time, por competicao e por tempo ficam nos arquivos de dados do app e no banco quando o admin sincroniza/importa jogos.\n- Admin/sincronizacao: o painel admin usa DATABASE_URL para gravar dados; a rota de cron chama a sincronizacao geral quando CRON_SECRET esta configurado.\n- Gemini: so deve entrar quando a pergunta precisa de interpretacao aberta ou quando a base local/API nao tem a resposta direta. Para medias, proximos jogos, cartoes, convocacoes, odds e acrescimos, eu tento resolver localmente primeiro.`;
 }
 
 function cornerMethodReply(): string {
@@ -1354,54 +1395,84 @@ function formatBookmakerLine(event: AiOddsEvent, bookmaker: AiOddsBookmaker): st
   return `${bookmaker.name}: ${event.homeTeam} ${home} | empate ${draw} | ${event.awayTeam} ${away}`;
 }
 
-async function worldCupOddsReply(question: string, origin: string): Promise<string | null> {
+function oddsAlertScore(question: string, alert: AiOddsAlert): number {
+  const normalized = normalize(question);
+  const names = [alert.homeTeam, alert.awayTeam, alert.leagueName, alert.country, alert.marketName, alert.lineLabel];
+  let score = 0;
+
+  for (const name of names) {
+    const value = normalize(name);
+    if (value && normalized.includes(value)) score += 8;
+    for (const part of value.split(' ').filter((item) => item.length >= 4)) {
+      if (normalized.includes(part)) score += 2;
+    }
+  }
+
+  if (alert.marketType === 'corners' && (normalized.includes('escanteio') || normalized.includes('corner'))) {
+    score += 8;
+  }
+
+  if (normalized.includes('bet365') && alert.bookmakers.some((bookmaker) => normalize(bookmaker.bookmaker).includes('bet365'))) {
+    score += 5;
+  }
+
+  if (normalized.includes('over') && normalize(alert.lineLabel).includes('over')) score += 4;
+  if (normalized.includes('under') && normalize(alert.lineLabel).includes('under')) score += 4;
+
+  return score;
+}
+
+function formatOddsAlertLine(alert: AiOddsAlert): string {
+  const marketLabel = alert.marketType === 'corners' ? 'escanteios' : alert.marketName;
+  const comparison = alert.bookmakers
+    .slice(0, 5)
+    .map((bookmaker) => `${bookmaker.bookmaker} ${bookmaker.odd.toFixed(2)}`)
+    .join(' | ');
+  const edge = alert.edgePct > 0 ? `, ${alert.edgePct}% acima da mediana` : '';
+
+  return `- ${alert.homeTeam} x ${alert.awayTeam} (${alert.leagueName}, ${format365Date(alert.startTime)}): ${marketLabel} ${alert.lineLabel}. Melhor odd: ${alert.bestOdd.toFixed(2)} na ${alert.bestBookmaker}${edge}. Comparacao: ${comparison}.`;
+}
+
+async function oddsAlertsReply(question: string, origin: string): Promise<string | null> {
   if (!askedOdds(question)) return null;
 
   try {
-    const response = await fetch(`${origin}/api/odds/world-cup`, { cache: 'no-store' });
+    const response = await fetch(`${origin}/api/odds/alerts`, { cache: 'no-store' });
     if (!response.ok) return null;
 
-    const data = (await response.json()) as AiOddsResponse;
-    const events = data.events ?? [];
+    const data = (await response.json()) as AiOddsAlertsResponse;
+    const alerts = data.alerts ?? [];
     if (!data.configured) {
-      return 'As odds reais ainda nao estao configuradas. Quando a fonte estiver ligada, eu comparo as casas e nao crio cotacoes estimadas.';
+      return 'As odds reais ainda nao estao configuradas. Quando a API-Football estiver ligada, eu comparo as casas e nao crio cotacoes estimadas.';
     }
-    if (events.length === 0) {
-      return data.note ?? 'A fonte de odds esta conectada, mas nao retornou cotacoes reais da Copa do Mundo agora.';
+    if (alerts.length === 0) {
+      return data.note ?? 'A API-Football esta conectada, mas nao retornou odds reais com comparacao suficiente agora.';
     }
 
-    const scored = events
-      .map((event) => ({ event, score: oddsEventScore(question, event) }))
-      .sort((a, b) => b.score - a.score || Date.parse(a.event.startTime) - Date.parse(b.event.startTime));
+    const normalized = normalize(question);
+    const wantsCorners = normalized.includes('escanteio') || normalized.includes('corner');
+    const scored = alerts
+      .filter((alert) => (wantsCorners ? alert.marketType === 'corners' : true))
+      .map((alert) => ({ alert, score: oddsAlertScore(question, alert) }))
+      .sort((a, b) => {
+        if (a.score !== b.score) return b.score - a.score;
+        if (a.alert.marketType !== b.alert.marketType) return a.alert.marketType === 'corners' ? -1 : 1;
+        if (a.alert.edgePct !== b.alert.edgePct) return b.alert.edgePct - a.alert.edgePct;
+        return Date.parse(a.alert.startTime) - Date.parse(b.alert.startTime);
+      });
+
+    if (scored.length === 0) {
+      return data.note ?? 'Nao encontrei odds reais de escanteios nessa consulta agora.';
+    }
+
     const hasSpecificMatch = scored.some((item) => item.score > 0);
     const selected = (hasSpecificMatch ? scored.filter((item) => item.score > 0) : scored)
       .slice(0, hasSpecificMatch ? 3 : 5)
-      .map((item) => item.event);
+      .map((item) => item.alert);
 
-    const sourceLabel = data.source === 'api-football' ? 'API-Football' : 'fonte de odds configurada';
-    const lines = selected
-      .map((event) => {
-        const bestHome = bestOdd(event, 'home');
-        const bestDraw = bestOdd(event, 'draw');
-        const bestAway = bestOdd(event, 'away');
-        const bestSummary = [
-          bestHome ? `${event.homeTeam}: ${bestHome.odd.toFixed(2)} (${bestHome.bookmaker})` : null,
-          bestDraw ? `empate: ${bestDraw.odd.toFixed(2)} (${bestDraw.bookmaker})` : null,
-          bestAway ? `${event.awayTeam}: ${bestAway.odd.toFixed(2)} (${bestAway.bookmaker})` : null,
-        ]
-          .filter(Boolean)
-          .join(' | ');
-        const topBookmakers = [...event.bookmakers]
-          .sort((a, b) => bestAnyOdd(b) - bestAnyOdd(a))
-          .slice(0, 4)
-          .map((bookmaker) => formatBookmakerLine(event, bookmaker))
-          .join('; ');
+    const lines = selected.map(formatOddsAlertLine).join('\n');
 
-        return `- ${event.homeTeam} x ${event.awayTeam} (${format365Date(event.startTime)}): melhores odds -> ${bestSummary}.\n  Comparacao: ${topBookmakers}.`;
-      })
-      .join('\n');
-
-    return `Odds reais da Copa do Mundo via ${sourceLabel}:\n\n${lines}\n\nEu mostro apenas cotacoes reais retornadas pela fonte. Quando uma casa nao aparece, e porque ela nao veio na resposta daquele jogo.`;
+    return `Odds reais via API-Football:\n\n${lines}\n\nEu priorizo linhas de escanteios. Outros mercados so entram quando uma casa esta pagando bem acima das demais. Nao crio odds estimadas.`;
   } catch (error) {
     console.error('AI odds reply error:', error);
     return null;
@@ -1476,7 +1547,7 @@ async function localReply(question: string, ctx: string, origin: string): Promis
   if (askedCoverage(question)) return coverageReply();
   const squad = await worldCupSquadReply(question, ctx);
   if (squad) return squad;
-  const odds = await worldCupOddsReply(question, origin);
+  const odds = await oddsAlertsReply(question, origin);
   if (odds) return odds;
   const liveAdded = await liveAddedTimeReply(question, ctx, origin);
   if (liveAdded) return liveAdded;
@@ -1493,7 +1564,7 @@ async function localReply(question: string, ctx: string, origin: string): Promis
     const contextualSquad = await worldCupSquadReply(contextualQuestion, '');
     if (contextualSquad) return contextualSquad;
     if (askedOdds(ctx)) {
-      const contextualOdds = await worldCupOddsReply(contextualQuestion, origin);
+      const contextualOdds = await oddsAlertsReply(contextualQuestion, origin);
       if (contextualOdds) return contextualOdds;
     }
     if (askedAddedTime(ctx)) {
