@@ -1,26 +1,9 @@
 import { NextResponse } from 'next/server';
-import { SCORES365_COMPETITIONS, scores365Get } from '@/app/api/utils/scores365';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
 type OddsSide = 'home' | 'draw' | 'away';
-
-type ScheduleMatch = {
-  id: string;
-  startTime: string;
-  roundName?: string;
-  homeTeam: string;
-  awayTeam: string;
-};
-
-type Raw365Game = {
-  id: number;
-  startTime: string;
-  roundName?: string;
-  homeCompetitor?: { name?: string };
-  awayCompetitor?: { name?: string };
-};
 
 type OddsApiOutcome = {
   name: string;
@@ -46,42 +29,20 @@ type OddsApiEvent = {
 
 type NormalizedBookmaker = {
   name: string;
-  source: 'real' | 'estimated';
+  source: 'real';
   home: number | null;
   draw: number | null;
   away: number | null;
 };
 
-const STATIC_WORLD_CUP_MATCHES: ScheduleMatch[] = [
-  {
-    id: 'wc-brasil-marrocos',
-    startTime: '2026-06-13T22:00:00+00:00',
-    roundName: 'Fase de Grupos',
-    homeTeam: 'Brasil',
-    awayTeam: 'Marrocos',
-  },
-  {
-    id: 'wc-brasil-haiti',
-    startTime: '2026-06-20T00:30:00+00:00',
-    roundName: 'Fase de Grupos',
-    homeTeam: 'Brasil',
-    awayTeam: 'Haiti',
-  },
-  {
-    id: 'wc-escocia-brasil',
-    startTime: '2026-06-24T22:00:00+00:00',
-    roundName: 'Fase de Grupos',
-    homeTeam: 'Escocia',
-    awayTeam: 'Brasil',
-  },
-];
-
 const STRENGTH: Record<string, number> = {
   argentina: 86,
   brasil: 84,
+  brazil: 84,
   france: 84,
   franca: 84,
   espanha: 83,
+  spain: 83,
   germany: 82,
   alemanha: 82,
   england: 82,
@@ -101,17 +62,12 @@ const STRENGTH: Record<string, number> = {
   mexico: 72,
   canada: 70,
   japao: 70,
+  japan: 70,
   escocia: 69,
   scotland: 69,
   coreia: 68,
   paraguai: 67,
   haiti: 55,
-};
-
-const BET365_REFERENCE: Record<string, { home: number; draw: number; away: number }> = {
-  'brasil-marrocos': { home: 1.58, draw: 4.03, away: 5.54 },
-  'brasil-haiti': { home: 1.06, draw: 17.0, away: 26.0 },
-  'escocia-brasil': { home: 7.5, draw: 4.52, away: 1.39 },
 };
 
 function normalize(value: string): string {
@@ -122,10 +78,6 @@ function normalize(value: string): string {
     .replace(/[^a-z0-9\s-]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
-}
-
-function matchKey(homeTeam: string, awayTeam: string): string {
-  return `${normalize(homeTeam).replace(/\s+/g, '-')}-${normalize(awayTeam).replace(/\s+/g, '-')}`;
 }
 
 function roundOdd(value: number): number {
@@ -158,63 +110,6 @@ function fairOdds(homeTeam: string, awayTeam: string) {
     draw: oddsFromProbability(drawProb / total, 1),
     away: oddsFromProbability(awayProb / total, 1),
   };
-}
-
-function estimatedBookmakers(match: ScheduleMatch): NormalizedBookmaker[] {
-  const reference = BET365_REFERENCE[matchKey(match.homeTeam, match.awayTeam)] ?? fairOdds(match.homeTeam, match.awayTeam);
-
-  return [
-    {
-      name: 'Bet365 estimada',
-      source: 'estimated',
-      home: reference.home,
-      draw: reference.draw,
-      away: reference.away,
-    },
-    {
-      name: 'Pinnacle estimada',
-      source: 'estimated',
-      home: roundOdd(reference.home * 1.02),
-      draw: roundOdd(reference.draw * 1.01),
-      away: roundOdd(reference.away * 1.02),
-    },
-    {
-      name: 'Mercado estimado',
-      source: 'estimated',
-      home: roundOdd(reference.home * 0.98),
-      draw: roundOdd(reference.draw * 0.99),
-      away: roundOdd(reference.away * 0.98),
-    },
-  ];
-}
-
-async function worldCupSchedule(): Promise<ScheduleMatch[]> {
-  try {
-    const competition = SCORES365_COMPETITIONS.copa_do_mundo;
-    const data = (await scores365Get('/web/games/', {
-      competitions: competition.id.toString(),
-      statuses: '1,2',
-    })) as { games?: Raw365Game[] };
-
-    const matches = (data.games ?? [])
-      .filter((game) => game.homeCompetitor?.name && game.awayCompetitor?.name)
-      .filter((game) => {
-        const time = Date.parse(game.startTime);
-        return Number.isFinite(time) && time >= Date.now() - 12 * 60 * 60 * 1000;
-      })
-      .map<ScheduleMatch>((game) => ({
-        id: game.id.toString(),
-        startTime: game.startTime,
-        roundName: game.roundName,
-        homeTeam: game.homeCompetitor?.name ?? 'Mandante',
-        awayTeam: game.awayCompetitor?.name ?? 'Visitante',
-      }))
-      .sort((a, b) => Date.parse(a.startTime) - Date.parse(b.startTime));
-
-    return matches.length > 0 ? matches : STATIC_WORLD_CUP_MATCHES;
-  } catch {
-    return STATIC_WORLD_CUP_MATCHES;
-  }
 }
 
 function realBookmakers(event: OddsApiEvent): NormalizedBookmaker[] {
@@ -273,30 +168,20 @@ function bestPick(
 }
 
 export async function GET() {
-  const [schedule, realEvents] = await Promise.all([worldCupSchedule(), oddsApiEvents()]);
-  const realByKey = new Map(
-    (realEvents ?? []).map((event) => [matchKey(event.home_team, event.away_team), event])
-  );
+  const realEvents = await oddsApiEvents();
 
-  const scheduleEvents = schedule.map((match) => {
-    const real = realByKey.get(matchKey(match.homeTeam, match.awayTeam));
-    const bookmakers = real ? realBookmakers(real) : estimatedBookmakers(match);
-    const fair = fairOdds(match.homeTeam, match.awayTeam);
-    return {
-      id: real?.id ?? match.id,
-      startTime: real?.commence_time ?? match.startTime,
-      roundName: match.roundName,
-      homeTeam: real?.home_team ?? match.homeTeam,
-      awayTeam: real?.away_team ?? match.awayTeam,
-      fairOdds: fair,
-      bookmakers,
-      bestPick: bestPick(fair, bookmakers),
-      source: bookmakers.some((bookmaker) => bookmaker.source === 'real') ? 'real' : 'estimated',
-    };
-  });
+  if (realEvents === null) {
+    return NextResponse.json({
+      configured: false,
+      source: 'not-configured',
+      hasRealBet365: false,
+      note: 'Nenhum provedor de odds reais esta configurado. A aplicacao nao mostra odds estimadas.',
+      events: [],
+      lastUpdated: new Date().toISOString(),
+    });
+  }
 
-  const realOnlyEvents = (realEvents ?? [])
-    .filter((event) => !scheduleEvents.some((item) => matchKey(item.homeTeam, item.awayTeam) === matchKey(event.home_team, event.away_team)))
+  const events = realEvents
     .map((event) => {
       const bookmakers = realBookmakers(event);
       const fair = fairOdds(event.home_team, event.away_team);
@@ -308,25 +193,23 @@ export async function GET() {
         fairOdds: fair,
         bookmakers,
         bestPick: bestPick(fair, bookmakers),
-        source: 'real',
+        source: 'real' as const,
       };
-    });
-
-  const events = [...scheduleEvents, ...realOnlyEvents].sort(
-    (a, b) => Date.parse(a.startTime) - Date.parse(b.startTime)
-  );
+    })
+    .filter((event) => event.bookmakers.length > 0)
+    .sort((a, b) => Date.parse(a.startTime) - Date.parse(b.startTime));
 
   const hasRealBet365 = events.some((event) =>
-    event.bookmakers.some((bookmaker) => bookmaker.source === 'real' && normalize(bookmaker.name).includes('bet365'))
+    event.bookmakers.some((bookmaker) => normalize(bookmaker.name).includes('bet365'))
   );
 
   return NextResponse.json({
-    configured: Boolean(process.env.THE_ODDS_API_KEY ?? process.env.ODDS_API_KEY),
-    source: events.some((event) => event.source === 'real') ? 'the-odds-api' : 'estimated',
+    configured: true,
+    source: 'the-odds-api',
     hasRealBet365,
     note: hasRealBet365
       ? 'Odds reais da Bet365 encontradas na fonte configurada.'
-      : 'Bet365 real depende de provedor de odds configurado. Enquanto isso, valores Bet365 aparecem como estimativa local.',
+      : 'Fonte real configurada, mas nenhuma odd real da Bet365 foi retornada agora.',
     events,
     lastUpdated: new Date().toISOString(),
   });

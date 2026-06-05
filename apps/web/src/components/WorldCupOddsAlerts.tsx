@@ -10,7 +10,7 @@ type OddsSide = 'home' | 'draw' | 'away';
 
 type OddsBookmaker = {
   name: string;
-  source: 'real' | 'estimated';
+  source: 'real';
   home: number | null;
   draw: number | null;
   away: number | null;
@@ -32,12 +32,12 @@ type OddsEvent = {
     fairOdd: number;
     edgePct: number;
   } | null;
-  source: 'real' | 'estimated';
+  source: 'real';
 };
 
 type OddsResponse = {
   configured: boolean;
-  source: 'the-odds-api' | 'estimated';
+  source: 'the-odds-api' | 'not-configured';
   hasRealBet365: boolean;
   note: string;
   events: OddsEvent[];
@@ -98,8 +98,8 @@ function WorldCupOddsEventCard({ event }: { event: OddsEvent }) {
                 {event.roundName}
               </Badge>
             )}
-            <Badge variant="outline" className={event.source === 'real' ? 'text-emerald-300' : 'text-amber-300'}>
-              {event.source === 'real' ? 'odds reais' : 'estimativa'}
+            <Badge variant="outline" className="text-emerald-300">
+              odds reais
             </Badge>
           </div>
           <h3 className="text-lg font-bold">
@@ -147,8 +147,8 @@ function WorldCupOddsEventCard({ event }: { event: OddsEvent }) {
               Casas
             </div>
             {bet365 && (
-              <Badge className={bet365.source === 'real' ? 'bg-emerald-500/20 text-emerald-300' : 'bg-amber-500/15 text-amber-300'}>
-                {bet365.source === 'real' ? 'Bet365 real' : 'Bet365 estimada'}
+              <Badge className="bg-emerald-500/20 text-emerald-300">
+                Bet365 real
               </Badge>
             )}
           </div>
@@ -173,8 +173,8 @@ function WorldCupOddsEventCard({ event }: { event: OddsEvent }) {
                       </td>
                     ))}
                     <td className="py-2 text-center">
-                      <Badge variant="outline" className={bookmaker.source === 'real' ? 'text-emerald-300' : 'text-amber-300'}>
-                        {bookmaker.source === 'real' ? 'real' : 'estimada'}
+                      <Badge variant="outline" className="text-emerald-300">
+                        real
                       </Badge>
                     </td>
                   </tr>
@@ -234,10 +234,13 @@ export function WorldCupOddsAlerts() {
   }
 
   if (!data || data.events.length === 0) {
+    const title = data?.configured ? 'Nenhuma odd real encontrada para a Copa agora' : 'Odds reais nao configuradas';
+    const description = data?.note ?? 'A aplicacao nao mostra odds estimadas.';
     return (
       <Card className="p-8 text-center">
         <BadgeDollarSign className="mx-auto mb-3 h-8 w-8 text-muted-foreground" />
-        <p className="font-semibold">Nenhuma odd encontrada para a Copa agora</p>
+        <p className="font-semibold">{title}</p>
+        <p className="mx-auto mt-2 max-w-2xl text-sm text-muted-foreground">{description}</p>
         <Button variant="outline" size="sm" onClick={load} className="mt-4">
           <RefreshCw className="mr-2 h-4 w-4" />
           Atualizar
@@ -259,7 +262,7 @@ export function WorldCupOddsAlerts() {
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <Badge className={data.source === 'the-odds-api' ? 'bg-emerald-500/20 text-emerald-300' : 'bg-amber-500/15 text-amber-300'}>
-              {data.source === 'the-odds-api' ? 'Fonte real conectada' : 'Estimativa local'}
+              {data.source === 'the-odds-api' ? 'Fonte real conectada' : 'Fonte real pendente'}
             </Badge>
             <Badge variant="outline">{data.events.length} jogos</Badge>
             <Button variant="outline" size="sm" onClick={load}>
@@ -269,7 +272,7 @@ export function WorldCupOddsAlerts() {
           </div>
         </div>
         <p className="mt-3 text-xs text-muted-foreground">
-          Atualizado em {formatUpdated(data.lastUpdated)}. Use como triagem: odds estimadas nao substituem a cotacao real da casa.
+          Atualizado em {formatUpdated(data.lastUpdated)}. A tela so lista cotacoes recebidas de uma fonte real.
         </p>
       </Card>
 

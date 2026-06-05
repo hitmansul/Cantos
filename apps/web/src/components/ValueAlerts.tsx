@@ -1,606 +1,68 @@
 "use client";
 
-import { useMemo } from "react";
-import { AlertTriangle, TrendingUp, Zap, Target, DollarSign, BarChart3, ArrowRight, Sparkles, Star } from "lucide-react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { AlertTriangle, BadgeDollarSign, ShieldCheck } from "lucide-react";
+import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import {
-  type NextMatch,
-  upcomingMatches,
-  findTeamByName,
-  getHeadToHead,
-  teamStats,
-} from "@/data/teamCornerStats";
-import { currentUpcomingMatches } from "@/data/currentFixtures";
-
-interface BookmakerOdds {
-  name: string;
-  logo: string;
-  color: string;
-  odds: number;
-}
-
-interface ValueBet {
-  match: NextMatch;
-  market: string;
-  predictedProb: number;
-  impliedProb: number;
-  typicalOdds: number;
-  fairOdds: number;
-  edge: number;
-  edgeType: "imperdivel" | "forte" | "moderada" | "fraca";
-  confidence: "alta" | "média" | "baixa";
-  bookmakerOdds: BookmakerOdds[];
-  bestBookmaker: BookmakerOdds;
-  oddsGap: number; // Difference between best and second best odds
-}
-
-// Bookmaker configurations
-const BOOKMAKERS = [
-  { name: "Betano", logo: "🟢", color: "text-green-400" },
-  { name: "KTO", logo: "🔵", color: "text-blue-400" },
-  { name: "Estrela Bet", logo: "⭐", color: "text-yellow-400" },
-  { name: "Pinnacle", logo: "🔴", color: "text-red-400" },
-  { name: "Bet365", logo: "🟡", color: "text-lime-300" },
-];
-
-// Typical market odds for corner markets (based on common bookmaker offerings)
-const TYPICAL_ODDS: Record<string, number> = {
-  "Over 7.5": 1.35,
-  "Over 8.5": 1.55,
-  "Over 9.5": 1.85,
-  "Over 10.5": 2.20,
-  "Over 11.5": 2.75,
-  "Under 7.5": 3.20,
-  "Under 8.5": 2.45,
-  "Under 9.5": 2.00,
-  "Under 10.5": 1.70,
-  "Under 11.5": 1.45,
-};
-
-// Simulated variance for each bookmaker (some offer better odds than others)
-function generateBookmakerOdds(baseOdds: number, matchId: string, market: string): BookmakerOdds[] {
-  // Use match and market as seed for consistent "random" values
-  const seed = (matchId + market).split('').reduce((a, b) => a + b.charCodeAt(0), 0);
-  
-  return BOOKMAKERS.map((bookie, index) => {
-    // Each bookmaker has slightly different odds
-    // Pinnacle typically has the best odds (lowest margin)
-    const variance = ((seed * (index + 1)) % 10) / 100;
-    let multiplier = 1;
-    
-    // Occasionally create larger gaps (for "imperdível" category)
-    const hasLargeGap = (seed % 5 === 0) && bookie.name === "Pinnacle";
-    
-    if (bookie.name === "Pinnacle") {
-      // Pinnacle often has better odds, sometimes significantly better
-      multiplier = hasLargeGap ? 1.35 + variance : 1.02 + variance * 0.5;
-    } else if (bookie.name === "Betano") {
-      multiplier = 0.98 + variance * 0.3;
-    } else if (bookie.name === "KTO") {
-      multiplier = 0.97 + variance * 0.4;
-    } else {
-      multiplier = 0.96 + variance * 0.35;
-    }
-    
-    return {
-      ...bookie,
-      odds: Math.round(baseOdds * multiplier * 100) / 100,
-    };
-  }).sort((a, b) => b.odds - a.odds); // Sort by best odds first
-}
-
-function oddsToProb(odds: number): number {
-  return (1 / odds) * 100;
-}
-
-function probToOdds(prob: number): number {
-  return 100 / prob;
-}
-
-function normalizeTeamName(value: string): string {
-  return value
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[^a-z0-9]+/g, "");
-}
-
-function findTeamForAlert(teamName: string) {
-  const direct = findTeamByName(teamName);
-  if (direct) return direct;
-
-  const normalized = normalizeTeamName(teamName);
-  return teamStats.find((team) => {
-    const candidate = normalizeTeamName(team.team);
-    return candidate === normalized || candidate.includes(normalized) || normalized.includes(candidate);
-  });
-}
-
-function parseMatchDateMs(date: string): number {
-  const iso = date.includes(" ") ? date.replace(" ", "T") + ":00" : `${date}T12:00:00`;
-  return Date.parse(iso);
-}
-
-function saoPauloDay(ms: number): string {
-  return new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo" }).format(ms);
-}
-
-function isFutureOrToday(match: NextMatch): boolean {
-  const ms = parseMatchDateMs(match.date);
-  if (!Number.isFinite(ms)) return false;
-  return saoPauloDay(ms) >= saoPauloDay(Date.now());
-}
-
-function getAlertMatches(): NextMatch[] {
-  const seen = new Set<string>();
-  const matches = [...upcomingMatches, ...currentUpcomingMatches]
-    .filter(isFutureOrToday)
-    .filter((match) => {
-      const key = `${normalizeTeamName(match.homeTeam)}-${normalizeTeamName(match.awayTeam)}-${match.date.slice(0, 10)}`;
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    });
-
-  return matches;
-}
-
-function calculateMatchPrediction(match: NextMatch) {
-  const homeTeam = findTeamForAlert(match.homeTeam);
-  const awayTeam = findTeamForAlert(match.awayTeam);
-  const h2h = getHeadToHead(match.homeTeam, match.awayTeam);
-
-  const calcOverProb = (expectedTotal: number, threshold: number) => {
-    const variance = 2.5;
-    const zScore = (threshold - expectedTotal) / variance;
-    const prob = 100 * (1 - 0.5 * (1 + Math.tanh(zScore * 0.8)));
-    return Math.min(95, Math.max(5, prob));
-  };
-
-  if (!homeTeam || !awayTeam) {
-    const expectedTotal = match.predictedCorners || 9.5;
-    const confidence: "alta" | "média" | "baixa" = homeTeam || awayTeam ? "média" : "baixa";
-
-    return {
-      expectedTotal,
-      probabilities: {
-        "Over 7.5": calcOverProb(expectedTotal, 7.5),
-        "Over 8.5": calcOverProb(expectedTotal, 8.5),
-        "Over 9.5": calcOverProb(expectedTotal, 9.5),
-        "Over 10.5": calcOverProb(expectedTotal, 10.5),
-        "Over 11.5": calcOverProb(expectedTotal, 11.5),
-        "Under 7.5": 100 - calcOverProb(expectedTotal, 7.5),
-        "Under 8.5": 100 - calcOverProb(expectedTotal, 8.5),
-        "Under 9.5": 100 - calcOverProb(expectedTotal, 9.5),
-        "Under 10.5": 100 - calcOverProb(expectedTotal, 10.5),
-        "Under 11.5": 100 - calcOverProb(expectedTotal, 11.5),
-      },
-      confidence,
-    };
-  }
-
-  const weights = { base: 0.4, recent: 0.25, h2h: 0.2, overall: 0.15 };
-
-  let homeExpected =
-    homeTeam.avgCornersHome * weights.base +
-    homeTeam.avgLast5 * weights.recent +
-    homeTeam.avgCornersFor * weights.overall;
-
-  let awayExpected =
-    awayTeam.avgCornersAway * weights.base +
-    awayTeam.avgLast5 * weights.recent +
-    awayTeam.avgCornersFor * weights.overall;
-
-  if (h2h) {
-    const h2hAdjustment = (h2h.avgTotalCorners - (homeExpected + awayExpected)) * weights.h2h;
-    homeExpected += h2hAdjustment / 2;
-    awayExpected += h2hAdjustment / 2;
-  } else {
-    homeExpected *= 1 + weights.h2h;
-    awayExpected *= 1 + weights.h2h;
-  }
-
-  const expectedTotal = homeExpected + awayExpected;
-
-  // Confidence based on data consistency
-  const homeConsistency = Math.abs(homeTeam.avgLast5 - homeTeam.avgCornersFor) < 1;
-  const awayConsistency = Math.abs(awayTeam.avgLast5 - awayTeam.avgCornersFor) < 1;
-  const hasH2H = h2h !== null;
-
-  let confidence: "alta" | "média" | "baixa" = "média";
-  if (homeConsistency && awayConsistency && hasH2H) confidence = "alta";
-  else if (!homeConsistency && !awayConsistency) confidence = "baixa";
-
-  return {
-    expectedTotal,
-    probabilities: {
-      "Over 7.5": calcOverProb(expectedTotal, 7.5),
-      "Over 8.5": calcOverProb(expectedTotal, 8.5),
-      "Over 9.5": calcOverProb(expectedTotal, 9.5),
-      "Over 10.5": calcOverProb(expectedTotal, 10.5),
-      "Over 11.5": calcOverProb(expectedTotal, 11.5),
-      "Under 7.5": 100 - calcOverProb(expectedTotal, 7.5),
-      "Under 8.5": 100 - calcOverProb(expectedTotal, 8.5),
-      "Under 9.5": 100 - calcOverProb(expectedTotal, 9.5),
-      "Under 10.5": 100 - calcOverProb(expectedTotal, 10.5),
-      "Under 11.5": 100 - calcOverProb(expectedTotal, 11.5),
-    },
-    confidence,
-  };
-}
-
-function findValueBets(): ValueBet[] {
-  const valueBets: ValueBet[] = [];
-
-  for (const match of getAlertMatches()) {
-    const prediction = calculateMatchPrediction(match);
-    if (!prediction) continue;
-
-    for (const [market, predictedProb] of Object.entries(prediction.probabilities)) {
-      const typicalOdds = TYPICAL_ODDS[market];
-      if (!typicalOdds) continue;
-
-      const impliedProb = oddsToProb(typicalOdds);
-      const edge = predictedProb - impliedProb;
-
-      // Only consider significant edges (>5%)
-      if (edge > 5) {
-        let edgeType: "imperdivel" | "forte" | "moderada" | "fraca" = "fraca";
-        if (edge > 15) edgeType = "forte";
-        else if (edge > 10) edgeType = "moderada";
-
-        // Generate bookmaker odds for this market
-        const matchId = `${match.homeTeam}-${match.awayTeam}-${match.date}`;
-        const bookmakerOdds = generateBookmakerOdds(typicalOdds, matchId, market);
-        const bestBookmaker = bookmakerOdds[0]; // Already sorted by best odds
-        
-        // Calculate odds gap between best and second best
-        const oddsGap = bookmakerOdds.length > 1 
-          ? bookmakerOdds[0].odds - bookmakerOdds[1].odds 
-          : 0;
-        
-        // Mark as "imperdível" if odds gap is > 1.0
-        if (oddsGap >= 1.0) {
-          edgeType = "imperdivel";
-        }
-
-        valueBets.push({
-          match,
-          market,
-          predictedProb: Math.round(predictedProb),
-          impliedProb: Math.round(impliedProb),
-          typicalOdds,
-          fairOdds: Math.round(probToOdds(predictedProb) * 100) / 100,
-          edge: Math.round(edge),
-          edgeType,
-          confidence: prediction.confidence,
-          bookmakerOdds,
-          bestBookmaker,
-          oddsGap: Math.round(oddsGap * 100) / 100,
-        });
-      }
-    }
-  }
-
-  // Sort by edge (strongest first)
-  return valueBets.sort((a, b) => b.edge - a.edge);
-}
 
 export function ValueAlerts() {
-  const valueBets = useMemo(() => findValueBets(), []);
-
-  const imperdibleBets = valueBets.filter((b) => b.edgeType === "imperdivel");
-  const strongBets = valueBets.filter((b) => b.edgeType === "forte");
-  const moderateBets = valueBets.filter((b) => b.edgeType === "moderada");
-  const weakBets = valueBets.filter((b) => b.edgeType === "fraca");
-
-  const edgeColors = {
-    imperdivel: "bg-purple-500/20 text-purple-400 border-purple-500/30",
-    forte: "bg-green-500/20 text-green-400 border-green-500/30",
-    moderada: "bg-amber-500/20 text-amber-400 border-amber-500/30",
-    fraca: "bg-blue-500/20 text-blue-400 border-blue-500/30",
-  };
-
-  if (valueBets.length === 0) {
-    return (
-      <Card className="p-8 text-center">
-        <Target className="w-12 h-12 text-muted-foreground mx-auto mb-4 opacity-50" />
-        <p className="text-lg font-medium">Nenhum alerta de valor encontrado</p>
-        <p className="text-sm text-muted-foreground mt-2">
-          Os próximos jogos não apresentam divergências significativas entre previsões e odds típicas de mercado
-        </p>
-      </Card>
-    );
-  }
-
   return (
-    <div className="space-y-6">
-      {/* Summary Header */}
-      <Card className="p-4 bg-gradient-to-r from-primary/10 to-accent/10 border-primary/20">
-        <div className="flex items-center justify-between flex-wrap gap-4">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-full bg-primary/20 flex items-center justify-center">
-              <Zap className="w-5 h-5 text-primary" />
+    <div className="space-y-4">
+      <Card className="p-5 border-amber-500/30 bg-amber-500/5">
+        <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+          <div className="flex items-start gap-3">
+            <div className="w-11 h-11 rounded-xl bg-amber-500/15 flex items-center justify-center shrink-0">
+              <AlertTriangle className="w-5 h-5 text-amber-300" />
             </div>
             <div>
-              <p className="font-medium">Alertas de Valor Encontrados</p>
-              <p className="text-sm text-muted-foreground">
-                {valueBets.length} oportunidades nos próximos jogos
+              <h3 className="text-lg font-semibold">Odds reais ainda nao conectadas</h3>
+              <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
+                Esta tela nao mostra mais odds estimadas. Para evitar qualquer leitura errada, os alertas de
+                valor ficam bloqueados ate conectarmos uma fonte real de odds de escanteios.
               </p>
             </div>
           </div>
-          <div className="flex items-center gap-2">
-            {imperdibleBets.length > 0 && (
-              <Badge className={edgeColors.imperdivel}>
-                {imperdibleBets.length} imperdíve{imperdibleBets.length > 1 ? "is" : "l"}
-              </Badge>
-            )}
-            {strongBets.length > 0 && (
-              <Badge className={edgeColors.forte}>
-                {strongBets.length} forte{strongBets.length > 1 ? "s" : ""}
-              </Badge>
-            )}
-            {moderateBets.length > 0 && (
-              <Badge className={edgeColors.moderada}>
-                {moderateBets.length} moderada{moderateBets.length > 1 ? "s" : ""}
-              </Badge>
-            )}
-            {weakBets.length > 0 && (
-              <Badge className={edgeColors.fraca}>
-                {weakBets.length} fraca{weakBets.length > 1 ? "s" : ""}
-              </Badge>
-            )}
-          </div>
+          <Badge className="w-fit bg-amber-500/15 text-amber-300 border-amber-500/30">
+            Somente odds reais
+          </Badge>
         </div>
       </Card>
 
-      {/* Imperdível Value Bets */}
-      {imperdibleBets.length > 0 && (
-        <div className="space-y-3">
-          <h3 className="text-lg font-medium flex items-center gap-2">
-            <Star className="w-5 h-5 text-purple-400 fill-purple-400" />
-            Imperdível (Odd +1.0 acima)
-          </h3>
-          <div className="grid gap-3">
-            {imperdibleBets.map((bet, index) => (
-              <ValueBetCard key={`imperdivel-${index}`} bet={bet} />
-            ))}
+      <Card className="p-5">
+        <div className="grid gap-4 lg:grid-cols-3">
+          <div className="rounded-lg bg-muted/30 p-4">
+            <div className="flex items-center gap-2 font-semibold">
+              <BadgeDollarSign className="w-4 h-4 text-emerald-300" />
+              O que precisamos
+            </div>
+            <p className="mt-2 text-sm text-muted-foreground">
+              Uma API que entregue odds reais de escanteios por jogo, mercado e casa. Para Bet365, normalmente
+              isso vem por provedor intermediario, nao por API publica oficial da casa.
+            </p>
           </div>
-        </div>
-      )}
 
-      {/* Strong Value Bets */}
-      {strongBets.length > 0 && (
-        <div className="space-y-3">
-          <h3 className="text-lg font-medium flex items-center gap-2">
-            <Sparkles className="w-5 h-5 text-green-400" />
-            Vantagem Forte (+15%)
-          </h3>
-          <div className="grid gap-3">
-            {strongBets.map((bet, index) => (
-              <ValueBetCard key={`strong-${index}`} bet={bet} />
-            ))}
+          <div className="rounded-lg bg-muted/30 p-4">
+            <div className="flex items-center gap-2 font-semibold">
+              <ShieldCheck className="w-4 h-4 text-blue-300" />
+              Como sera exibido
+            </div>
+            <p className="mt-2 text-sm text-muted-foreground">
+              Quando a fonte real estiver configurada, os alertas vao comparar nossa previsao local com a odd
+              real recebida da casa e mostrar somente oportunidades com cotacao confirmada.
+            </p>
           </div>
-        </div>
-      )}
 
-      {/* Moderate Value Bets */}
-      {moderateBets.length > 0 && (
-        <div className="space-y-3">
-          <h3 className="text-lg font-medium flex items-center gap-2">
-            <TrendingUp className="w-5 h-5 text-amber-400" />
-            Vantagem Moderada (+10%)
-          </h3>
-          <div className="grid gap-3">
-            {moderateBets.map((bet, index) => (
-              <ValueBetCard key={`moderate-${index}`} bet={bet} />
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Weak Value Bets (collapsible or limited) */}
-      {weakBets.length > 0 && (
-        <div className="space-y-3">
-          <h3 className="text-lg font-medium flex items-center gap-2">
-            <BarChart3 className="w-5 h-5 text-blue-400" />
-            Vantagem Pequena (+5%)
-          </h3>
-          <div className="grid gap-3">
-            {weakBets.slice(0, 5).map((bet, index) => (
-              <ValueBetCard key={`weak-${index}`} bet={bet} compact />
-            ))}
-            {weakBets.length > 5 && (
-              <p className="text-sm text-muted-foreground text-center">
-                + {weakBets.length - 5} outras oportunidades com vantagem pequena
-              </p>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* Disclaimer */}
-      <Card className="p-4 bg-muted/20 border-muted">
-        <div className="flex items-start gap-3">
-          <AlertTriangle className="w-5 h-5 text-amber-400 mt-0.5" />
-          <div>
-            <p className="text-sm">
-              <span className="font-medium">Importante:</span> As odds exibidas são valores simulados para demonstração.
-              Para obter odds reais em tempo real, seria necessário integrar uma API de odds (como OddsPapi, ~$245/mês).
-              A "vantagem" representa a diferença entre nossa probabilidade estimada e a probabilidade implícita nas odds.
-              Sempre verifique as odds atuais diretamente nas casas de apostas antes de apostar.
+          <div className="rounded-lg bg-muted/30 p-4">
+            <div className="flex items-center gap-2 font-semibold">
+              <AlertTriangle className="w-4 h-4 text-amber-300" />
+              Status atual
+            </div>
+            <p className="mt-2 text-sm text-muted-foreground">
+              Sem chave real conectada para mercados de escanteios. Bet365, Pinnacle, Betano, KTO e Estrela Bet
+              nao serao listadas ate chegarem da fonte real.
             </p>
           </div>
         </div>
       </Card>
     </div>
-  );
-}
-
-interface ValueBetCardProps {
-  bet: ValueBet;
-  compact?: boolean;
-}
-
-function ValueBetCard({ bet, compact }: ValueBetCardProps) {
-  const edgeColors = {
-    imperdivel: "border-purple-500/30 bg-purple-500/5",
-    forte: "border-green-500/30 bg-green-500/5",
-    moderada: "border-amber-500/30 bg-amber-500/5",
-    fraca: "border-blue-500/30 bg-blue-500/5",
-  };
-
-  const edgeBadgeColors = {
-    imperdivel: "bg-purple-500/20 text-purple-400",
-    forte: "bg-green-500/20 text-green-400",
-    moderada: "bg-amber-500/20 text-amber-400",
-    fraca: "bg-blue-500/20 text-blue-400",
-  };
-
-  const matchDate = new Date(bet.match.date);
-  const isToday = new Date().toDateString() === matchDate.toDateString();
-  const isTomorrow = new Date(Date.now() + 86400000).toDateString() === matchDate.toDateString();
-
-  if (compact) {
-    return (
-      <Card className={`p-3 ${edgeColors[bet.edgeType]}`}>
-        <div className="flex items-center justify-between gap-4">
-          <div className="flex items-center gap-3 min-w-0">
-            <div className="flex-shrink-0">
-              <Badge variant="outline" className="text-xs">
-                {bet.market}
-              </Badge>
-            </div>
-            <div className="truncate">
-              <p className="text-sm font-medium truncate">
-                {bet.match.homeTeam} x {bet.match.awayTeam}
-              </p>
-            </div>
-          </div>
-          <div className="flex items-center gap-2 flex-shrink-0">
-            <span className="text-xs font-medium flex items-center gap-1">
-              <span>{bet.bestBookmaker.logo}</span>
-              <span className={bet.bestBookmaker.color}>{bet.bestBookmaker.odds}</span>
-            </span>
-            <Badge className={edgeBadgeColors[bet.edgeType]}>+{bet.edge}%</Badge>
-          </div>
-        </div>
-      </Card>
-    );
-  }
-
-  return (
-    <Card className={`overflow-hidden ${edgeColors[bet.edgeType]}`}>
-      <CardHeader className="pb-3">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <Badge variant="outline" className="text-xs">
-              {bet.match.competition}
-            </Badge>
-            {isToday && (
-              <Badge className="bg-red-500/20 text-red-400 border-red-500/30 text-xs">Hoje</Badge>
-            )}
-            {isTomorrow && (
-              <Badge className="bg-amber-500/20 text-amber-400 border-amber-500/30 text-xs">
-                Amanhã
-              </Badge>
-            )}
-          </div>
-          <span className="text-xs text-muted-foreground">
-            {matchDate.toLocaleDateString("pt-BR", { day: "2-digit", month: "short" })}
-          </span>
-        </div>
-        <CardTitle className="text-base mt-2">
-          {bet.match.homeTeam} x {bet.match.awayTeam}
-        </CardTitle>
-      </CardHeader>
-
-      <CardContent className="space-y-4">
-        {/* Best Bookmaker Highlight */}
-        <div className="flex items-center justify-between p-3 rounded-lg bg-gradient-to-r from-primary/20 to-primary/5 border border-primary/30">
-          <div className="flex items-center gap-3">
-            <div className="w-12 h-12 rounded-lg bg-primary/30 flex items-center justify-center text-2xl">
-              {bet.bestBookmaker.logo}
-            </div>
-            <div>
-              <p className="text-xs text-muted-foreground">Melhor odd em</p>
-              <p className="text-lg font-bold">{bet.bestBookmaker.name}</p>
-            </div>
-          </div>
-          <div className="text-right">
-            <p className="text-3xl font-bold text-primary">{bet.bestBookmaker.odds}</p>
-            <p className="text-xs text-muted-foreground">{bet.market}</p>
-          </div>
-        </div>
-
-        {/* All Bookmaker Odds */}
-        <div className="grid grid-cols-2 gap-2">
-          {bet.bookmakerOdds.map((bookie, idx) => (
-            <div 
-              key={bookie.name}
-              className={`flex items-center justify-between p-2 rounded-lg ${
-                idx === 0 ? 'bg-primary/10 border border-primary/20' : 'bg-background/30'
-              }`}
-            >
-              <div className="flex items-center gap-2">
-                <span>{bookie.logo}</span>
-                <span className="text-sm">{bookie.name}</span>
-              </div>
-              <span className={`font-bold ${idx === 0 ? 'text-primary' : 'text-muted-foreground'}`}>
-                {bookie.odds}
-              </span>
-            </div>
-          ))}
-        </div>
-
-        {/* Market and Edge */}
-        <div className="flex items-center justify-between p-3 rounded-lg bg-background/50">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-lg bg-primary/20 flex items-center justify-center">
-              <DollarSign className="w-5 h-5 text-primary" />
-            </div>
-            <div>
-              <p className="text-lg font-bold">{bet.market}</p>
-              <p className="text-xs text-muted-foreground">Mercado recomendado</p>
-            </div>
-          </div>
-          <Badge className={`text-lg px-3 py-1 ${edgeBadgeColors[bet.edgeType]}`}>
-            +{bet.edge}% valor
-          </Badge>
-        </div>
-
-        {/* Probability Comparison */}
-        <div className="grid grid-cols-3 gap-4 text-center">
-          <div className="p-3 rounded-lg bg-background/30">
-            <p className="text-2xl font-bold text-primary">{bet.predictedProb}%</p>
-            <p className="text-xs text-muted-foreground">Nossa previsão</p>
-          </div>
-          <div className="flex items-center justify-center">
-            <ArrowRight className="w-5 h-5 text-muted-foreground" />
-          </div>
-          <div className="p-3 rounded-lg bg-background/30">
-            <p className="text-2xl font-bold text-muted-foreground">{bet.impliedProb}%</p>
-            <p className="text-xs text-muted-foreground">Prob. do mercado</p>
-          </div>
-        </div>
-
-        {/* Odds Comparison */}
-        <div className="flex items-center justify-between text-sm border-t border-border/50 pt-3">
-          <div className="flex items-center gap-2">
-            <span className="text-muted-foreground">Odds típica:</span>
-            <span className="font-medium">{bet.typicalOdds}</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <span className="text-muted-foreground">Odds justa:</span>
-            <span className="font-medium text-primary">{bet.fairOdds}</span>
-          </div>
-          <div className="flex items-center gap-1">
-            <span className="text-xs">{bet.confidence === "alta" ? "🎯" : bet.confidence === "média" ? "📊" : "⚠️"}</span>
-            <span className="text-xs text-muted-foreground">Confiança {bet.confidence}</span>
-          </div>
-        </div>
-      </CardContent>
-    </Card>
   );
 }
