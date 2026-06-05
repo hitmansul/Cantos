@@ -10,7 +10,7 @@ import {
   libertadoresTeamStats,
   sulAmericanaTeamStats,
 } from '@/data/cornerStats';
-import { SCORES365_COMPETITIONS } from '@/app/api/utils/scores365';
+import { SCORES365_COMPETITIONS, scores365Get } from '@/app/api/utils/scores365';
 import { findFifaSquad, getFifaWorldCupSquads, type FifaSquad, type FifaSquadPlayer } from '@/lib/fifaWorldCup';
 
 export const maxDuration = 60;
@@ -33,6 +33,27 @@ type LocalTeamStats = {
   over95Pct: number;
   over105Pct: number;
   gamesPlayed: number;
+};
+
+type Scores365RawUpcomingGame = {
+  id: number;
+  startTime: string;
+  statusId?: number;
+  roundNum?: number;
+  roundName?: string;
+  homeCompetitor?: { id?: number; name?: string; symbolicName?: string };
+  awayCompetitor?: { id?: number; name?: string; symbolicName?: string };
+};
+
+type Scores365UpcomingMatch = {
+  id: number;
+  startTime: string;
+  round?: number;
+  roundName?: string;
+  homeTeam: string;
+  awayTeam: string;
+  competitionName: string;
+  country: string;
 };
 
 function normalize(value: string): string {
@@ -129,8 +150,64 @@ function mentionsLeague(text: string, league: string): boolean {
   return leagueAliases(league).some((alias) => normalized.includes(alias));
 }
 
+function catalogLeagueAliases(key: string, competition: (typeof SCORES365_COMPETITIONS)[string]): string[] {
+  const normalizedKey = normalize(key.replace(/_/g, ' '));
+  const base = [
+    normalizedKey,
+    normalize(competition.name),
+    normalize(competition.name.replace(/\([^)]*\)/g, '')),
+  ];
+  const aliases: Record<string, string[]> = {
+    brasileirao_a: ['brasileirao', 'brasileiro', 'brasileirao serie a', 'serie a brasileira'],
+    brasileirao_b: ['brasileirao serie b', 'brasileiro serie b', 'serie b brasileira'],
+    copa_do_brasil: ['copa do brasil'],
+    libertadores: ['libertadores', 'copa libertadores'],
+    sudamericana: ['sul americana', 'sul-americana', 'sudamericana', 'copa sul americana'],
+    copa_america: ['copa america'],
+    copa_do_mundo: ['copa do mundo', 'mundial', 'world cup', 'fifa world cup'],
+    amistoso_internacional: ['amistoso', 'amistosos', 'amistoso internacional', 'amistosos internacionais'],
+    champions_league: ['champions', 'champions league', 'liga dos campeoes'],
+    europa_league: ['europa league'],
+    conference_league: ['conference', 'conference league'],
+    premier_league: ['premier league', 'ingles', 'inglaterra'],
+    la_liga: ['la liga', 'liga espanhola', 'espanhol', 'espanha'],
+    serie_a: ['serie a italiana', 'italiano', 'italia'],
+    bundesliga: ['bundesliga', 'alemao', 'alemanha'],
+    ligue_1: ['ligue 1', 'liga francesa', 'frances', 'franca'],
+    primeira_liga: ['liga portuguesa', 'portuguesa', 'primeira liga', 'liga portugal', 'portugal'],
+    liga_portugal_2: ['liga portugal 2', 'segunda portuguesa'],
+  };
+  return unique([...base, ...(aliases[key] ?? [])])
+    .map(normalize)
+    .filter((alias) => alias.length >= 3)
+    .sort((a, b) => b.length - a.length);
+}
+
+function findCatalogLeague(text: string): { key: string; competition: (typeof SCORES365_COMPETITIONS)[string] } | null {
+  const normalized = normalize(text);
+  if (!normalized) return null;
+
+  const candidates = Object.entries(SCORES365_COMPETITIONS)
+    .flatMap(([key, competition]) =>
+      catalogLeagueAliases(key, competition)
+        .filter((alias) => normalized.includes(alias))
+        .map((alias) => ({
+          key,
+          competition,
+          score: alias.length + (normalized === alias ? 100 : 0),
+        }))
+    )
+    .sort((a, b) => b.score - a.score);
+
+  return candidates[0] ? { key: candidates[0].key, competition: candidates[0].competition } : null;
+}
+
+function mentionsCatalogLeague(text: string): boolean {
+  return findCatalogLeague(text) !== null;
+}
+
 function hasExplicitStatsScope(text: string): boolean {
-  return STATS_SETS.some((set) => mentionsLeague(text, set.label)) || mentionedTeams(text).length > 0;
+  return STATS_SETS.some((set) => mentionsLeague(text, set.label)) || mentionsCatalogLeague(text) || mentionedTeams(text).length > 0;
 }
 
 function bestStatsSetForLeague(
@@ -278,6 +355,11 @@ function askedUpcoming(text: string): boolean {
     'proximas partidas',
     'agenda',
     'jogos futuros',
+    'proxima rodada',
+    'proximas rodadas',
+    'jogos da rodada',
+    'rodada do',
+    'rodada da',
     'oitavas',
     'chaveamento',
   ].some((term) => normalized.includes(term));
@@ -935,6 +1017,12 @@ function statsReply(question: string, ctx: string): string | null {
   const bestTeam = bestCornerTeamReply(question, ctx);
   if (bestTeam) return bestTeam;
 
+  const directCatalogLeague = findCatalogLeague(question);
+  const directStatsSet = bestStatsSetForLeague(question, question);
+  if (directCatalogLeague && !directStatsSet) {
+    return `Tenho ${directCatalogLeague.competition.name} integrada no app para jogos, tabelas e dados via API, mas ainda nao tenho medias locais de escanteios carregadas para essa liga.\n\nPara medias de escanteios, hoje a base local cobre: ${STATS_SETS.map((set) => set.label).join(', ')}.`;
+  }
+
   const combined = scopeForQuestion(question, ctx);
   const team = mentionedTeams(combined)
     .map((name) => ({ name, pos: latestMention(combined, name) }))
@@ -968,6 +1056,75 @@ function matchLine(match: CurrentFixture): string {
   return `- ${match.homeTeam} x ${match.awayTeam} (${date})${corners}${referee}${returnLeg}${note}`;
 }
 
+function format365Date(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat('pt-BR', {
+    timeZone: 'America/Sao_Paulo',
+    weekday: 'short',
+    day: '2-digit',
+    month: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).format(date);
+}
+
+function scores365MatchLine(match: Scores365UpcomingMatch): string {
+  const round = match.roundName ? ` | ${match.roundName}` : match.round ? ` | rodada ${match.round}` : '';
+  return `- ${match.homeTeam} x ${match.awayTeam} (${format365Date(match.startTime)}${round})`;
+}
+
+function isFutureOrLive365(match: Scores365RawUpcomingGame): boolean {
+  if (match.statusId === 2) return true;
+  const timestamp = Date.parse(match.startTime);
+  return Number.isFinite(timestamp) && timestamp >= Date.now() - 12 * 60 * 60 * 1000;
+}
+
+async function scores365UpcomingMatches(question: string, ctx: string): Promise<Scores365UpcomingMatch[] | null> {
+  const combined = scopeForQuestion(question, ctx);
+  const catalog = findCatalogLeague(combined);
+  if (!catalog) return null;
+
+  try {
+    const data = (await scores365Get('/web/games/', {
+      competitions: catalog.competition.id.toString(),
+      statuses: '1,2',
+    })) as { games?: Scores365RawUpcomingGame[] };
+
+    const matches = (data.games ?? [])
+      .filter(isFutureOrLive365)
+      .filter((game) => game.homeCompetitor?.name && game.awayCompetitor?.name)
+      .map<Scores365UpcomingMatch>((game) => ({
+        id: game.id,
+        startTime: game.startTime,
+        round: game.roundNum,
+        roundName: game.roundName,
+        homeTeam: game.homeCompetitor?.name ?? 'Mandante',
+        awayTeam: game.awayCompetitor?.name ?? 'Visitante',
+        competitionName: catalog.competition.name,
+        country: catalog.competition.country,
+      }))
+      .sort((a, b) => Date.parse(a.startTime) - Date.parse(b.startTime));
+
+    if (matches.length === 0) return [];
+
+    const normalized = normalize(question);
+    if (normalized.includes('rodada')) {
+      const firstRound = matches.find((match) => match.round !== undefined)?.round;
+      if (firstRound !== undefined) {
+        const sameRound = matches.filter((match) => match.round === firstRound);
+        if (sameRound.length > 0) return sameRound;
+      }
+    }
+
+    return matches;
+  } catch (error) {
+    console.error('AI 365Scores upcoming error:', error);
+    return null;
+  }
+}
+
 function upcomingMatches(question: string, ctx: string): CurrentFixture[] {
   const combined = scopeForQuestion(question, ctx);
   const team = mentionedTeams(combined)
@@ -997,10 +1154,20 @@ function libertadoresBracketReply(): string {
   return `Oitavas de final da Copa Libertadores na base local:\n\n${matches.map(matchLine).join('\n')}`;
 }
 
-function upcomingReply(question: string, ctx: string): string | null {
+async function upcomingReply(question: string, ctx: string): Promise<string | null> {
   if (!askedUpcoming(question)) return null;
   const normalized = normalize(question);
   if (normalized.includes('oitavas') || normalized.includes('chaveamento')) return libertadoresBracketReply();
+
+  const liveMatches = await scores365UpcomingMatches(question, ctx);
+  if (liveMatches && liveMatches.length > 0) {
+    const scope = findCatalogLeague(scopeForQuestion(question, ctx));
+    const limit = mentionedTeams(scopeForQuestion(question, ctx)).length > 0 ? 3 : 15;
+    return `Proximos jogos encontrados na 365Scores${scope ? ` para ${scope.competition.name}` : ''}:\n\n${liveMatches
+      .slice(0, limit)
+      .map(scores365MatchLine)
+      .join('\n')}`;
+  }
 
   const matches = upcomingMatches(question, ctx);
   if (matches.length === 0) return 'Nao encontrei proximos jogos para esse filtro na base local.';

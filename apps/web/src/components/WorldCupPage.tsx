@@ -18,11 +18,13 @@ import {
   Shirt,
   BarChart3,
   ChevronRight,
+  BadgeDollarSign,
 } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Button } from '@/components/ui/button';
+import { WorldCupOddsAlerts } from '@/components/WorldCupOddsAlerts';
 
 type WCTeam = { country: string; flag: string };
 
@@ -459,7 +461,7 @@ export function WorldCupPage() {
 
       {/* Main Tabs */}
       <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
-        <TabsList className="grid w-full grid-cols-6">
+        <TabsList className="grid w-full grid-cols-7">
           <TabsTrigger value="grupos" className="gap-2">
             <Users className="w-4 h-4" />
             <span className="hidden sm:inline">Grupos</span>
@@ -479,6 +481,10 @@ export function WorldCupPage() {
           <TabsTrigger value="elencos" className="gap-2">
             <Users className="w-4 h-4" />
             <span className="hidden sm:inline">Selecoes</span>
+          </TabsTrigger>
+          <TabsTrigger value="odds" className="gap-2">
+            <BadgeDollarSign className="w-4 h-4" />
+            <span className="hidden sm:inline">Odds</span>
           </TabsTrigger>
           <TabsTrigger value="sedes" className="gap-2">
             <MapPin className="w-4 h-4" />
@@ -682,6 +688,11 @@ export function WorldCupPage() {
         {/* Elencos Tab */}
         <TabsContent value="elencos" className="space-y-4">
           <WorldCupSquads selectedTeamQuery={selectedTeamQuery} />
+        </TabsContent>
+
+        {/* Odds Tab */}
+        <TabsContent value="odds" className="space-y-4">
+          <WorldCupOddsAlerts />
         </TabsContent>
 
         {/* Sedes Tab */}
