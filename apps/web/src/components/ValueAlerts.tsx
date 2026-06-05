@@ -5,15 +5,26 @@ import {
   AlertTriangle,
   BadgeDollarSign,
   BarChart3,
+  Filter,
   Loader2,
   RefreshCw,
   ShieldCheck,
   Target,
   Trophy,
+  X,
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Input } from '@/components/ui/input';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 
 type MarketType = 'corners' | 'other';
 type AlertConfidence = 'alta' | 'moderada' | 'fraca';
@@ -96,6 +107,14 @@ function confidenceClass(confidence: AlertConfidence) {
   return 'bg-blue-500/15 text-blue-300 border-blue-500/30';
 }
 
+function normalizeFilter(value: string): string {
+  return value
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim();
+}
+
 function groupByLeague(alerts: OddsAlert[]) {
   return alerts.reduce<Array<{ key: string; leagueName: string; country: string; alerts: OddsAlert[] }>>(
     (acc, alert) => {
@@ -117,8 +136,20 @@ function groupByLeague(alerts: OddsAlert[]) {
   );
 }
 
-function OddsAlertCard({ alert }: { alert: OddsAlert }) {
-  const visibleBookmakers = alert.bookmakers.slice(0, 8);
+function OddsAlertCard({ alert, selectedBookmakers }: { alert: OddsAlert; selectedBookmakers: string[] }) {
+  const selectedSet = new Set(selectedBookmakers.map(normalizeFilter));
+  const filteredBookmakers =
+    selectedSet.size > 0
+      ? alert.bookmakers.filter((bookmaker) => selectedSet.has(normalizeFilter(bookmaker.bookmaker)))
+      : alert.bookmakers;
+
+  const visibleBookmakers = filteredBookmakers.slice(0, 8);
+  const bestVisibleBookmaker =
+    visibleBookmakers.reduce<OddsOffer | null>(
+      (best, bookmaker) => (!best || bookmaker.odd > best.odd ? bookmaker : best),
+      null
+    ) ?? alert.bookmakers[0];
+
   const hasBet365 = alert.bookmakers.some((bookmaker) => bookmaker.bookmaker.toLowerCase().includes('bet365'));
 
   return (
@@ -156,10 +187,11 @@ function OddsAlertCard({ alert }: { alert: OddsAlert }) {
         <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-4 py-3">
           <div className="flex items-center gap-2 text-sm font-semibold text-emerald-300">
             <BadgeDollarSign className="h-4 w-4" />
-            Melhor odd
+            {selectedBookmakers.length > 0 ? 'Melhor odd nos filtros' : 'Melhor odd'}
           </div>
           <div className="mt-1 text-lg font-bold">
-            {alert.bestOdd.toFixed(2)} <span className="text-sm font-medium text-muted-foreground">{alert.bestBookmaker}</span>
+            {bestVisibleBookmaker.odd.toFixed(2)}{' '}
+            <span className="text-sm font-medium text-muted-foreground">{bestVisibleBookmaker.bookmaker}</span>
           </div>
           <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
             <span>mediana {alert.medianOdd.toFixed(2)}</span>
@@ -171,7 +203,8 @@ function OddsAlertCard({ alert }: { alert: OddsAlert }) {
 
       <div className="mt-4 grid gap-2 md:grid-cols-2 xl:grid-cols-4">
         {visibleBookmakers.map((bookmaker) => {
-          const isBest = bookmaker.bookmaker === alert.bestBookmaker && bookmaker.odd === alert.bestOdd;
+          const isBest =
+            bookmaker.bookmaker === bestVisibleBookmaker.bookmaker && bookmaker.odd === bestVisibleBookmaker.odd;
           return (
             <div
               key={`${alert.id}-${bookmaker.bookmaker}`}
@@ -198,6 +231,10 @@ export function ValueAlerts() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<AlertTab>('corners');
+  const [leagueFilter, setLeagueFilter] = useState('all');
+  const [teamFilter, setTeamFilter] = useState('all');
+  const [bookmakerSearch, setBookmakerSearch] = useState('');
+  const [selectedBookmakers, setSelectedBookmakers] = useState<string[]>([]);
 
   async function load() {
     setLoading(true);
@@ -219,10 +256,70 @@ export function ValueAlerts() {
     load();
   }, []);
 
+  const leagueOptions = useMemo(() => {
+    const alerts = data?.alerts ?? [];
+    return [...new Set(alerts.map((alert) => `${alert.country}|${alert.leagueName}`))]
+      .map((key) => {
+        const [country, leagueName] = key.split('|');
+        return { key, country, leagueName };
+      })
+      .sort((a, b) => `${a.country} ${a.leagueName}`.localeCompare(`${b.country} ${b.leagueName}`));
+  }, [data?.alerts]);
+
+  const teamOptions = useMemo(() => {
+    const alerts = data?.alerts ?? [];
+    return [...new Set(alerts.flatMap((alert) => [alert.homeTeam, alert.awayTeam]))].sort((a, b) =>
+      a.localeCompare(b)
+    );
+  }, [data?.alerts]);
+
+  const bookmakerOptions = useMemo(() => {
+    const alerts = data?.alerts ?? [];
+    return [...new Set(alerts.flatMap((alert) => alert.bookmakers.map((bookmaker) => bookmaker.bookmaker)))].sort(
+      (a, b) => a.localeCompare(b)
+    );
+  }, [data?.alerts]);
+
+  const filteredBookmakerOptions = useMemo(() => {
+    const term = normalizeFilter(bookmakerSearch);
+    if (!term) return bookmakerOptions;
+    return bookmakerOptions.filter((bookmaker) => normalizeFilter(bookmaker).includes(term));
+  }, [bookmakerOptions, bookmakerSearch]);
+
+  function toggleBookmaker(bookmaker: string, checked: boolean) {
+    setSelectedBookmakers((current) => {
+      if (checked) return current.includes(bookmaker) ? current : [...current, bookmaker].sort((a, b) => a.localeCompare(b));
+      return current.filter((item) => item !== bookmaker);
+    });
+  }
+
+  function clearFilters() {
+    setLeagueFilter('all');
+    setTeamFilter('all');
+    setSelectedBookmakers([]);
+    setBookmakerSearch('');
+  }
+
+  const hasActiveFilters =
+    leagueFilter !== 'all' || teamFilter !== 'all' || selectedBookmakers.length > 0 || bookmakerSearch.trim() !== '';
+
   const visibleAlerts = useMemo(() => {
     const alerts = data?.alerts ?? [];
-    return alerts.filter((alert) => alert.marketType === tab);
-  }, [data?.alerts, tab]);
+    const selectedSet = new Set(selectedBookmakers.map(normalizeFilter));
+
+    return alerts.filter((alert) => {
+      if (alert.marketType !== tab) return false;
+      if (leagueFilter !== 'all' && `${alert.country}|${alert.leagueName}` !== leagueFilter) return false;
+      if (teamFilter !== 'all' && alert.homeTeam !== teamFilter && alert.awayTeam !== teamFilter) return false;
+      if (
+        selectedSet.size > 0 &&
+        !alert.bookmakers.some((bookmaker) => selectedSet.has(normalizeFilter(bookmaker.bookmaker)))
+      ) {
+        return false;
+      }
+      return true;
+    });
+  }, [data?.alerts, leagueFilter, selectedBookmakers, tab, teamFilter]);
 
   const groups = useMemo(() => groupByLeague(visibleAlerts), [visibleAlerts]);
 
@@ -283,7 +380,7 @@ export function ValueAlerts() {
             <p className="mt-1 max-w-4xl text-sm text-muted-foreground">{data.note}</p>
             <p className="mt-2 text-xs text-muted-foreground">
               Atualizado em {formatUpdated(data.lastUpdated)}. Escanteios sao prioridade; outros mercados aparecem
-              apenas quando uma casa esta pagando bem acima das demais.
+              apenas quando uma casa esta pagando muito acima das demais.
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
@@ -352,13 +449,105 @@ export function ValueAlerts() {
         </Button>
       </div>
 
+      <Card className="p-4">
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+          <h4 className="flex items-center gap-2 text-sm font-semibold">
+            <Filter className="h-4 w-4 text-emerald-300" />
+            Filtros
+          </h4>
+          {hasActiveFilters && (
+            <Button type="button" variant="ghost" size="sm" onClick={clearFilters}>
+              <X className="mr-2 h-4 w-4" />
+              Limpar filtros
+            </Button>
+          )}
+        </div>
+
+        <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.4fr)]">
+          <div className="space-y-2">
+            <label className="text-xs font-medium text-muted-foreground" htmlFor="odds-league-filter">
+              Liga
+            </label>
+            <Select value={leagueFilter} onValueChange={setLeagueFilter}>
+              <SelectTrigger id="odds-league-filter" className="w-full">
+                <SelectValue placeholder="Todas as ligas" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Todas as ligas</SelectItem>
+                {leagueOptions.map((league) => (
+                  <SelectItem key={league.key} value={league.key}>
+                    {league.leagueName} - {league.country}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div className="space-y-2">
+            <label className="text-xs font-medium text-muted-foreground" htmlFor="odds-team-filter">
+              Time
+            </label>
+            <Select value={teamFilter} onValueChange={setTeamFilter}>
+              <SelectTrigger id="odds-team-filter" className="w-full">
+                <SelectValue placeholder="Todos os times" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Todos os times</SelectItem>
+                {teamOptions.map((team) => (
+                  <SelectItem key={team} value={team}>
+                    {team}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div className="space-y-2">
+            <label className="text-xs font-medium text-muted-foreground" htmlFor="odds-bookmaker-filter">
+              Casas de apostas
+            </label>
+            <Input
+              id="odds-bookmaker-filter"
+              value={bookmakerSearch}
+              onChange={(event) => setBookmakerSearch(event.target.value)}
+              placeholder="Buscar casa..."
+            />
+            <div className="max-h-36 overflow-y-auto rounded-lg border border-border/70 bg-background/20 p-2">
+              {filteredBookmakerOptions.length === 0 ? (
+                <p className="px-2 py-3 text-sm text-muted-foreground">Nenhuma casa encontrada.</p>
+              ) : (
+                <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+                  {filteredBookmakerOptions.map((bookmaker) => (
+                    <label
+                      key={bookmaker}
+                      className="flex min-w-0 cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-muted/40"
+                    >
+                      <Checkbox
+                        checked={selectedBookmakers.includes(bookmaker)}
+                        onCheckedChange={(checked) => toggleBookmaker(bookmaker, checked === true)}
+                      />
+                      <span className="truncate">{bookmaker}</span>
+                    </label>
+                  ))}
+                </div>
+              )}
+            </div>
+            {selectedBookmakers.length > 0 && (
+              <p className="text-xs text-muted-foreground">{selectedBookmakers.length} casas selecionadas.</p>
+            )}
+          </div>
+        </div>
+      </Card>
+
       {groups.length === 0 ? (
         <Card className="p-8 text-center">
           <BadgeDollarSign className="mx-auto mb-3 h-8 w-8 text-muted-foreground" />
           <p className="font-semibold">
-            {tab === 'corners'
-              ? 'Nenhuma linha real de escanteios retornada agora'
-              : 'Nenhuma distorcao forte em outros mercados agora'}
+            {hasActiveFilters
+              ? 'Nenhum alerta encontrado com esses filtros'
+              : tab === 'corners'
+                ? 'Nenhuma linha real de escanteios retornada agora'
+                : 'Nenhuma distorcao forte em outros mercados agora'}
           </p>
           <p className="mx-auto mt-2 max-w-2xl text-sm text-muted-foreground">
             A tela so mostra odds recebidas de fonte real. Se a API-Football nao enviar o mercado/casa para um jogo,
@@ -380,7 +569,7 @@ export function ValueAlerts() {
               </div>
               <div className="space-y-3">
                 {group.alerts.map((alert) => (
-                  <OddsAlertCard key={alert.id} alert={alert} />
+                  <OddsAlertCard key={alert.id} alert={alert} selectedBookmakers={selectedBookmakers} />
                 ))}
               </div>
             </section>

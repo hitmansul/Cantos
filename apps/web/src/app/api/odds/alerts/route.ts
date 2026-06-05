@@ -130,7 +130,10 @@ type ApiFootballLeagueConfig = {
 const MAX_ODDS_PAGES_PER_LEAGUE = 2;
 const MAX_ALERTS = 90;
 const CACHE_TTL_MS = 15 * 60 * 1000;
-const NON_CORNER_EDGE_THRESHOLD = 15;
+const NON_CORNER_MEDIAN_EDGE_THRESHOLD = 30;
+const NON_CORNER_SECOND_BEST_EDGE_THRESHOLD = 30;
+const NON_CORNER_MIN_ABSOLUTE_GAP = 0.75;
+const NON_CORNER_MIN_BOOKMAKERS = 3;
 const DEFAULT_DAYS_AHEAD = 60;
 
 const LEAGUES: ApiFootballLeagueConfig[] = [
@@ -239,6 +242,24 @@ function confidence(edgePct: number, bookmakersCompared: number, type: MarketTyp
   if (edgePct >= 18 && bookmakersCompared >= 4) return 'alta';
   if (edgePct >= 10 && bookmakersCompared >= 3) return 'moderada';
   return type === 'corners' ? 'fraca' : 'moderada';
+}
+
+function hasStrongNonCornerDistortion(offers: OddsOffer[], medianOdd: number): boolean {
+  if (offers.length < NON_CORNER_MIN_BOOKMAKERS) return false;
+
+  const best = offers[0];
+  const secondBest = offers[1];
+  if (!best || !secondBest) return false;
+
+  const medianEdgePct = medianOdd > 0 ? ((best.odd / medianOdd) - 1) * 100 : 0;
+  const secondBestEdgePct = ((best.odd / secondBest.odd) - 1) * 100;
+  const absoluteGap = best.odd - secondBest.odd;
+
+  return (
+    medianEdgePct >= NON_CORNER_MEDIAN_EDGE_THRESHOLD &&
+    secondBestEdgePct >= NON_CORNER_SECOND_BEST_EDGE_THRESHOLD &&
+    absoluteGap >= NON_CORNER_MIN_ABSOLUTE_GAP
+  );
 }
 
 function lineLabel(marketName: string, selectionLabel: string): string {
@@ -395,7 +416,7 @@ function alertFromGroup(group: OddsMarketGroup): OddsAlert | null {
   const med = median(offers.map((offer) => offer.odd));
   const edgePct = med > 0 ? Math.max(0, Math.round(((best.odd / med) - 1) * 100)) : 0;
 
-  if (group.marketType === 'other' && edgePct < NON_CORNER_EDGE_THRESHOLD) return null;
+  if (group.marketType === 'other' && !hasStrongNonCornerDistortion(offers, med)) return null;
 
   const compared = offers.length;
   return {
@@ -471,8 +492,8 @@ async function buildResponse(scope: LeagueScope): Promise<OddsAlertsResponse> {
     focus: 'corner-lines',
     note:
       cornerAlerts > 0
-        ? 'Odds reais encontradas. Escanteios aparecem primeiro; outros mercados entram so com distorcao forte entre casas.'
-        : 'API-Football conectada, mas nenhum mercado real de escanteios foi retornado agora nas ligas consultadas. Outros mercados so aparecem com distorcao forte.',
+        ? 'Odds reais encontradas. Escanteios aparecem primeiro; outros mercados so entram quando uma casa paga muito acima das demais.'
+        : 'API-Football conectada, mas nenhum mercado real de escanteios foi retornado agora nas ligas consultadas. Outros mercados so aparecem quando uma casa paga muito acima das demais.',
     summary: {
       leaguesChecked: leagues.length,
       eventsChecked,
