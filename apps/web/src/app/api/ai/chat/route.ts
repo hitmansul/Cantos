@@ -1087,25 +1087,51 @@ async function scores365UpcomingMatches(question: string, ctx: string): Promise<
   if (!catalog) return null;
 
   try {
+    const normalizeRawMatches = (games: Scores365RawUpcomingGame[]): Scores365UpcomingMatch[] =>
+      games
+        .filter(isFutureOrLive365)
+        .filter((game) => game.homeCompetitor?.name && game.awayCompetitor?.name)
+        .map<Scores365UpcomingMatch>((game) => ({
+          id: game.id,
+          startTime: game.startTime,
+          round: game.roundNum,
+          roundName: game.roundName,
+          homeTeam: game.homeCompetitor?.name ?? 'Mandante',
+          awayTeam: game.awayCompetitor?.name ?? 'Visitante',
+          competitionName: catalog.competition.name,
+          country: catalog.competition.country,
+        }))
+        .sort((a, b) => Date.parse(a.startTime) - Date.parse(b.startTime));
+
     const data = (await scores365Get('/web/games/', {
       competitions: catalog.competition.id.toString(),
       statuses: '1,2',
     })) as { games?: Scores365RawUpcomingGame[] };
 
-    const matches = (data.games ?? [])
-      .filter(isFutureOrLive365)
-      .filter((game) => game.homeCompetitor?.name && game.awayCompetitor?.name)
-      .map<Scores365UpcomingMatch>((game) => ({
-        id: game.id,
-        startTime: game.startTime,
-        round: game.roundNum,
-        roundName: game.roundName,
-        homeTeam: game.homeCompetitor?.name ?? 'Mandante',
-        awayTeam: game.awayCompetitor?.name ?? 'Visitante',
-        competitionName: catalog.competition.name,
-        country: catalog.competition.country,
-      }))
-      .sort((a, b) => Date.parse(a.startTime) - Date.parse(b.startTime));
+    let matches = normalizeRawMatches(data.games ?? []);
+
+    if (matches.length === 0) {
+      const standingsData = (await scores365Get('/web/standings/', {
+        competitions: catalog.competition.id.toString(),
+      })) as {
+        standings?: Array<{
+          rows?: Array<{
+            nextMatch?: Scores365RawUpcomingGame;
+          }>;
+        }>;
+      };
+
+      const nextMatches = new Map<number, Scores365RawUpcomingGame>();
+      for (const standing of standingsData.standings ?? []) {
+        for (const row of standing.rows ?? []) {
+          if (row.nextMatch && !nextMatches.has(row.nextMatch.id)) {
+            nextMatches.set(row.nextMatch.id, row.nextMatch);
+          }
+        }
+      }
+
+      matches = normalizeRawMatches(Array.from(nextMatches.values()));
+    }
 
     if (matches.length === 0) return [];
 
