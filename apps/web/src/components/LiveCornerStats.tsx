@@ -1,265 +1,944 @@
 'use client';
 
-import { useState } from 'react';
-import { RefreshCw, Clock, AlertCircle, TrendingUp, TrendingDown, Loader2 } from 'lucide-react';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
+import { useState, useEffect, useCallback, useMemo } from 'react';
+import {
+  RefreshCw,
+  AlertCircle,
+  Radio,
+  CornerUpRight,
+  Clock,
+  Trophy,
+  BarChart3,
+  Timer,
+  X,
+} from 'lucide-react';
+import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { ScrollArea } from '@/components/ui/scroll-area';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
-import { useScrapedLeagueStats, type ScrapedTeamStats } from '@/hooks/useCornerStatsScraper';
+import { Button } from '@/components/ui/button';
+import { FutureMatchPrediction } from '@/components/FutureMatchPrediction';
 
-const SCRAPING_LEAGUES = [
-  { id: 'brasileiraoA', name: 'Brasileirão Série A' },
-  { id: 'brasileiraoB', name: 'Brasileirão Série B' },
-  { id: 'copaBrasil', name: 'Copa do Brasil' },
-  { id: 'paulistao', name: 'Campeonato Paulista' },
-];
-
-interface LiveCornerStatsProps {
-  onTeamSelect?: (team: ScrapedTeamStats) => void;
+interface LiveMatch {
+  id: number;
+  minute: number | string;
+  statusText: string;
+  homeTeam: { id: number; name: string; score: number };
+  awayTeam: { id: number; name: string; score: number };
+  competition?: string;
+  competitionId: number;
+  corners?: { home: number; away: number; total: number };
+  liveStats?: LiveStatRow[];
+  statsSource?: '365scores' | 'sofascore' | 'api-football';
+  source?: string;
+  sourceIds?: {
+    scores365?: number;
+    sofascore?: number;
+    apiFootball?: number;
+  };
+  stoppage?: {
+    totalStoppedMs: number;
+    totalStoppedMinutes: number;
+    predictedAddedMs: number;
+    predictedAddedMinutes: number;
+    source:
+      | '365scores-actual-play-time'
+      | '365scores-sportradar'
+      | '365scores-announced-added-time'
+      | 'sofascore-announced-added-time'
+      | 'api-football-announced-added-time';
+    kind?: 'calculated-stoppage' | 'announced-added-time';
+    incidents: Array<{
+      startAt: string;
+      endAt?: string;
+      durationMs: number;
+      reason: string;
+      period?: string;
+      timeline?: string;
+    }>;
+  };
 }
 
-export function LiveCornerStats({ onTeamSelect }: LiveCornerStatsProps) {
-  const [selectedLeague, setSelectedLeague] = useState('brasileiraoA');
-  const [sortField, setSortField] = useState<keyof ScrapedTeamStats>('avgTotalCorners');
-  const [sortAsc, setSortAsc] = useState(false);
+interface LiveStatRow {
+  key: string;
+  label: string;
+  home: string;
+  away: string;
+  category?: string;
+  isMajor?: boolean;
+}
 
-  const { data, loading, error, scrapeLeague } = useScrapedLeagueStats();
+interface SofascoreStatItem {
+  name: string;
+  home: string | number;
+  away: string | number;
+  homeValue?: number;
+  awayValue?: number;
+  key: string;
+}
 
-  const handleRefresh = () => {
-    scrapeLeague(selectedLeague);
+interface SofascoreStatsResponse {
+  homeCorners: number;
+  awayCorners: number;
+  totalCorners: number;
+  homeCorners1stHalf: number;
+  awayCorners1stHalf: number;
+  homeCorners2ndHalf: number;
+  awayCorners2ndHalf: number;
+  fullStatistics?: {
+    statistics?: Array<{
+      period: string;
+      groups: Array<{
+        statisticsItems: SofascoreStatItem[];
+      }>;
+    }>;
   };
+}
 
-  const handleSort = (field: keyof ScrapedTeamStats) => {
-    if (sortField === field) {
-      setSortAsc(!sortAsc);
-    } else {
-      setSortField(field);
-      setSortAsc(false);
-    }
+// Competition ID to emoji/flag mapping (365Scores IDs + API-Football IDs)
+const COMPETITION_ICONS: Record<number, string> = {
+  // 365Scores
+  113: '🇧🇷',
+  116: '🇧🇷',
+  117: '🇧🇷',
+  7: '🏴󠁧󠁢󠁥󠁮󠁧󠁿',
+  17: '🇮🇹',
+  25: '🇩🇪',
+  35: '🇫🇷',
+  572: '🏆',
+  573: '🏆',
+  // API-Football
+  71: '🇧🇷',
+  72: '🇧🇷',
+  73: '🇧🇷',
+  2: '🏆',
+  3: '🏆',
+  848: '🏆',
+  39: '🏴󠁧󠁢󠁥󠁮󠁧󠁿',
+  40: '🏴󠁧󠁢󠁥󠁮󠁧󠁿',
+  140: '🇪🇸',
+  135: '🇮🇹',
+  78: '🇩🇪',
+  61: '🇫🇷',
+  88: '🇳🇱',
+  94: '🇵🇹',
+  65: '🇧🇪',
+  203: '🇹🇷',
+  197: '🇬🇷',
+  179: '🏴󠁧󠁢󠁳󠁣󠁴󠁿',
+  128: '🇦🇷',
+  13: '🏆',
+};
+
+function formatMinuteValue(value: number) {
+  if (value < 1) return `${Math.max(1, Math.round(value * 60))}s`;
+  return `${value.toFixed(1).replace('.0', '')} min`;
+}
+
+function getOfficialAddedTimePrediction(
+  match: LiveMatch
+): { totalLabel?: string; addedLabel: string; sourceLabel: string; announcedOnly: boolean } | null {
+  if (!match.stoppage) return null;
+
+  const incidentCount = match.stoppage.incidents.length;
+  const announcedOnly = match.stoppage.kind === 'announced-added-time';
+  const sourceLabels: Record<NonNullable<LiveMatch['stoppage']>['source'], string> = {
+    '365scores-actual-play-time': 'tempo de bola rolando da 365Scores',
+    '365scores-sportradar': 'play-by-play da 365Scores/Sportradar',
+    '365scores-announced-added-time': 'acréscimo anunciado pela 365Scores',
+    'sofascore-announced-added-time': 'acréscimo anunciado pelo SofaScore',
+    'api-football-announced-added-time': 'acréscimo anunciado pela API-Football',
   };
+  const sourceLabel = sourceLabels[match.stoppage.source] ?? 'fonte ao vivo';
 
-  const sortedTeams = data?.teams
-    ? [...data.teams].sort((a, b) => {
-        const aVal = a[sortField] ?? 0;
-        const bVal = b[sortField] ?? 0;
-        if (typeof aVal === 'string' && typeof bVal === 'string') {
-          return sortAsc ? aVal.localeCompare(bVal) : bVal.localeCompare(aVal);
-        }
-        return sortAsc ? (aVal as number) - (bVal as number) : (bVal as number) - (aVal as number);
-      })
-    : [];
+  if (announcedOnly && match.stoppage.predictedAddedMinutes > 0) {
+    return {
+      totalLabel: 'não informado',
+      addedLabel: `+${formatMinuteValue(match.stoppage.predictedAddedMinutes)}`,
+      sourceLabel: `Acréscimo informado via ${sourceLabel}`,
+      announcedOnly: true,
+    };
+  }
 
-  const avgCornersPerMatch =
-    data?.teams && data.teams.length > 0
-      ? data.teams.reduce((s, t) => s + t.avgTotalCorners, 0) / data.teams.length
-      : 0;
+  if (match.stoppage.totalStoppedMs <= 0) return null;
 
-  const SortButton = ({ field, label }: { field: keyof ScrapedTeamStats; label: string }) => (
-    <button
-      onClick={() => handleSort(field)}
-      className="flex items-center gap-1 hover:text-primary transition-colors"
-    >
-      {label}
-      {sortField === field &&
-        (sortAsc ? <TrendingUp className="h-3 w-3" /> : <TrendingDown className="h-3 w-3" />)}
-    </button>
-  );
+  return {
+    totalLabel: formatMinuteValue(match.stoppage.totalStoppedMinutes),
+    addedLabel: `+${formatMinuteValue(match.stoppage.predictedAddedMinutes)}`,
+    sourceLabel: `${incidentCount} parada${incidentCount === 1 ? '' : 's'} detectada${
+      incidentCount === 1 ? '' : 's'
+    } via ${sourceLabel}`,
+    announcedOnly: false,
+  };
+}
 
+function formatIncidentTime(value?: string) {
+  if (!value) return 'não informado';
+  const parsed = Date.parse(value);
+  if (!Number.isFinite(parsed)) return value;
+
+  return new Intl.DateTimeFormat('pt-BR', {
+    timeZone: 'America/Sao_Paulo',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  }).format(parsed);
+}
+
+function formatDurationMs(value: number) {
+  if (!Number.isFinite(value) || value <= 0) return 'não informado';
+  const totalSeconds = Math.round(value / 1000);
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+
+  if (minutes <= 0) return `${seconds}s`;
+  return `${minutes}min ${String(seconds).padStart(2, '0')}s`;
+}
+
+function stoppageReasonLabel(reason: string) {
+  if (!reason) return 'Paralisação';
+  return reason
+    .replace(/_/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function normalizeStatKey(value: string) {
+  return value
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase();
+}
+
+function statValue(item: SofascoreStatItem, side: 'home' | 'away') {
+  const numeric = side === 'home' ? item.homeValue : item.awayValue;
+  if (typeof numeric === 'number' && Number.isFinite(numeric)) return String(numeric);
+  const value = side === 'home' ? item.home : item.away;
+  return value === undefined || value === null || value === '' ? '-' : String(value);
+}
+
+function extractLiveStatRows(stats: SofascoreStatsResponse | null) {
+  const allPeriod = stats?.fullStatistics?.statistics?.find((period) => period.period === 'ALL');
+  const items = allPeriod?.groups?.flatMap((group) => group.statisticsItems ?? []) ?? [];
+  const priority = [
+    'ballPossession',
+    'expectedGoals',
+    'totalShotsOnGoal',
+    'shotsOnGoal',
+    'cornerKicks',
+    'yellowCards',
+    'redCards',
+    'fouls',
+    'offsides',
+    'goalkeeperSaves',
+    'bigChances',
+    'blockedScoringAttempt',
+  ];
+
+  const unique = new Map<string, SofascoreStatItem>();
+  for (const item of items) {
+    const key = item.key || normalizeStatKey(item.name);
+    if (!unique.has(key)) unique.set(key, item);
+  }
+
+  return priority
+    .map((key) => unique.get(key))
+    .filter((item): item is SofascoreStatItem => Boolean(item))
+    .map((item) => ({
+      key: item.key || item.name,
+      label: item.name,
+      home: statValue(item, 'home'),
+      away: statValue(item, 'away'),
+    }));
+}
+
+function matchKey(match: Pick<LiveMatch, 'homeTeam' | 'awayTeam'>) {
+  const clean = (value: string) =>
+    normalizeStatKey(value)
+      .replace(/\b(fc|cf|sc|ac|ec|club|clube|futebol|sport|sporting|real|atletico)\b/g, '')
+      .replace(/[^a-z0-9]+/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+  return `${clean(match.homeTeam.name)}-${clean(match.awayTeam.name)}`;
+}
+
+function mergeLiveMatch(base: LiveMatch, incoming: LiveMatch): LiveMatch {
+  return {
+    ...base,
+    competition: base.competition ?? incoming.competition,
+    competitionId: base.competitionId || incoming.competitionId,
+    corners: incoming.corners ?? base.corners,
+    liveStats: incoming.liveStats ?? base.liveStats,
+    statsSource: incoming.statsSource ?? base.statsSource,
+    stoppage: base.stoppage ?? incoming.stoppage,
+    sourceIds: {
+      ...base.sourceIds,
+      ...incoming.sourceIds,
+    },
+  };
+}
+
+function LiveMatchCard({
+  match,
+  selected,
+  onClick,
+}: {
+  match: LiveMatch;
+  selected?: boolean;
+  onClick?: () => void;
+}) {
+  const icon = COMPETITION_ICONS[match.competitionId] || '⚽';
+  const minuteDisplay =
+    typeof match.minute === 'number' ? `${match.minute}'` : match.minute || match.statusText;
+  const addedTime = getOfficialAddedTimePrediction(match);
   return (
-    <Card className="border-primary/20">
-      <CardHeader className="pb-3">
-        <div className="flex items-center justify-between gap-4">
-          <div className="flex items-center gap-2">
-            <div className="h-2 w-2 rounded-full bg-green-500 animate-pulse" />
-            <CardTitle className="text-lg">Dados em Tempo Real</CardTitle>
+    <Card
+      role="button"
+      tabIndex={0}
+      onClick={onClick}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          onClick?.();
+        }
+      }}
+      className={`p-4 cursor-pointer border-emerald-500/30 bg-gradient-to-br from-emerald-500/5 to-green-500/5 hover:border-emerald-400/50 transition-all ${
+        selected ? 'ring-2 ring-emerald-500/60 border-emerald-400' : ''
+      }`}
+    >
+      <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+        <div className="min-w-0 flex items-center gap-2">
+          <span className="text-lg">{icon}</span>
+          <span className="text-xs text-muted-foreground break-words">
+            {match.competition || 'Competição'}
+          </span>
+        </div>
+        <Badge className="bg-red-500/20 text-red-400 border-red-500/30 flex items-center gap-1">
+          <Radio className="w-3 h-3" style={{ animation: 'livepulse 2s ease-in-out infinite' }} />
+          AO VIVO
+        </Badge>
+      </div>
+
+      <div className="grid items-center gap-3 md:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]">
+        <div className="min-w-0 md:text-right">
+          <p className="font-semibold leading-tight break-words" title={match.homeTeam.name}>
+            {match.homeTeam.name}
+          </p>
+        </div>
+        <div className="flex min-w-[132px] flex-col items-center px-2">
+          <div className="flex items-center gap-2 text-2xl font-bold tabular-nums">
+            <span className={match.homeTeam.score > match.awayTeam.score ? 'text-emerald-400' : ''}>
+              {match.homeTeam.score}
+            </span>
+            <span className="text-muted-foreground">-</span>
+            <span className={match.awayTeam.score > match.homeTeam.score ? 'text-emerald-400' : ''}>
+              {match.awayTeam.score}
+            </span>
           </div>
-          <Badge variant="outline" className="text-xs">
-            <Clock className="h-3 w-3 mr-1" />
-            Corner-Stats.com
+          <Badge
+            variant="outline"
+            className="mt-1 bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
+          >
+            <Clock className="w-3 h-3 mr-1" />
+            {minuteDisplay}
           </Badge>
-        </div>
-
-        <div className="flex items-center gap-3 mt-4">
-          <Select value={selectedLeague} onValueChange={setSelectedLeague}>
-            <SelectTrigger className="w-[220px]">
-              <SelectValue placeholder="Selecione a liga" />
-            </SelectTrigger>
-            <SelectContent>
-              {SCRAPING_LEAGUES.map((league) => (
-                <SelectItem key={league.id} value={league.id}>
-                  {league.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-
-          <Button onClick={handleRefresh} disabled={loading} size="sm" className="gap-2">
-            {loading ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <RefreshCw className="h-4 w-4" />
-            )}
-            {loading ? 'Buscando...' : 'Buscar Dados'}
-          </Button>
-        </div>
-      </CardHeader>
-
-      <CardContent>
-        {error && (
-          <div className="flex items-center gap-2 p-4 rounded-lg bg-destructive/10 text-destructive mb-4">
-            <AlertCircle className="h-5 w-5 flex-shrink-0" />
-            <div>
-              <p className="font-medium">Erro ao buscar dados</p>
-              <p className="text-sm opacity-80">{error}</p>
-            </div>
-          </div>
-        )}
-
-        {!data && !loading && !error && (
-          <div className="text-center py-8 text-muted-foreground">
-            <RefreshCw className="h-12 w-12 mx-auto mb-3 opacity-30" />
-            <p>Clique em &quot;Buscar Dados&quot; para carregar estatísticas em tempo real</p>
-            <p className="text-sm mt-1 opacity-70">Os dados serão extraídos do Corner-Stats.com</p>
-          </div>
-        )}
-
-        {loading && (
-          <div className="text-center py-12">
-            <Loader2 className="h-10 w-10 animate-spin mx-auto mb-4 text-primary" />
-            <p className="text-muted-foreground">Extraindo dados do Corner-Stats.com...</p>
-            <p className="text-sm text-muted-foreground/70 mt-1">Isso pode levar alguns segundos</p>
-          </div>
-        )}
-
-        {data && !loading && (
-          <>
-            <div className="flex items-center justify-between mb-4">
-              <div>
-                <h3 className="font-semibold">{data.league}</h3>
-                <p className="text-sm text-muted-foreground">
-                  {data.teams.length} times • Média: {avgCornersPerMatch.toFixed(1)} escanteios/jogo
-                </p>
-              </div>
-              <Badge variant="secondary" className="text-xs" suppressHydrationWarning>
-                {data.lastUpdated ? `Atualizado: ${data.lastUpdated.slice(11, 16)}` : 'Atualizado'}
+          {addedTime && (
+            <div
+              className="mt-2 grid gap-1 text-[11px]"
+              title={
+                addedTime.announcedOnly
+                  ? `${addedTime.sourceLabel}. A fonte informou o acréscimo, mas não enviou o tempo total de bola parada.`
+                  : `${addedTime.sourceLabel}. A previsão de acréscimo usa 80% do tempo total de bola parada identificado.`
+              }
+            >
+              <Badge
+                variant="outline"
+                className="justify-center bg-cyan-500/10 text-cyan-300 border-cyan-500/20"
+              >
+                Bola parada {addedTime.totalLabel}
+              </Badge>
+              <Badge
+                variant="outline"
+                className="justify-center bg-amber-500/10 text-amber-300 border-amber-500/20"
+              >
+                Previsão de Acréscimo {addedTime.addedLabel}
               </Badge>
             </div>
+          )}
+          {!addedTime && (
+            <Badge
+              variant="outline"
+              className="mt-2 justify-center border-border/70 bg-background/40 text-[11px] text-muted-foreground"
+              title="A fonte ao vivo ainda não enviou paradas, retomadas ou acrescimo anunciado para este jogo."
+            >
+              Previsão de Acréscimo indisponível
+            </Badge>
+          )}
+        </div>
+        <div className="min-w-0">
+          <p className="font-semibold leading-tight break-words" title={match.awayTeam.name}>
+            {match.awayTeam.name}
+          </p>
+        </div>
+      </div>
 
-            <ScrollArea className="h-[400px]">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead className="w-[40px]">#</TableHead>
-                    <TableHead>
-                      <SortButton field="team" label="Time" />
-                    </TableHead>
-                    <TableHead className="text-center">
-                      <SortButton field="gamesPlayed" label="J" />
-                    </TableHead>
-                    <TableHead className="text-center">
-                      <SortButton field="avgCornersFor" label="Média F" />
-                    </TableHead>
-                    <TableHead className="text-center">
-                      <SortButton field="avgCornersAgainst" label="Média C" />
-                    </TableHead>
-                    <TableHead className="text-center">
-                      <SortButton field="avgTotalCorners" label="Total" />
-                    </TableHead>
-                    <TableHead className="text-center">
-                      <SortButton field="over85Pct" label=">8.5" />
-                    </TableHead>
-                    <TableHead className="text-center">
-                      <SortButton field="over95Pct" label=">9.5" />
-                    </TableHead>
-                    <TableHead className="text-center">
-                      <SortButton field="over105Pct" label=">10.5" />
-                    </TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {sortedTeams.map((team, index) => {
-                    const over85 = team.over85Pct ?? 0;
-                    const over95 = team.over95Pct ?? 0;
-                    const over105 = team.over105Pct ?? 0;
-                    return (
-                      <TableRow
-                        key={team.team}
-                        className="cursor-pointer hover:bg-muted/50 transition-colors"
-                        onClick={() => onTeamSelect?.(team)}
-                      >
-                        <TableCell className="text-muted-foreground">{index + 1}</TableCell>
-                        <TableCell className="font-medium">
-                          <div className="flex items-center gap-2">
-                            <div className="w-6 h-6 rounded bg-gradient-to-br from-primary/20 to-accent/20 flex items-center justify-center text-xs font-bold">
-                              {team.team.charAt(0)}
-                            </div>
-                            {team.team}
-                          </div>
-                        </TableCell>
-                        <TableCell className="text-center">{team.gamesPlayed}</TableCell>
-                        <TableCell className="text-center font-medium text-green-500">
-                          {team.avgCornersFor.toFixed(1)}
-                        </TableCell>
-                        <TableCell className="text-center font-medium text-red-400">
-                          {team.avgCornersAgainst.toFixed(1)}
-                        </TableCell>
-                        <TableCell className="text-center">
-                          <Badge variant="secondary" className="font-mono">
-                            {team.avgTotalCorners.toFixed(1)}
-                          </Badge>
-                        </TableCell>
-                        <TableCell className="text-center">
-                          <span
-                            className={
-                              over85 >= 60 ? 'text-green-500' : over85 <= 40 ? 'text-red-400' : ''
-                            }
-                          >
-                            {over85}%
-                          </span>
-                        </TableCell>
-                        <TableCell className="text-center">
-                          <span
-                            className={
-                              over95 >= 50 ? 'text-green-500' : over95 <= 30 ? 'text-red-400' : ''
-                            }
-                          >
-                            {over95}%
-                          </span>
-                        </TableCell>
-                        <TableCell className="text-center">
-                          <span
-                            className={
-                              over105 >= 40 ? 'text-green-500' : over105 <= 20 ? 'text-red-400' : ''
-                            }
-                          >
-                            {over105}%
-                          </span>
-                        </TableCell>
-                      </TableRow>
-                    );
-                  })}
-                </TableBody>
-              </Table>
-            </ScrollArea>
-          </>
-        )}
-      </CardContent>
+      {match.corners && (
+        <div className="mt-3 pt-3 border-t border-border/50">
+          <div className="flex items-center justify-center gap-4 text-sm">
+            <div className="flex items-center gap-1 text-amber-400">
+              <CornerUpRight className="w-4 h-4" />
+              <span className="font-medium">{match.corners.home}</span>
+            </div>
+            <span className="text-muted-foreground">Escanteios</span>
+            <div className="flex items-center gap-1 text-amber-400">
+              <span className="font-medium">{match.corners.away}</span>
+              <CornerUpRight className="w-4 h-4 scale-x-[-1]" />
+            </div>
+          </div>
+          <p className="text-center text-xs text-muted-foreground mt-1">
+            Total: {match.corners.total}
+          </p>
+        </div>
+      )}
     </Card>
   );
 }
+
+function LiveMatchDetails({
+  match,
+  competition,
+  onClose,
+}: {
+  match: LiveMatch;
+  competition: string;
+  onClose: () => void;
+}) {
+  const [stats, setStats] = useState<SofascoreStatsResponse | null>(null);
+  const [statsLoading, setStatsLoading] = useState(false);
+  const [statsError, setStatsError] = useState<string | null>(null);
+  const sofascoreId = match.sourceIds?.sofascore ?? (match.source === 'sofascore' ? match.id : null);
+  const addedTime = getOfficialAddedTimePrediction(match);
+  const hasEmbeddedStats = Boolean(match.liveStats?.length);
+  const statRows = useMemo(
+    () => (match.liveStats?.length ? match.liveStats : extractLiveStatRows(stats)),
+    [match.liveStats, stats]
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+
+    if (hasEmbeddedStats || !sofascoreId) {
+      setStats(null);
+      setStatsError(null);
+      setStatsLoading(false);
+      return;
+    }
+
+    async function fetchStats() {
+      setStatsLoading(true);
+      setStatsError(null);
+      try {
+        const res = await fetch(`/api/sofascore-direct/match/${sofascoreId}/statistics`);
+        const data = (await res.json()) as SofascoreStatsResponse & { error?: string };
+        if (!res.ok) throw new Error(data.error ?? 'Estatísticas indisponíveis');
+        if (!cancelled) setStats(data);
+      } catch (error) {
+        if (!cancelled) {
+          setStats(null);
+          setStatsError(error instanceof Error ? error.message : 'Estatísticas indisponíveis');
+        }
+      } finally {
+        if (!cancelled) setStatsLoading(false);
+      }
+    }
+
+    void fetchStats();
+    return () => {
+      cancelled = true;
+    };
+  }, [hasEmbeddedStats, sofascoreId]);
+
+  const statsSourceLabel =
+    match.statsSource === '365scores'
+      ? '365Scores'
+      : match.statsSource === 'api-football'
+        ? 'API-Football'
+        : match.sourceIds?.sofascore
+          ? 'SofaScore'
+          : match.source ?? 'ao vivo';
+
+  return (
+    <div className="rounded-xl border border-emerald-500/20 bg-card/80 p-4 space-y-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <p className="flex items-center gap-2 text-sm font-semibold text-emerald-400">
+            <BarChart3 className="w-4 h-4" />
+            Estatísticas ao vivo
+          </p>
+          <h4 className="mt-1 text-base font-bold">
+            {match.homeTeam.name} <span className="text-muted-foreground">x</span>{' '}
+            {match.awayTeam.name}
+          </h4>
+          <p className="text-xs text-muted-foreground">
+            {competition} - estatísticas: {statsSourceLabel}
+          </p>
+        </div>
+        <Button variant="ghost" size="icon" onClick={onClose} className="h-8 w-8">
+          <X className="w-4 h-4" />
+        </Button>
+      </div>
+
+      <div className="grid gap-3 md:grid-cols-3">
+        <div className="rounded-lg border border-border bg-background/40 p-3 text-center">
+          <p className="text-xs text-muted-foreground">Placar atual</p>
+          <p className="text-2xl font-bold tabular-nums">
+            {match.homeTeam.score} - {match.awayTeam.score}
+          </p>
+        </div>
+        <div className="rounded-lg border border-border bg-background/40 p-3 text-center">
+          <p className="text-xs text-muted-foreground">Tempo</p>
+          <p className="text-2xl font-bold text-emerald-400">
+            {typeof match.minute === 'number' ? `${match.minute}'` : match.minute}
+          </p>
+        </div>
+        <div className="rounded-lg border border-border bg-background/40 p-3 text-center">
+          <p className="text-xs text-muted-foreground">Escanteios ao vivo</p>
+          <p className="text-2xl font-bold text-amber-400">
+            {match.corners
+              ? `${match.corners.home} - ${match.corners.away}`
+              : stats
+                ? `${stats.homeCorners} - ${stats.awayCorners}`
+                : '-'}
+          </p>
+        </div>
+      </div>
+
+      {addedTime ? (
+        <div className={`grid gap-3 ${addedTime.announcedOnly ? 'md:grid-cols-1' : 'md:grid-cols-2'}`}>
+          {!addedTime.announcedOnly && (
+            <div className="rounded-lg border border-cyan-500/20 bg-cyan-500/10 p-3">
+              <p className="flex items-center gap-2 text-sm font-semibold text-cyan-300">
+                <Timer className="w-4 h-4" />
+                Tempo total de bola parada
+              </p>
+              <p className="mt-1 text-2xl font-bold">{addedTime.totalLabel}</p>
+              <p className="text-xs text-muted-foreground">{addedTime.sourceLabel}</p>
+            </div>
+          )}
+          <div className="rounded-lg border border-amber-500/20 bg-amber-500/10 p-3">
+            <p className="flex items-center gap-2 text-sm font-semibold text-amber-300">
+              <Clock className="w-4 h-4" />
+              Previsão de Acréscimo
+            </p>
+            <p className="mt-1 text-2xl font-bold">{addedTime.addedLabel}</p>
+            <p className="text-xs text-muted-foreground">
+              {addedTime.announcedOnly
+                ? `${addedTime.sourceLabel}. A fonte nao enviou o tempo total de bola parada.`
+                : '80% do tempo total parado identificado.'}
+            </p>
+          </div>
+        </div>
+      ) : (
+        <div className="rounded-lg border border-border bg-background/40 p-3 text-sm text-muted-foreground">
+          A fonte ao vivo ainda não enviou paradas e retomadas suficientes para calcular tempo de
+          bola parada e Previsão de Acréscimo neste jogo.
+        </div>
+      )}
+
+      {match.stoppage?.incidents?.length ? (
+        <div className="rounded-lg border border-cyan-500/20 bg-cyan-500/5 p-3">
+          <p className="mb-3 flex items-center gap-2 text-sm font-semibold text-cyan-300">
+            <Timer className="w-4 h-4" />
+            Paralisações detectadas
+          </p>
+          <div className="space-y-2">
+            {match.stoppage.incidents.map((incident, index) => (
+              <div
+                key={`${incident.startAt}-${index}`}
+                className="rounded-md border border-border/70 bg-background/50 p-3 text-sm"
+              >
+                <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                  <span className="font-medium">
+                    {incident.timeline || incident.period || `Paralisação ${index + 1}`}
+                  </span>
+                  <Badge variant="outline" className="text-xs">
+                    {formatDurationMs(incident.durationMs)}
+                  </Badge>
+                </div>
+                <div className="grid gap-1 text-xs text-muted-foreground sm:grid-cols-3">
+                  <span>
+                    <strong className="text-foreground">Parou:</strong>{' '}
+                    {formatIncidentTime(incident.startAt)}
+                  </span>
+                  <span>
+                    <strong className="text-foreground">Voltou:</strong>{' '}
+                    {formatIncidentTime(incident.endAt)}
+                  </span>
+                  <span>
+                    <strong className="text-foreground">Motivo:</strong>{' '}
+                    {stoppageReasonLabel(incident.reason)}
+                  </span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
+
+      <div className="rounded-lg border border-border bg-background/40 p-3">
+        <div className="mb-3 flex items-center justify-between gap-2">
+          <p className="text-sm font-semibold">Números do jogo</p>
+          {statsLoading && (
+            <span className="flex items-center gap-1 text-xs text-muted-foreground">
+              <RefreshCw className="w-3 h-3 animate-spin" />
+              buscando
+            </span>
+          )}
+        </div>
+
+        {statRows.length > 0 ? (
+          <div className="space-y-2">
+            {statRows.map((row) => (
+              <div
+                key={row.key}
+                className="grid grid-cols-[minmax(42px,80px)_minmax(0,1fr)_minmax(42px,80px)] items-center gap-3 rounded-md bg-muted/30 px-3 py-2 text-sm"
+              >
+                <span className="font-semibold tabular-nums">{row.home}</span>
+                <span className="text-center text-muted-foreground">{row.label}</span>
+                <span className="text-right font-semibold tabular-nums">{row.away}</span>
+              </div>
+            ))}
+          </div>
+        ) : statsError ? (
+          <p className="text-sm text-muted-foreground">
+            Não consegui carregar estatísticas ao vivo do SofaScore para este jogo agora.
+          </p>
+        ) : (
+          <p className="text-sm text-muted-foreground">
+            A 365Scores trouxe placar e tempo, mas ainda não enviou estatisticas detalhadas deste
+            evento.
+          </p>
+        )}
+      </div>
+
+      <FutureMatchPrediction
+        homeTeam={match.homeTeam.name}
+        awayTeam={match.awayTeam.name}
+        league={match.competition || competition}
+        kickoffLabel="Ao vivo"
+      />
+    </div>
+  );
+}
+
+export function LiveMatches() {
+  const [matches, setMatches] = useState<LiveMatch[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [lastUpdatedDisplay, setLastUpdatedDisplay] = useState('');
+  const [autoRefresh, setAutoRefresh] = useState(true);
+  const [selectedCompetition, setSelectedCompetition] = useState('all');
+  const [selectedMatchId, setSelectedMatchId] = useState<number | null>(null);
+  // fetchTick increments each time a fetch completes — triggers the time update effect
+  const [fetchTick, setFetchTick] = useState(0);
+
+  // Update display time client-side only, triggered by fetchTick
+  useEffect(() => {
+    if (fetchTick === 0) return;
+    setLastUpdatedDisplay(
+      new Intl.DateTimeFormat('pt-BR', {
+        timeZone: 'America/Sao_Paulo',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+      }).format(Date.now())
+    );
+  }, [fetchTick]);
+
+  const fetchLiveMatches = useCallback(async () => {
+    try {
+      setError(null);
+      const [scores365Res, sofascoreRes] = await Promise.allSettled([
+        fetch('/api/365scores/live'),
+        fetch('/api/sofascore-direct/live'),
+      ]);
+
+      const allMatches: LiveMatch[] = [];
+      const indexByKey = new Map<string, number>();
+      const addOrMerge = (match: LiveMatch, fallbackSource: string) => {
+        const key = matchKey(match);
+        const incoming = { ...match, source: match.source ?? fallbackSource };
+        const existingIndex = indexByKey.get(key);
+        if (existingIndex === undefined) {
+          indexByKey.set(key, allMatches.length);
+          allMatches.push(incoming);
+        } else {
+          allMatches[existingIndex] = mergeLiveMatch(allMatches[existingIndex], incoming);
+        }
+      };
+
+      if (scores365Res.status === 'fulfilled' && scores365Res.value.ok) {
+        const data = (await scores365Res.value.json()) as { matches?: LiveMatch[] };
+        for (const match of data.matches ?? []) {
+          addOrMerge(match, '365scores');
+        }
+      }
+
+      if (sofascoreRes.status === 'fulfilled' && sofascoreRes.value.ok) {
+        const data = (await sofascoreRes.value.json()) as { matches?: LiveMatch[] };
+        for (const match of data.matches ?? []) {
+          addOrMerge(match, 'sofascore');
+        }
+      }
+
+      setMatches(allMatches);
+      setFetchTick((t) => t + 1);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Erro desconhecido');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchLiveMatches();
+  }, [fetchLiveMatches]);
+
+  useEffect(() => {
+    if (!autoRefresh) return;
+    const interval = setInterval(fetchLiveMatches, 30000);
+    return () => clearInterval(interval);
+  }, [autoRefresh, fetchLiveMatches]);
+
+  const matchesByCompetition = matches.reduce(
+    (acc, match) => {
+      const key = match.competition || 'Outras Competições';
+      if (!acc[key]) acc[key] = [];
+      acc[key].push(match);
+      return acc;
+    },
+    {} as Record<string, LiveMatch[]>
+  );
+
+  const competitionOptions = Object.entries(matchesByCompetition)
+    .map(([competition, compMatches]) => ({
+      competition,
+      count: compMatches.length,
+    }))
+    .sort((a, b) => b.count - a.count || a.competition.localeCompare(b.competition));
+
+  useEffect(() => {
+    if (selectedCompetition !== 'all' && !matchesByCompetition[selectedCompetition]) {
+      setSelectedCompetition('all');
+    }
+  }, [matchesByCompetition, selectedCompetition]);
+
+  useEffect(() => {
+    if (selectedMatchId !== null && !matches.some((match) => match.id === selectedMatchId)) {
+      setSelectedMatchId(null);
+    }
+  }, [matches, selectedMatchId]);
+
+  const visibleMatches =
+    selectedCompetition === 'all'
+      ? matches
+      : matches.filter(
+          (match) => (match.competition || 'Outras Competições') === selectedCompetition
+        );
+
+  const visibleMatchesByCompetition = visibleMatches.reduce(
+    (acc, match) => {
+      const key = match.competition || 'Outras Competições';
+      if (!acc[key]) acc[key] = [];
+      acc[key].push(match);
+      return acc;
+    },
+    {} as Record<string, LiveMatch[]>
+  );
+
+  if (loading && matches.length === 0) {
+    return (
+      <div className="flex items-center justify-center py-12">
+        <div className="flex flex-col items-center gap-3">
+          <RefreshCw
+            className="w-8 h-8 text-emerald-500"
+            style={{ animation: 'livespin 1s linear infinite' }}
+          />
+          <p className="text-muted-foreground">Buscando jogos ao vivo...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="rounded-xl border border-red-500/20 bg-red-500/10 p-6">
+        <div className="flex items-start gap-3">
+          <AlertCircle className="w-5 h-5 text-red-500 flex-shrink-0 mt-0.5" />
+          <div>
+            <h4 className="font-medium text-red-500">Erro ao carregar jogos</h4>
+            <p className="text-sm text-red-400/80 mt-1">{error}</p>
+            <Button
+              onClick={() => {
+                setLoading(true);
+                fetchLiveMatches();
+              }}
+              variant="outline"
+              size="sm"
+              className="mt-3"
+            >
+              <RefreshCw className="w-4 h-4 mr-2" />
+              Tentar novamente
+            </Button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2">
+            <Radio
+              className="w-5 h-5 text-red-500"
+              style={{ animation: 'livepulse 2s ease-in-out infinite' }}
+            />
+            <h3 className="text-lg font-semibold">Jogos Ao Vivo</h3>
+          </div>
+          <Badge variant="secondary" className="bg-emerald-500/10 text-emerald-400">
+            {visibleMatches.length} {visibleMatches.length === 1 ? 'jogo' : 'jogos'}
+          </Badge>
+        </div>
+        <div className="flex items-center gap-2">
+          <Button
+            variant={autoRefresh ? 'default' : 'outline'}
+            size="sm"
+            onClick={() => setAutoRefresh(!autoRefresh)}
+            className={autoRefresh ? 'bg-emerald-600 hover:bg-emerald-500' : ''}
+          >
+            {autoRefresh ? 'Auto ✓' : 'Auto'}
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              setLoading(true);
+              fetchLiveMatches();
+            }}
+            disabled={loading}
+          >
+            <RefreshCw
+              className="w-4 h-4 mr-2"
+              style={loading ? { animation: 'livespin 1s linear infinite' } : undefined}
+            />
+            Atualizar
+          </Button>
+        </div>
+      </div>
+
+      {lastUpdatedDisplay && (
+        <p className="text-xs text-muted-foreground" suppressHydrationWarning>
+          Última atualização: {lastUpdatedDisplay}
+          {autoRefresh && ' (atualiza a cada 30s)'}
+        </p>
+      )}
+
+      {matches.length > 0 && (
+        <div className="rounded-xl border border-border bg-card p-3">
+          <label className="mb-2 block text-xs font-medium text-muted-foreground">
+            Filtrar por liga
+          </label>
+          <select
+            value={selectedCompetition}
+            onChange={(event) => setSelectedCompetition(event.target.value)}
+            className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground outline-none transition-colors focus:border-emerald-500"
+          >
+            <option value="all">Todas as ligas ({matches.length})</option>
+            {competitionOptions.map((option) => (
+              <option key={option.competition} value={option.competition}>
+                {option.competition} ({option.count})
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
+
+      {matches.length === 0 ? (
+        <Card className="p-8 text-center border-dashed">
+          <Trophy className="w-12 h-12 mx-auto text-muted-foreground/50 mb-4" />
+          <h4 className="font-medium text-lg mb-2">Nenhum jogo ao vivo no momento</h4>
+          <p className="text-sm text-muted-foreground">
+            Não há partidas em andamento nas ligas monitoradas.
+            <br />
+            Os jogos aparecerão aqui automaticamente quando começarem.
+          </p>
+        </Card>
+      ) : visibleMatches.length === 0 ? (
+        <Card className="p-8 text-center border-dashed">
+          <Trophy className="w-12 h-12 mx-auto text-muted-foreground/50 mb-4" />
+          <h4 className="font-medium text-lg mb-2">Nenhum jogo nesta liga agora</h4>
+          <p className="text-sm text-muted-foreground">
+            Escolha outra liga no filtro ou volte para todas as ligas.
+          </p>
+        </Card>
+      ) : (
+        <div className="space-y-6">
+          {Object.entries(visibleMatchesByCompetition).map(([competition, compMatches]) => (
+            <div key={competition} className="space-y-3">
+              <h4 className="font-medium text-sm text-muted-foreground flex items-center gap-2">
+                <Trophy className="w-4 h-4" />
+                {competition}
+                <Badge variant="outline" className="ml-auto">
+                  {compMatches.length}
+                </Badge>
+              </h4>
+              <div className="space-y-3">
+                {compMatches.map((match) => {
+                  const selected = selectedMatchId === match.id;
+                  return (
+                    <div key={match.id} className="space-y-3">
+                      <LiveMatchCard
+                        match={match}
+                        selected={selected}
+                        onClick={() => setSelectedMatchId((current) => (current === match.id ? null : match.id))}
+                      />
+                      {selected && (
+                        <LiveMatchDetails
+                          match={match}
+                          competition={competition}
+                          onClose={() => setSelectedMatchId(null)}
+                        />
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <style jsx global>{`
+        @keyframes livepulse {
+          0%,
+          100% {
+            opacity: 1;
+          }
+          50% {
+            opacity: 0.4;
+          }
+        }
+        @keyframes livespin {
+          from {
+            transform: rotate(0deg);
+          }
+          to {
+            transform: rotate(360deg);
+          }
+        }
+      `}</style>
+    </div>
+  );
+}
+
+export default LiveMatches;
