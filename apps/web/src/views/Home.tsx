@@ -688,34 +688,12 @@ export default function HomePage() {
     return getNextMatchForTeam(selectedTeam.team);
   }, [selectedTeam]);
 
-  const openRealtimeView = () => {
-    setViewMode('realtime');
-  };
-
-  const selectBrazilianTeamsForCompare = (homeTeam: string, awayTeam: string) => {
-    const home = findTeamByName(homeTeam);
-    const away = findTeamByName(awayTeam);
-
-    if (!home || !away) {
-      console.warn('Times não encontrados para comparação:', {
-        homeTeam,
-        awayTeam,
-        foundHome: Boolean(home),
-        foundAway: Boolean(away),
-      });
-      return false;
-    }
-
-    setSelectedTeam(home);
-    setCompareTeam(away);
-    setPreviousBrazilianTab(brazilianTab);
-    setBrazilianTab('compare');
-    return true;
-  };
-
   // Handle match selection from upcoming matches
   const handleMatchSelect = (homeTeam: string, awayTeam: string) => {
-    selectBrazilianTeamsForCompare(homeTeam, awayTeam);
+    const home = findTeamByName(homeTeam);
+    const away = findTeamByName(awayTeam);
+    if (home) setSelectedTeam(home);
+    if (away) setCompareTeam(away);
   };
 
   // Handle match selection from Sofascore fixtures (Brasileirão)
@@ -723,7 +701,12 @@ export default function HomePage() {
     homeTeam: { name: string };
     awayTeam: { name: string };
   }) => {
-    selectBrazilianTeamsForCompare(match.homeTeam.name, match.awayTeam.name);
+    const home = findTeamByName(match.homeTeam.name);
+    const away = findTeamByName(match.awayTeam.name);
+    if (home) setSelectedTeam(home);
+    if (away) setCompareTeam(away);
+    setPreviousBrazilianTab(brazilianTab);
+    setBrazilianTab('compare');
   };
 
   // Helper function to create mock team stats (for UEFA leagues without Football-Data)
@@ -1352,8 +1335,14 @@ export default function HomePage() {
                           </h3>
                           <TheSportsDBFixtures
                             league="brasileirao_a"
-                            onSelectMatch={selectBrazilianTeamsForCompare}
-                            onSelectLiveMatch={openRealtimeView}
+                            onSelectMatch={(home, away) => {
+                              const homeTeam = findTeamByName(home);
+                              const awayTeam = findTeamByName(away);
+                              if (homeTeam) setSelectedTeam(homeTeam);
+                              if (awayTeam) setCompareTeam(awayTeam);
+                              setPreviousBrazilianTab(brazilianTab);
+                              setBrazilianTab('compare');
+                            }}
                           />
                         </Card>
                       </TabsContent>
@@ -1388,8 +1377,14 @@ export default function HomePage() {
                           </h3>
                           <TheSportsDBFixtures
                             league="brasileirao_b"
-                            onSelectMatch={selectBrazilianTeamsForCompare}
-                            onSelectLiveMatch={openRealtimeView}
+                            onSelectMatch={(home, away) => {
+                              const homeTeam = findTeamByName(home);
+                              const awayTeam = findTeamByName(away);
+                              if (homeTeam) setSelectedTeam(homeTeam);
+                              if (awayTeam) setCompareTeam(awayTeam);
+                              setPreviousBrazilianTab(brazilianTab);
+                              setBrazilianTab('compare');
+                            }}
                           />
                         </Card>
                       </TabsContent>
@@ -1420,8 +1415,14 @@ export default function HomePage() {
                           </h3>
                           <TheSportsDBFixtures
                             league="copa_do_brasil"
-                            onSelectMatch={selectBrazilianTeamsForCompare}
-                            onSelectLiveMatch={openRealtimeView}
+                            onSelectMatch={(home, away) => {
+                              const homeTeam = findTeamByName(home);
+                              const awayTeam = findTeamByName(away);
+                              if (homeTeam) setSelectedTeam(homeTeam);
+                              if (awayTeam) setCompareTeam(awayTeam);
+                              setPreviousBrazilianTab(brazilianTab);
+                              setBrazilianTab('compare');
+                            }}
                           />
                         </Card>
                       </TabsContent>
@@ -1432,7 +1433,14 @@ export default function HomePage() {
                   {/* Predictions Tab */}
                   <TabsContent value="predictions" className="space-y-4">
                     <PredictionsTab
-                      onSelectMatch={selectBrazilianTeamsForCompare}
+                      onSelectMatch={(home, away) => {
+                        const homeTeam = findTeamByName(home);
+                        const awayTeam = findTeamByName(away);
+                        if (homeTeam) setSelectedTeam(homeTeam);
+                        if (awayTeam) setCompareTeam(awayTeam);
+                        setPreviousBrazilianTab(brazilianTab);
+                        setBrazilianTab('compare');
+                      }}
                     />
                   </TabsContent>
 
@@ -1890,12 +1898,21 @@ export default function HomePage() {
                               <Calendar className="w-5 h-5 text-primary" />
                               Próximos Jogos
                             </h3>
-                            <SofascoreFixtures
-                              league={LEAGUE_TO_SOFASCORE[selectedLeague.id]}
-                              onSelectMatch={(match) =>
-                                handleIntlMatchSelect(match.homeTeam.name, match.awayTeam.name)
-                              }
-                            />
+                            {LEAGUE_TO_SOFASCORE[selectedLeague.id] ? (
+                              <SofascoreFixtures
+                                league={LEAGUE_TO_SOFASCORE[selectedLeague.id]}
+                                onSelectMatch={(match) =>
+                                  handleIntlMatchSelect(match.homeTeam.name, match.awayTeam.name)
+                                }
+                              />
+                            ) : LEAGUE_TO_365SCORES[selectedLeague.id] ? (
+                              <Scores365UpcomingMatches league={LEAGUE_TO_365SCORES[selectedLeague.id]} />
+                            ) : (
+                              <div className="text-center py-8 text-muted-foreground">
+                                <Calendar className="w-10 h-10 mx-auto mb-3 opacity-50" />
+                                <p>Nenhum próximo jogo disponível para esta liga no momento.</p>
+                              </div>
+                            )}
                           </Card>
                         </TabsContent>
 
