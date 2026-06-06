@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from 'react';
-import { Calendar, RefreshCw, AlertCircle, User, Info, X } from 'lucide-react';
+import { Calendar, RefreshCw, AlertCircle, User, Info, X, Radio } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -12,7 +12,8 @@ import { currentUpcomingMatches } from '@/data/currentFixtures';
 
 interface TheSportsDBFixturesProps {
   league: 'brasileirao_a' | 'brasileirao_b' | 'copa_do_brasil';
-  onSelectMatch?: (homeTeam: string, awayTeam: string) => void;
+  onSelectMatch?: (homeTeam: string, awayTeam: string) => void | boolean;
+  onSelectLiveMatch?: (homeTeam: string, awayTeam: string) => void;
 }
 
 const LEAGUE_INFO = {
@@ -58,7 +59,31 @@ function localFixturesForLeague(league: TheSportsDBFixturesProps['league']): The
     }));
 }
 
-export function TheSportsDBFixtures({ league, onSelectMatch }: TheSportsDBFixturesProps) {
+function isLiveFixture(match: TheSportsDBFixture): boolean {
+  const status = String(match.status ?? '').toLowerCase();
+  const liveStatusWords = [
+    'live',
+    'ao vivo',
+    'in play',
+    'in_progress',
+    'in progress',
+    '1h',
+    '2h',
+    'ht',
+    'intervalo',
+    'halftime',
+  ];
+
+  if (liveStatusWords.some((word) => status.includes(word))) return true;
+
+  const hasScore = match.homeScore !== null || match.awayScore !== null;
+  const kickoffMs = Date.parse(`${match.timestamp}${match.timestamp.includes('Z') ? '' : '-03:00'}`);
+  const now = Date.now();
+
+  return hasScore && Number.isFinite(kickoffMs) && now >= kickoffMs && now <= kickoffMs + 2.5 * 60 * 60 * 1000;
+}
+
+export function TheSportsDBFixtures({ league, onSelectMatch, onSelectLiveMatch }: TheSportsDBFixturesProps) {
   const { fixtures, loading, error, refetch } = useTheSportsDBNextFixtures(league);
   const [selectedReferee, setSelectedReferee] = useState<RefereeCardStats | null>(null);
   const [selectedMatchId, setSelectedMatchId] = useState<string | null>(null);
@@ -156,8 +181,15 @@ export function TheSportsDBFixtures({ league, onSelectMatch }: TheSportsDBFixtur
                 <div key={match.id} className="space-y-2">
                   <MatchCardWithReferee
                     match={match}
+                    isLive={isLiveFixture(match)}
                     onClick={() => {
-                      onSelectMatch?.(match.homeTeam, match.awayTeam);
+                      if (isLiveFixture(match) && onSelectLiveMatch) {
+                        onSelectLiveMatch(match.homeTeam, match.awayTeam);
+                        return;
+                      }
+
+                      const selected = onSelectMatch?.(match.homeTeam, match.awayTeam);
+                      if (selected === false) return;
                       setSelectedMatchId((current) => (current === match.id ? null : match.id));
                     }}
                     onRefereeClick={(referee) => setSelectedReferee(referee)}
@@ -193,11 +225,12 @@ export function TheSportsDBFixtures({ league, onSelectMatch }: TheSportsDBFixtur
 // Card de partida com informações do árbitro
 interface MatchCardWithRefereeProps {
   match: TheSportsDBFixture;
+  isLive?: boolean;
   onClick?: () => void;
   onRefereeClick?: (referee: RefereeCardStats) => void;
 }
 
-function MatchCardWithReferee({ match, onClick, onRefereeClick }: MatchCardWithRefereeProps) {
+function MatchCardWithReferee({ match, isLive = false, onClick, onRefereeClick }: MatchCardWithRefereeProps) {
   const formattedDate = formatMatchDate(match.timestamp);
   const referee = match.referee ? findReferee(match.referee) : null;
 
@@ -205,6 +238,15 @@ function MatchCardWithReferee({ match, onClick, onRefereeClick }: MatchCardWithR
     <div 
       className="group relative rounded-xl border border-border bg-card p-4 transition-all hover:border-emerald-500/50 hover:bg-emerald-500/5"
     >
+      {isLive && (
+        <div className="mb-3 flex items-center justify-center">
+          <Badge className="bg-red-500/20 text-red-400 border-red-500/30 flex items-center gap-1">
+            <Radio className="w-3 h-3 animate-pulse" />
+            AO VIVO - tocar para abrir Tempo Real
+          </Badge>
+        </div>
+      )}
+
       <div 
         onClick={onClick}
         className="flex items-center justify-between gap-4 cursor-pointer"
@@ -216,7 +258,9 @@ function MatchCardWithReferee({ match, onClick, onRefereeClick }: MatchCardWithR
 
         {/* Time */}
         <div className="flex-shrink-0 text-center min-w-[100px]">
-          <p className="text-sm font-medium text-emerald-500">VS</p>
+          <p className={`text-sm font-medium ${isLive ? 'text-red-400' : 'text-emerald-500'}`}>
+            {isLive ? 'AO VIVO' : 'VS'}
+          </p>
           <p className="text-xs text-muted-foreground">{formattedDate}</p>
         </div>
 
