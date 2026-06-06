@@ -160,6 +160,28 @@ function isFutureOrLive(startTime: string, statusId?: number, now = Date.now()):
   return Number.isFinite(timestamp) && timestamp >= now;
 }
 
+function startOfBrazilDayMs(now = Date.now()): number {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Sao_Paulo',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(new Date(now));
+
+  const year = parts.find((part) => part.type === 'year')?.value;
+  const month = parts.find((part) => part.type === 'month')?.value;
+  const day = parts.find((part) => part.type === 'day')?.value;
+  if (!year || !month || !day) return now;
+
+  return Date.parse(`${year}-${month}-${day}T00:00:00-03:00`);
+}
+
+function isFutureLiveOrToday(startTime: string, statusId?: number, now = Date.now()): boolean {
+  if (isFutureOrLive(startTime, statusId, now)) return true;
+  const timestamp = Date.parse(startTime);
+  return Number.isFinite(timestamp) && timestamp >= startOfBrazilDayMs(now);
+}
+
 function compact(value: string): string {
   return value
     .toLowerCase()
@@ -193,7 +215,7 @@ function mergeStaticUpcoming(
 
   for (const match of STATIC_UPCOMING_MATCHES[league] ?? []) {
     const key = matchKey(match);
-    if (isFutureOrLive(match.startTime, undefined, now) && !seenByMatch.has(key)) {
+    if (isFutureLiveOrToday(match.startTime, undefined, now) && !seenByMatch.has(key)) {
       merged.set(match.id, match);
       seenByMatch.add(key);
     }

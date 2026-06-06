@@ -10,6 +10,41 @@ import { currentUpcomingMatches } from '@/data/currentFixtures';
 import { SCORES365_COMPETITIONS, scores365Get } from '@/app/api/utils/scores365';
 import sql from '@/app/api/utils/sql';
 
+function saoPauloDateParts(date = new Date()) {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Sao_Paulo',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).formatToParts(date);
+
+  const get = (type: string) => parts.find((part) => part.type === type)?.value ?? '00';
+  return {
+    year: get('year'),
+    month: get('month'),
+    day: get('day'),
+    hour: get('hour'),
+    minute: get('minute'),
+  };
+}
+
+function saoPauloDateString(date = new Date()): string {
+  const parts = saoPauloDateParts(date);
+  return `${parts.year}-${parts.month}-${parts.day}`;
+}
+
+function saoPauloTimeString(date: Date): string {
+  const parts = saoPauloDateParts(date);
+  return `${parts.hour}:${parts.minute}`;
+}
+
+function dateOnly(value: string): string {
+  return value.split(/[ T]/)[0] || value;
+}
+
 export async function GET(
   _request: NextRequest,
   { params }: { params: Promise<{ leagueKey: string }> }
@@ -28,7 +63,7 @@ export async function GET(
     leagueKey === 'copa_do_brasil'
   ) {
     try {
-      const today = new Date().toISOString().split('T')[0];
+      const today = saoPauloDateString();
       const dbMatches = await sql`
         SELECT home_team, away_team, match_date, match_time, round, referee, venue
         FROM upcoming_matches
@@ -87,7 +122,7 @@ export async function GET(
 
     // Intermediate fallback: 365Scores live API (fresh data, no static/outdated games)
     try {
-      const todayStr = new Date().toISOString().split('T')[0];
+      const todayStr = saoPauloDateString();
       const comp365 = SCORES365_COMPETITIONS[leagueKey];
       if (comp365) {
         const data365 = (await scores365Get(
@@ -108,15 +143,14 @@ export async function GET(
         if (data365.games && data365.games.length > 0) {
           const upcoming = data365.games.filter((g) => {
             if (g.statusGroup === 3) return false;
-            return new Date(g.startTime).toISOString().split('T')[0] >= todayStr;
+            return saoPauloDateString(new Date(g.startTime)) >= todayStr;
           });
 
           if (upcoming.length > 0) {
             const fixtures365 = upcoming.map((g, idx) => {
               const dt = new Date(g.startTime);
-              const dateStr = dt.toISOString().split('T')[0];
-              const h = String(dt.getUTCHours()).padStart(2, '0');
-              const min = String(dt.getUTCMinutes()).padStart(2, '0');
+              const dateStr = saoPauloDateString(dt);
+              const timeStr = saoPauloTimeString(dt);
               return {
                 id: String(g.id || idx + 1),
                 homeTeam: g.homeCompetitor.name,
@@ -126,8 +160,8 @@ export async function GET(
                 homeTeamBadge: null,
                 awayTeamBadge: null,
                 date: dateStr,
-                time: `${h}:${min}`,
-                timestamp: `${dateStr}T${h}:${min}:00`,
+                time: timeStr,
+                timestamp: `${dateStr}T${timeStr}:00`,
                 round: g.roundNum ? `Rodada ${g.roundNum}` : g.roundName || 'Rodada',
                 referee: null,
                 venue: null,
@@ -166,14 +200,10 @@ export async function GET(
       referee?: string | null;
       venue?: string | null;
     }>;
-    const now = new Date();
-    now.setHours(0, 0, 0, 0);
+    const today = saoPauloDateString();
 
     const upcomingMatches = localMatches.filter((match) => {
-      const matchDate = new Date(
-        match.date.includes('T') ? match.date : match.date.replace(' ', 'T')
-      );
-      return matchDate >= now;
+      return dateOnly(match.date) >= today;
     });
 
     const fixtures = upcomingMatches.map((match, idx) => ({
