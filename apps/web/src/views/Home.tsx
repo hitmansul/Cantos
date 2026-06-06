@@ -688,12 +688,34 @@ export default function HomePage() {
     return getNextMatchForTeam(selectedTeam.team);
   }, [selectedTeam]);
 
-  // Handle match selection from upcoming matches
-  const handleMatchSelect = (homeTeam: string, awayTeam: string) => {
+  const openRealtimeView = () => {
+    setViewMode('realtime');
+  };
+
+  const selectBrazilianTeamsForCompare = (homeTeam: string, awayTeam: string) => {
     const home = findTeamByName(homeTeam);
     const away = findTeamByName(awayTeam);
-    if (home) setSelectedTeam(home);
-    if (away) setCompareTeam(away);
+
+    if (!home || !away) {
+      console.warn('Times não encontrados para comparação:', {
+        homeTeam,
+        awayTeam,
+        foundHome: Boolean(home),
+        foundAway: Boolean(away),
+      });
+      return false;
+    }
+
+    setSelectedTeam(home);
+    setCompareTeam(away);
+    setPreviousBrazilianTab(brazilianTab);
+    setBrazilianTab('compare');
+    return true;
+  };
+
+  // Handle match selection from upcoming matches
+  const handleMatchSelect = (homeTeam: string, awayTeam: string) => {
+    selectBrazilianTeamsForCompare(homeTeam, awayTeam);
   };
 
   // Handle match selection from Sofascore fixtures (Brasileirão)
@@ -701,12 +723,7 @@ export default function HomePage() {
     homeTeam: { name: string };
     awayTeam: { name: string };
   }) => {
-    const home = findTeamByName(match.homeTeam.name);
-    const away = findTeamByName(match.awayTeam.name);
-    if (home) setSelectedTeam(home);
-    if (away) setCompareTeam(away);
-    setPreviousBrazilianTab(brazilianTab);
-    setBrazilianTab('compare');
+    selectBrazilianTeamsForCompare(match.homeTeam.name, match.awayTeam.name);
   };
 
   // Helper function to create mock team stats (for UEFA leagues without Football-Data)
@@ -1335,14 +1352,8 @@ export default function HomePage() {
                           </h3>
                           <TheSportsDBFixtures
                             league="brasileirao_a"
-                            onSelectMatch={(home, away) => {
-                              const homeTeam = findTeamByName(home);
-                              const awayTeam = findTeamByName(away);
-                              if (homeTeam) setSelectedTeam(homeTeam);
-                              if (awayTeam) setCompareTeam(awayTeam);
-                              setPreviousBrazilianTab(brazilianTab);
-                              setBrazilianTab('compare');
-                            }}
+                            onSelectMatch={selectBrazilianTeamsForCompare}
+                            onSelectLiveMatch={openRealtimeView}
                           />
                         </Card>
                       </TabsContent>
@@ -1377,14 +1388,8 @@ export default function HomePage() {
                           </h3>
                           <TheSportsDBFixtures
                             league="brasileirao_b"
-                            onSelectMatch={(home, away) => {
-                              const homeTeam = findTeamByName(home);
-                              const awayTeam = findTeamByName(away);
-                              if (homeTeam) setSelectedTeam(homeTeam);
-                              if (awayTeam) setCompareTeam(awayTeam);
-                              setPreviousBrazilianTab(brazilianTab);
-                              setBrazilianTab('compare');
-                            }}
+                            onSelectMatch={selectBrazilianTeamsForCompare}
+                            onSelectLiveMatch={openRealtimeView}
                           />
                         </Card>
                       </TabsContent>
@@ -1415,14 +1420,8 @@ export default function HomePage() {
                           </h3>
                           <TheSportsDBFixtures
                             league="copa_do_brasil"
-                            onSelectMatch={(home, away) => {
-                              const homeTeam = findTeamByName(home);
-                              const awayTeam = findTeamByName(away);
-                              if (homeTeam) setSelectedTeam(homeTeam);
-                              if (awayTeam) setCompareTeam(awayTeam);
-                              setPreviousBrazilianTab(brazilianTab);
-                              setBrazilianTab('compare');
-                            }}
+                            onSelectMatch={selectBrazilianTeamsForCompare}
+                            onSelectLiveMatch={openRealtimeView}
                           />
                         </Card>
                       </TabsContent>
@@ -1433,14 +1432,7 @@ export default function HomePage() {
                   {/* Predictions Tab */}
                   <TabsContent value="predictions" className="space-y-4">
                     <PredictionsTab
-                      onSelectMatch={(home, away) => {
-                        const homeTeam = findTeamByName(home);
-                        const awayTeam = findTeamByName(away);
-                        if (homeTeam) setSelectedTeam(homeTeam);
-                        if (awayTeam) setCompareTeam(awayTeam);
-                        setPreviousBrazilianTab(brazilianTab);
-                        setBrazilianTab('compare');
-                      }}
+                      onSelectMatch={selectBrazilianTeamsForCompare}
                     />
                   </TabsContent>
 
