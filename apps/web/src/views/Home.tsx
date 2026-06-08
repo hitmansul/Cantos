@@ -1893,27 +1893,46 @@ export default function HomePage() {
                           </Card>
 
                           {/* Upcoming Matches */}
-                          <Card className="p-4">
-                            <h3 className="text-lg font-medium flex items-center gap-2 mb-4">
-                              <Calendar className="w-5 h-5 text-primary" />
-                              Próximos Jogos
-                            </h3>
-                            {LEAGUE_TO_SOFASCORE[selectedLeague.id] ? (
-                              <SofascoreFixtures
-                                league={LEAGUE_TO_SOFASCORE[selectedLeague.id]}
-                                onSelectMatch={(match) =>
-                                  handleIntlMatchSelect(match.homeTeam.name, match.awayTeam.name)
-                                }
-                              />
-                            ) : LEAGUE_TO_365SCORES[selectedLeague.id] ? (
-                              <Scores365UpcomingMatches league={LEAGUE_TO_365SCORES[selectedLeague.id]} />
-                            ) : (
-                              <div className="text-center py-8 text-muted-foreground">
-                                <Calendar className="w-10 h-10 mx-auto mb-3 opacity-50" />
-                                <p>Nenhum próximo jogo disponível para esta liga no momento.</p>
-                              </div>
-                            )}
-                          </Card>
+<Card className="p-4">
+  <h3 className="text-lg font-medium flex items-center gap-2 mb-4">
+    <Calendar className="w-5 h-5 text-primary" />
+    Próximos Jogos
+  </h3>
+
+  {(() => {
+    const sofascoreLeague = LEAGUE_TO_SOFASCORE[selectedLeague.id];
+    const scores365League = LEAGUE_TO_365SCORES[selectedLeague.id];
+
+    if (sofascoreLeague) {
+      return (
+        <SofascoreFixtures
+          league={sofascoreLeague}
+          onSelectMatch={(match) =>
+            handleIntlMatchSelect(match.homeTeam.name, match.awayTeam.name)
+          }
+        />
+      );
+    }
+
+    if (scores365League) {
+      return (
+        <Scores365UpcomingMatches
+          league={scores365League}
+          onMatchClick={(home, away) => {
+            handleIntlMatchSelect(home, away);
+          }}
+        />
+      );
+    }
+
+    return (
+      <div className="text-center py-8 text-muted-foreground">
+        <Calendar className="w-10 h-10 mx-auto mb-3 opacity-50" />
+        <p>Nenhum próximo jogo disponível para esta liga no momento.</p>
+      </div>
+    );
+  })()}
+</Card>
                         </TabsContent>
 
                         <TabsContent value="cards" className="space-y-4">
