@@ -226,7 +226,7 @@ function SearchableSingleFilter({
             </button>
 
             {filtered.length === 0 ? (
-              <p className="px-2 py-3 text-sm text-muted-foreground">Nenhuma opcao encontrada.</p>
+              <p className="px-2 py-3 text-sm text-muted-foreground">Nenhuma opção encontrada.</p>
             ) : (
               filtered.map((option) => (
                 <button
@@ -432,7 +432,7 @@ export function ValueAlerts({ scope = 'all' }: ValueAlertsProps) {
       const params = new URLSearchParams();
       if (scope !== 'all') params.set('scope', scope);
       const response = await fetch(`/api/odds/alerts${params.size ? `?${params}` : ''}`, { cache: 'no-store' });
-      if (!response.ok) throw new Error('Nao foi possivel carregar as odds agora.');
+      if (!response.ok) throw new Error('Não foi possível carregar as odds agora.');
       const payload = (await response.json()) as OddsAlertsResponse;
       setData(payload);
       if (payload.summary.cornerAlerts === 0 && payload.summary.otherValueAlerts > 0) setTab('other');
@@ -512,8 +512,13 @@ export function ValueAlerts({ scope = 'all' }: ValueAlertsProps) {
     setBookmakerSearch('');
   }
 
+  const showLeagueFilter = scope !== 'world_cup';
+
   const hasActiveFilters =
-    leagueFilter !== 'all' || teamFilter !== 'all' || selectedBookmakers.length > 0 || bookmakerSearch.trim() !== '';
+    (showLeagueFilter && leagueFilter !== 'all') ||
+    teamFilter !== 'all' ||
+    selectedBookmakers.length > 0 ||
+    bookmakerSearch.trim() !== '';
 
   const visibleAlerts = useMemo(() => {
     const alerts = data?.alerts ?? [];
@@ -521,7 +526,7 @@ export function ValueAlerts({ scope = 'all' }: ValueAlertsProps) {
 
     return alerts.filter((alert) => {
       if (alert.marketType !== tab) return false;
-      if (leagueFilter !== 'all' && `${alert.country}|${alert.leagueName}` !== leagueFilter) return false;
+      if (showLeagueFilter && leagueFilter !== 'all' && `${alert.country}|${alert.leagueName}` !== leagueFilter) return false;
       if (teamFilter !== 'all' && alert.homeTeam !== teamFilter && alert.awayTeam !== teamFilter) return false;
       if (
         selectedSet.size > 0 &&
@@ -531,7 +536,7 @@ export function ValueAlerts({ scope = 'all' }: ValueAlertsProps) {
       }
       return true;
     });
-  }, [data?.alerts, leagueFilter, selectedBookmakers, tab, teamFilter]);
+  }, [data?.alerts, leagueFilter, selectedBookmakers, showLeagueFilter, tab, teamFilter]);
 
   const groups = useMemo(() => groupByLeague(visibleAlerts), [visibleAlerts]);
 
@@ -566,9 +571,9 @@ export function ValueAlerts({ scope = 'all' }: ValueAlertsProps) {
               <AlertTriangle className="h-5 w-5 text-amber-300" />
             </div>
             <div>
-              <h3 className="text-lg font-semibold">Odds reais nao configuradas</h3>
+              <h3 className="text-lg font-semibold">Odds reais não configuradas</h3>
               <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
-                Configure a fonte de odds para comparar cotacoes reais. A aplicacao nao cria cotacoes estimadas.
+                Configure a fonte de odds para comparar cotações reais. A aplicação não cria cotações estimadas.
               </p>
             </div>
           </div>
@@ -591,8 +596,8 @@ export function ValueAlerts({ scope = 'all' }: ValueAlertsProps) {
             </h3>
             <p className="mt-1 max-w-4xl text-sm text-muted-foreground">{data.note}</p>
             <p className="mt-2 text-xs text-muted-foreground">
-              Atualizado em {formatUpdated(data.lastUpdated)}. Escanteios sao prioridade; outros mercados aparecem
-              apenas quando uma casa esta pagando muito acima das demais.
+              Atualizado em {formatUpdated(data.lastUpdated)}. Escanteios são prioridade; outros mercados aparecem
+              apenas quando uma casa está pagando muito acima das demais.
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
@@ -620,7 +625,7 @@ export function ValueAlerts({ scope = 'all' }: ValueAlertsProps) {
         <div className="rounded-lg border border-violet-500/20 bg-violet-500/10 p-4">
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
             <BarChart3 className="h-4 w-4 text-violet-300" />
-            Outras distorcoes
+            Outras distorções
           </div>
           <div className="mt-1 text-2xl font-bold">{data.summary.otherValueAlerts}</div>
         </div>
@@ -675,22 +680,30 @@ export function ValueAlerts({ scope = 'all' }: ValueAlertsProps) {
           )}
         </div>
 
-        <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.4fr)]">
-          <SearchableSingleFilter
-            id="odds-league-filter"
-            label="Liga"
-            value={leagueFilter}
-            options={leagueOptions}
-            allLabel="Todas as ligas"
-            onChange={changeLeagueFilter}
-          />
+        <div
+          className={
+            showLeagueFilter
+              ? 'grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.4fr)]'
+              : 'grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]'
+          }
+        >
+          {showLeagueFilter && (
+            <SearchableSingleFilter
+              id="odds-league-filter"
+              label="Liga"
+              value={leagueFilter}
+              options={leagueOptions}
+              allLabel="Todas as ligas"
+              onChange={changeLeagueFilter}
+            />
+          )}
 
           <SearchableSingleFilter
             id="odds-team-filter"
             label="Time"
             value={teamFilter}
             options={teamOptions}
-            allLabel={leagueFilter === 'all' ? 'Todos os times' : 'Todos os times da liga'}
+            allLabel={showLeagueFilter && leagueFilter !== 'all' ? 'Todos os times da liga' : 'Todos os times'}
             onChange={setTeamFilter}
           />
 
@@ -712,10 +725,10 @@ export function ValueAlerts({ scope = 'all' }: ValueAlertsProps) {
               ? 'Nenhum alerta encontrado com esses filtros'
               : tab === 'corners'
                 ? 'Nenhuma linha real de escanteios retornada agora'
-                : 'Nenhuma distorcao forte em outros mercados agora'}
+                : 'Nenhuma distorção forte em outros mercados agora'}
           </p>
           <p className="mx-auto mt-2 max-w-2xl text-sm text-muted-foreground">
-            A tela so mostra odds recebidas de fonte real. Se a fonte nao enviar o mercado/casa para um jogo,
+            A tela só mostra odds recebidas de fonte real. Se a fonte não enviar o mercado/casa para um jogo,
             ele fica fora da lista.
           </p>
         </Card>
