@@ -1780,7 +1780,10 @@ export default function HomePage() {
               </div>
             ) : (
               <>
-                {/* League Selector */}
+                {/* Alertas de odds das Ligas Internacionais */}
+                <ValueAlerts scope="international" />
+                
+                {/* League Selector */}           
                 <Card className="p-5">
                   <div className="space-y-4">
                     <label className="text-sm font-medium text-muted-foreground">
