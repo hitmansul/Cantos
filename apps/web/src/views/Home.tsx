@@ -1779,12 +1779,25 @@ export default function HomePage() {
                 </div>
               </div>
             ) : (
-              <>
-                {/* Alertas de odds das Ligas Internacionais */}
-                <ValueAlerts scope="international" />
-                
-                {/* League Selector */}           
-                <Card className="p-5">
+              <Tabs defaultValue="odds" className="space-y-4">
+                <TabsList className="grid w-full grid-cols-2">
+                  <TabsTrigger value="odds" className="gap-2">
+                    <Zap className="w-4 h-4" />
+                    Odds
+                  </TabsTrigger>
+                  <TabsTrigger value="ligas" className="gap-2">
+                    <Globe className="w-4 h-4" />
+                    Ligas e Estatísticas
+                  </TabsTrigger>
+                </TabsList>
+
+                <TabsContent value="odds" className="space-y-4">
+                  <ValueAlerts scope="international" />
+                </TabsContent>
+
+                <TabsContent value="ligas" className="space-y-6">
+                  {/* League Selector */}
+                  <Card className="p-5">
                   <div className="space-y-4">
                     <label className="text-sm font-medium text-muted-foreground">
                       Selecione uma liga
@@ -2325,7 +2338,7 @@ export default function HomePage() {
                                 }
                               }}
                             />
-                            <ValueAlerts />
+                            <ValueAlerts scope="international" />
                           </TabsContent>
                         </Tabs>
                       ) : null}
@@ -2351,7 +2364,8 @@ export default function HomePage() {
                     </p>
                   </Card>
                 )}
-              </>
+                </TabsContent>
+              </Tabs>
             )}
 
             {/* Data Info */}
