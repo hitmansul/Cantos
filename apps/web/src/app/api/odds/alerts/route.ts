@@ -16,7 +16,7 @@ import { currentUpcomingMatches } from '@/data/currentFixtures';
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
-type LeagueScope = 'all' | 'world_cup';
+type LeagueScope = 'all' | 'world_cup' | 'brazil' | 'international';
 type MarketType = 'corners' | 'other';
 type AlertConfidence = 'alta' | 'moderada' | 'fraca';
 
@@ -164,6 +164,53 @@ const NON_CORNER_SECOND_BEST_EDGE_THRESHOLD = 35;
 const NON_CORNER_MIN_ABSOLUTE_GAP = 1;
 const NON_CORNER_MIN_BOOKMAKERS = 3;
 const DEFAULT_DAYS_AHEAD = 60;
+
+const DEFAULT_BOOKMAKERS = [
+  'Bet365',
+  'Betano',
+  'KTO',
+  'Superbet',
+  'Sportingbet',
+  'Betfair',
+  'Pinnacle',
+  '1xBet',
+  'Stake',
+  'Betway',
+  'Novibet',
+  'EstrelaBet',
+];
+
+const WORLD_CUP_TEAMS_2026 = [
+  'Brasil',
+  'Argentina',
+  'México',
+  'Canadá',
+  'Estados Unidos',
+  'Portugal',
+  'Espanha',
+  'França',
+  'Alemanha',
+  'Inglaterra',
+  'Itália',
+  'Holanda',
+  'Bélgica',
+  'Uruguai',
+  'Colômbia',
+  'Marrocos',
+  'Japão',
+  'Coreia do Sul',
+  'Austrália',
+  'Suíça',
+  'Croácia',
+  'Dinamarca',
+  'Noruega',
+  'Turquia',
+  'Polônia',
+  'Escócia',
+  'Equador',
+  'Paraguai',
+  'Haiti',
+];
 
 const LEAGUES: ApiFootballLeagueConfig[] = [
   { key: 'world_cup', apiFootballLeagueId: 1, season: 2026, name: 'Copa do Mundo 2026', country: 'FIFA', scope: 'world_cup' },
@@ -531,7 +578,23 @@ function sortAlerts(a: OddsAlert, b: OddsAlert): number {
 }
 
 function scopedLeagues(scope: LeagueScope) {
-  if (scope === 'world_cup') return LEAGUES.filter((league) => league.scope === 'world_cup');
+  if (scope === 'world_cup') {
+    return LEAGUES.filter((league) => league.key === 'world_cup');
+  }
+
+  if (scope === 'brazil') {
+    return LEAGUES.filter((league) =>
+      ['brasileirao_a', 'brasileirao_b', 'copa_do_brasil'].includes(league.key)
+    );
+  }
+
+  if (scope === 'international') {
+    return LEAGUES.filter(
+      (league) =>
+        !['world_cup', 'brasileirao_a', 'brasileirao_b', 'copa_do_brasil'].includes(league.key)
+    );
+  }
+
   return LEAGUES;
 }
 
@@ -554,6 +617,14 @@ function addLocalTeamOptions(
   teamMap: Map<string, { leagueKey: string; team: string }>
 ) {
   const leagueByInternalKey = new Map(leagues.map((league) => [league.key, league]));
+
+  const worldCupLeague = leagueByInternalKey.get('world_cup');
+  if (worldCupLeague) {
+    const optionKey = leagueOptionKey(worldCupLeague);
+    for (const team of WORLD_CUP_TEAMS_2026) {
+      addTeamOption(teamMap, optionKey, team);
+    }
+  }
 
   for (const [internalKey, stats] of Object.entries(LOCAL_TEAM_STATS_BY_LEAGUE)) {
     const league = leagueByInternalKey.get(internalKey);
@@ -606,7 +677,9 @@ function buildFilterOptions(
     teams: Array.from(teamMap.values()).sort((a, b) =>
       `${a.leagueKey} ${a.team}`.localeCompare(`${b.leagueKey} ${b.team}`)
     ),
-    bookmakers: Array.from(bookmakerSet).sort((a, b) => a.localeCompare(b)),
+    bookmakers: Array.from(new Set([...DEFAULT_BOOKMAKERS, ...bookmakerSet])).sort((a, b) =>
+      a.localeCompare(b)
+    ),
   };
 }
 
@@ -669,7 +742,10 @@ async function buildResponse(scope: LeagueScope): Promise<OddsAlertsResponse> {
 
 export async function GET(request: NextRequest) {
   const scopeParam = request.nextUrl.searchParams.get('scope');
-  const scope: LeagueScope = scopeParam === 'world_cup' ? 'world_cup' : 'all';
+  const allowedScopes: LeagueScope[] = ['all', 'world_cup', 'brazil', 'international'];
+  const scope: LeagueScope = allowedScopes.includes(scopeParam as LeagueScope)
+    ? (scopeParam as LeagueScope)
+    : 'all';
 
   if (responseCache && responseCache.scope === scope && responseCache.expiresAt > Date.now()) {
     return NextResponse.json(responseCache.body);
