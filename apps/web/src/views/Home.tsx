@@ -1711,7 +1711,7 @@ export default function HomePage() {
                         }
                       }}
                     />
-                    <ValueAlerts />
+                    <ValueAlerts scope="brazil" />
                   </TabsContent>
                 </Tabs>
               </>
@@ -2015,7 +2015,7 @@ export default function HomePage() {
                               }
                             }}
                           />
-                          <ValueAlerts />
+                          <ValueAlerts scope="international" />
                         </TabsContent>
                       </Tabs>
                     </div>
