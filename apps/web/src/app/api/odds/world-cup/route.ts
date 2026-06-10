@@ -522,7 +522,3 @@ export async function GET() {
     lastUpdated: new Date().toISOString(),
   });
 }
-return NextResponse.json({
-  test: "WORLD_CUP_V3",
-  source: "world-cup-route"
-});
