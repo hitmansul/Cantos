@@ -1,53 +1,80 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, BadgeDollarSign, Loader2, RefreshCw, ShieldCheck, TrendingUp } from 'lucide-react';
+import {
+  AlertTriangle,
+  BadgeDollarSign,
+  ChevronDown,
+  ChevronUp,
+  Flag,
+  Loader2,
+  RefreshCw,
+  Target,
+  TrendingUp,
+} from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 
-type OddsSide = 'home' | 'draw' | 'away';
+type CornerSide = 'over' | 'under' | 'home' | 'away' | 'exact' | 'other';
 
-type OddsBookmaker = {
-  name: string;
-  source: 'real';
-  home: number | null;
-  draw: number | null;
-  away: number | null;
+type CornerLineOdd = {
+  bookmaker: string;
+  market: string;
+  line: string;
+  side: CornerSide;
+  label: string;
+  odd: number;
 };
 
-type OddsEvent = {
+type CornerAlert = {
+  market: string;
+  line: string;
+  side: CornerSide;
+  label: string;
+  bookmaker: string;
+  odd: number;
+  nextBestOdd: number;
+  averageOdd: number;
+  edgePct: number;
+  comparedBookmakers: number;
+};
+
+type CornerEvent = {
   id: string;
   startTime: string;
   roundName?: string;
   homeTeam: string;
   awayTeam: string;
-  fairOdds: Record<OddsSide, number>;
-  bookmakers: OddsBookmaker[];
-  bestPick?: {
-    side: OddsSide;
-    label: string;
-    bookmaker: string;
-    odd: number;
-    fairOdd: number;
-    edgePct: number;
-  } | null;
+  bookmakersCount: number;
+  cornerLines: CornerLineOdd[];
+  alerts: CornerAlert[];
   source: 'real';
 };
 
 type OddsResponse = {
   configured: boolean;
-  source: 'api-football' | 'the-odds-api' | 'not-configured';
-  hasRealBet365: boolean;
+  source: 'api-football' | 'not-configured';
+  focus: 'corner-lines';
   note: string;
-  events: OddsEvent[];
+  summary: {
+    eventsChecked: number;
+    cornerLines: number;
+    alerts: number;
+    bookmakersCompared: number;
+  };
+  bookmakers: string[];
+  events: CornerEvent[];
   lastUpdated: string;
 };
 
-const SIDE_LABELS: Record<OddsSide, string> = {
-  home: 'Casa',
-  draw: 'Empate',
-  away: 'Fora',
+const SIDE_LABELS: Record<CornerSide, string> = {
+  over: 'Mais de',
+  under: 'Menos de',
+  home: 'Time da casa',
+  away: 'Time visitante',
+  exact: 'Exato',
+  other: 'Outro',
 };
 
 function formatDate(value: string): string {
@@ -77,34 +104,50 @@ function formatUpdated(value: string): string {
   }).format(date);
 }
 
-function sideOdd(bookmaker: OddsBookmaker, side: OddsSide): number | null {
-  return bookmaker[side];
+function groupKey(line: CornerLineOdd): string {
+  return `${line.market}|${line.line}|${line.side}|${line.label}`;
 }
 
-function bestSideOdd(event: OddsEvent, side: OddsSide): number | null {
-  const values = event.bookmakers
-    .map((bookmaker) => sideOdd(bookmaker, side))
-    .filter((value): value is number => typeof value === 'number' && Number.isFinite(value));
-  return values.length > 0 ? Math.max(...values) : null;
+function bestOddForGroup(lines: CornerLineOdd[]) {
+  return [...lines].sort((a, b) => b.odd - a.odd)[0] ?? null;
 }
 
-function bookmakerFocusOdd(bookmaker: OddsBookmaker, focusSide: OddsSide): number {
-  return sideOdd(bookmaker, focusSide) ?? bookmaker.home ?? bookmaker.draw ?? bookmaker.away ?? 0;
-}
+function groupCornerLines(lines: CornerLineOdd[]) {
+  const groups = new Map<string, CornerLineOdd[]>();
 
-function WorldCupOddsEventCard({ event }: { event: OddsEvent }) {
-  const [showAllBookmakers, setShowAllBookmakers] = useState(false);
-  const bet365 = event.bookmakers.find((bookmaker) => bookmaker.name.toLowerCase().includes('bet365'));
-  const focusSide = event.bestPick?.side ?? 'home';
-  const visibleBookmakers = useMemo(() => {
-    const sorted = [...event.bookmakers].sort((a, b) => {
-      const oddDiff = bookmakerFocusOdd(b, focusSide) - bookmakerFocusOdd(a, focusSide);
-      if (oddDiff !== 0) return oddDiff;
-      return a.name.localeCompare(b.name, 'pt-BR');
+  for (const line of lines) {
+    const key = groupKey(line);
+    const current = groups.get(key) ?? [];
+    current.push(line);
+    groups.set(key, current);
+  }
+
+  return [...groups.entries()]
+    .map(([key, values]) => {
+      const best = bestOddForGroup(values);
+      return {
+        key,
+        market: values[0]?.market ?? '',
+        line: values[0]?.line ?? '',
+        side: values[0]?.side ?? 'other',
+        label: values[0]?.label ?? '',
+        values: [...values].sort((a, b) => b.odd - a.odd),
+        bestOdd: best?.odd ?? 0,
+      };
+    })
+    .sort((a, b) => {
+      const lineA = Number(a.line);
+      const lineB = Number(b.line);
+      if (Number.isFinite(lineA) && Number.isFinite(lineB) && lineA !== lineB) return lineA - lineB;
+      if (a.side !== b.side) return a.side.localeCompare(b.side, 'pt-BR');
+      return b.bestOdd - a.bestOdd;
     });
-    return showAllBookmakers ? sorted : sorted.slice(0, 8);
-  }, [event.bookmakers, focusSide, showAllBookmakers]);
-  const hiddenBookmakerCount = Math.max(0, event.bookmakers.length - visibleBookmakers.length);
+}
+
+function WorldCupCornerEventCard({ event }: { event: CornerEvent }) {
+  const [expanded, setExpanded] = useState(event.alerts.length > 0);
+  const groupedLines = useMemo(() => groupCornerLines(event.cornerLines), [event.cornerLines]);
+  const visibleGroups = expanded ? groupedLines : groupedLines.slice(0, 5);
 
   return (
     <Card className="p-4 space-y-4 border-emerald-500/20 bg-emerald-950/10">
@@ -120,10 +163,10 @@ function WorldCupOddsEventCard({ event }: { event: OddsEvent }) {
               </Badge>
             )}
             <Badge variant="outline" className="text-emerald-300">
-              odds reais
+              {event.cornerLines.length} linhas de escanteios
             </Badge>
             <Badge variant="outline" className="text-blue-300">
-              {event.bookmakers.length} casas
+              {event.bookmakersCount} casas
             </Badge>
           </div>
           <h3 className="text-lg font-bold">
@@ -132,107 +175,119 @@ function WorldCupOddsEventCard({ event }: { event: OddsEvent }) {
           <p className="text-sm text-muted-foreground">{formatDate(event.startTime)} BRT</p>
         </div>
 
-        {event.bestPick && event.bestPick.edgePct > 0 && (
-          <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm">
-            <div className="flex items-center gap-2 font-semibold text-emerald-300">
+        {event.alerts.length > 0 && (
+          <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm">
+            <div className="flex items-center gap-2 font-semibold text-amber-300">
               <TrendingUp className="h-4 w-4" />
-              Melhor valor detectado
+              {event.alerts.length} alerta(s) de odd acima do mercado
             </div>
             <div className="mt-1 text-foreground">
-              {event.bestPick.label} em {event.bestPick.bookmaker}
+              Maior: {event.alerts[0].bookmaker} pagando {event.alerts[0].odd.toFixed(2)}
             </div>
             <div className="text-xs text-muted-foreground">
-              odd {event.bestPick.odd.toFixed(2)} | valor +{event.bestPick.edgePct}%
+              Segunda melhor {event.alerts[0].nextBestOdd.toFixed(2)} | diferença +{event.alerts[0].edgePct}%
             </div>
           </div>
         )}
       </div>
 
-      <div className="grid gap-3 lg:grid-cols-[minmax(180px,220px)_1fr]">
-        <div className="rounded-lg bg-muted/30 p-3">
-          <div className="mb-2 flex items-center gap-2 text-sm font-semibold">
-            <ShieldCheck className="h-4 w-4 text-blue-300" />
-            Odds justas
+      {event.alerts.length > 0 && (
+        <div className="rounded-lg border border-amber-500/20 bg-amber-500/5 p-3">
+          <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-amber-300">
+            <BadgeDollarSign className="h-4 w-4" />
+            Alertas de valor em escanteios
           </div>
-          <div className="grid grid-cols-3 gap-2 text-center text-sm">
-            {(['home', 'draw', 'away'] as OddsSide[]).map((side) => (
-              <div key={side} className="rounded-md bg-background/40 p-2">
-                <div className="text-xs text-muted-foreground">{SIDE_LABELS[side]}</div>
-                <div className="font-bold">{event.fairOdds[side].toFixed(2)}</div>
+
+          <div className="grid gap-2">
+            {event.alerts.slice(0, 5).map((alert) => (
+              <div
+                key={`${alert.market}-${alert.line}-${alert.side}-${alert.bookmaker}`}
+                className="rounded-md bg-background/40 p-3 text-sm"
+              >
+                <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+                  <div>
+                    <div className="font-semibold">
+                      {alert.market} — {alert.label}
+                    </div>
+                    <div className="text-xs text-muted-foreground">
+                      Linha {alert.line} | {alert.comparedBookmakers} casas comparadas
+                    </div>
+                  </div>
+                  <div className="text-left md:text-right">
+                    <div className="font-bold text-amber-300">
+                      {alert.bookmaker}: {alert.odd.toFixed(2)}
+                    </div>
+                    <div className="text-xs text-muted-foreground">
+                      Próxima {alert.nextBestOdd.toFixed(2)} | Média {alert.averageOdd.toFixed(2)} | +{alert.edgePct}%
+                    </div>
+                  </div>
+                </div>
               </div>
             ))}
           </div>
         </div>
+      )}
 
-        <div className="rounded-lg bg-muted/30 p-3">
-          <div className="mb-2 flex items-center justify-between gap-2">
-            <div className="flex items-center gap-2 text-sm font-semibold">
-              <BadgeDollarSign className="h-4 w-4 text-amber-300" />
-              Comparacao de casas
-            </div>
-            <div className="flex flex-wrap items-center justify-end gap-2">
-              <Badge variant="outline" className="text-blue-300">
-                melhores odds destacadas
-              </Badge>
-              {bet365 && (
-                <Badge className="bg-emerald-500/20 text-emerald-300">
-                  Bet365 disponivel
-                </Badge>
-              )}
-            </div>
+      <div className="rounded-lg bg-muted/30 p-3">
+        <div className="mb-3 flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+          <div className="flex items-center gap-2 text-sm font-semibold">
+            <Target className="h-4 w-4 text-emerald-300" />
+            Linhas de escanteios por casa
           </div>
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[520px] text-sm">
-              <thead className="text-xs text-muted-foreground">
-                <tr>
-                  <th className="py-2 text-left">Casa</th>
-                  <th className="py-2 text-center">{event.homeTeam}</th>
-                  <th className="py-2 text-center">Empate</th>
-                  <th className="py-2 text-center">{event.awayTeam}</th>
-                  <th className="py-2 text-center">Fonte</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-border/60">
-                {visibleBookmakers.map((bookmaker) => (
-                  <tr key={bookmaker.name}>
-                    <td className="py-2 font-medium">{bookmaker.name}</td>
-                    {(['home', 'draw', 'away'] as OddsSide[]).map((side) => {
-                      const odd = sideOdd(bookmaker, side);
-                      const isBestOdd = odd !== null && odd === bestSideOdd(event, side);
-                      return (
-                        <td key={side} className="py-2 text-center font-semibold">
-                          <span
-                            className={
-                              isBestOdd
-                                ? 'inline-flex min-w-[3.5rem] items-center justify-center rounded-full bg-emerald-500/20 px-2 py-1 text-emerald-300'
-                                : 'inline-flex min-w-[3.5rem] items-center justify-center px-2 py-1'
-                            }
-                          >
-                            {odd?.toFixed(2) ?? '-'}
-                          </span>
-                        </td>
-                      );
-                    })}
-                    <td className="py-2 text-center">
-                      <Badge variant="outline" className="text-emerald-300">
-                        real
-                      </Badge>
-                    </td>
-                  </tr>
+
+          <Button type="button" variant="ghost" size="sm" onClick={() => setExpanded((current) => !current)}>
+            {expanded ? (
+              <>
+                <ChevronUp className="mr-2 h-4 w-4" />
+                Recolher
+              </>
+            ) : (
+              <>
+                <ChevronDown className="mr-2 h-4 w-4" />
+                Mostrar todas
+              </>
+            )}
+          </Button>
+        </div>
+
+        <div className="grid gap-3">
+          {visibleGroups.map((group) => (
+            <div key={group.key} className="rounded-lg border border-border/60 bg-background/30 p-3">
+              <div className="mb-2 flex flex-col gap-1 md:flex-row md:items-center md:justify-between">
+                <div>
+                  <div className="font-semibold">{group.market}</div>
+                  <div className="text-xs text-muted-foreground">
+                    {SIDE_LABELS[group.side]} | Linha {group.line} | {group.label}
+                  </div>
+                </div>
+
+                {group.values[0] && (
+                  <Badge className="w-fit bg-emerald-500/20 text-emerald-300">
+                    Melhor: {group.values[0].bookmaker} {group.values[0].odd.toFixed(2)}
+                  </Badge>
+                )}
+              </div>
+
+              <div className="flex flex-wrap gap-2">
+                {group.values.map((line) => (
+                  <span
+                    key={`${line.bookmaker}-${line.odd}`}
+                    className={
+                      line.odd === group.bestOdd
+                        ? 'rounded-full bg-emerald-500/20 px-3 py-1 text-sm font-semibold text-emerald-300'
+                        : 'rounded-full bg-muted px-3 py-1 text-sm text-muted-foreground'
+                    }
+                  >
+                    {line.bookmaker}: {line.odd.toFixed(2)}
+                  </span>
                 ))}
-              </tbody>
-            </table>
-          </div>
-          {event.bookmakers.length > 8 && (
-            <div className="mt-3 flex justify-end">
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                onClick={() => setShowAllBookmakers((current) => !current)}
-              >
-                {showAllBookmakers ? 'Recolher casas' : `Mostrar mais ${hiddenBookmakerCount} casas`}
-              </Button>
+              </div>
+            </div>
+          ))}
+
+          {groupedLines.length === 0 && (
+            <div className="rounded-lg bg-background/30 p-6 text-center text-sm text-muted-foreground">
+              Nenhuma linha de escanteios encontrada para este jogo.
             </div>
           )}
         </div>
@@ -249,9 +304,10 @@ export function WorldCupOddsAlerts() {
   async function load() {
     setLoading(true);
     setError(null);
+
     try {
       const response = await fetch('/api/odds/world-cup', { cache: 'no-store' });
-      if (!response.ok) throw new Error('Nao foi possivel buscar odds da Copa');
+      if (!response.ok) throw new Error('Não foi possível buscar odds de escanteios da Copa');
       setData((await response.json()) as OddsResponse);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Erro desconhecido');
@@ -268,7 +324,7 @@ export function WorldCupOddsAlerts() {
     return (
       <Card className="p-8 text-center">
         <Loader2 className="mx-auto mb-3 h-6 w-6 animate-spin text-emerald-400" />
-        <p className="text-sm text-muted-foreground">Carregando alertas de odds...</p>
+        <p className="text-sm text-muted-foreground">Carregando odds de escanteios...</p>
       </Card>
     );
   }
@@ -287,11 +343,15 @@ export function WorldCupOddsAlerts() {
   }
 
   if (!data || data.events.length === 0) {
-    const title = data?.configured ? 'Nenhuma odd real encontrada para a Copa agora' : 'Odds reais nao configuradas';
-    const description = data?.note ?? 'A aplicacao nao mostra odds estimadas.';
+    const title = data?.configured
+      ? 'Nenhuma linha real de escanteios encontrada para a Copa agora'
+      : 'Fonte de odds reais não configurada';
+
+    const description = data?.note ?? 'A aplicação não mostra odds estimadas. Só aparecem linhas retornadas por fonte real.';
+
     return (
       <Card className="p-8 text-center">
-        <BadgeDollarSign className="mx-auto mb-3 h-8 w-8 text-muted-foreground" />
+        <Flag className="mx-auto mb-3 h-8 w-8 text-muted-foreground" />
         <p className="font-semibold">{title}</p>
         <p className="mx-auto mt-2 max-w-2xl text-sm text-muted-foreground">{description}</p>
         <Button variant="outline" size="sm" onClick={load} className="mt-4">
@@ -302,6 +362,8 @@ export function WorldCupOddsAlerts() {
     );
   }
 
+  const eventsWithAlerts = data.events.filter((event) => event.alerts.length > 0);
+
   return (
     <div className="space-y-4">
       <Card className="p-4 border-emerald-500/20 bg-gradient-to-r from-emerald-500/10 to-amber-500/10">
@@ -309,29 +371,61 @@ export function WorldCupOddsAlerts() {
           <div>
             <h3 className="flex items-center gap-2 text-lg font-bold">
               <BadgeDollarSign className="h-5 w-5 text-emerald-300" />
-              Alertas de Odds da Copa do Mundo
+              Odds de Escanteios da Copa do Mundo
             </h3>
             <p className="mt-1 max-w-3xl text-sm text-muted-foreground">{data.note}</p>
           </div>
+
           <div className="flex flex-wrap items-center gap-2">
-            <Badge className={data.source !== 'not-configured' ? 'bg-emerald-500/20 text-emerald-300' : 'bg-amber-500/15 text-amber-300'}>
-              {data.source !== 'not-configured' ? 'Fonte real conectada' : 'Fonte real pendente'}
+            <Badge className="bg-emerald-500/20 text-emerald-300">Fonte real conectada</Badge>
+            <Badge variant="outline">{data.summary.eventsChecked} jogos</Badge>
+            <Badge variant="outline">{data.summary.cornerLines} linhas</Badge>
+            <Badge variant="outline" className="text-amber-300">
+              {data.summary.alerts} alertas
             </Badge>
-            <Badge variant="outline">{data.events.length} jogos</Badge>
             <Button variant="outline" size="sm" onClick={load}>
               <RefreshCw className="mr-2 h-4 w-4" />
               Atualizar
             </Button>
           </div>
         </div>
+
         <p className="mt-3 text-xs text-muted-foreground">
-          Atualizado em {formatUpdated(data.lastUpdated)}. A tela so lista cotacoes recebidas de uma fonte real.
+          Atualizado em {formatUpdated(data.lastUpdated)}. Alerta = mesma linha de escanteios com uma casa pagando pelo menos 25% acima da segunda melhor odd.
         </p>
       </Card>
 
+      {eventsWithAlerts.length > 0 && (
+        <Card className="p-4 border-amber-500/20 bg-amber-500/5">
+          <div className="mb-3 flex items-center gap-2 font-semibold text-amber-300">
+            <TrendingUp className="h-4 w-4" />
+            Principais alertas
+          </div>
+
+          <div className="grid gap-2 md:grid-cols-2">
+            {eventsWithAlerts.slice(0, 6).map((event) => {
+              const alert = event.alerts[0];
+              return (
+                <div key={event.id} className="rounded-lg bg-background/40 p-3 text-sm">
+                  <div className="font-semibold">
+                    {event.homeTeam} x {event.awayTeam}
+                  </div>
+                  <div className="text-xs text-muted-foreground">
+                    {alert.market} — {alert.label}
+                  </div>
+                  <div className="mt-1 font-bold text-amber-300">
+                    {alert.bookmaker} {alert.odd.toFixed(2)} | próxima {alert.nextBestOdd.toFixed(2)} | +{alert.edgePct}%
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </Card>
+      )}
+
       <div className="grid gap-3">
         {data.events.map((event) => (
-          <WorldCupOddsEventCard key={event.id} event={event} />
+          <WorldCupCornerEventCard key={event.id} event={event} />
         ))}
       </div>
     </div>
