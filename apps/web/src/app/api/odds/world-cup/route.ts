@@ -13,6 +13,7 @@ type ApiFootballFixture = {
 type ApiFootballOddValue = { value: string; odd: string };
 type ApiFootballBet = { id?: number; name: string; values?: ApiFootballOddValue[] };
 type ApiFootballBookmaker = { id?: number; name: string; bets?: ApiFootballBet[] };
+
 type ApiFootballOddsItem = {
   fixture: { id: number; date?: string };
   league?: { round?: string };
@@ -38,10 +39,21 @@ type CornerAlert = {
   label: string;
   bookmaker: string;
   odd: number;
+  nextBestBookmaker: string;
   nextBestOdd: number;
   averageOdd: number;
   edgePct: number;
   comparedBookmakers: number;
+  odds: CornerLineOdd[];
+};
+
+type FeaturedLine = {
+  key: string;
+  market: string;
+  line: string;
+  side: CornerSide;
+  label: string;
+  odds: CornerLineOdd[];
 };
 
 type CornerEvent = {
@@ -52,6 +64,7 @@ type CornerEvent = {
   awayTeam: string;
   bookmakersCount: number;
   cornerLines: CornerLineOdd[];
+  featuredLines: FeaturedLine[];
   alerts: CornerAlert[];
   source: 'real';
 };
@@ -152,17 +165,25 @@ function extractCornerLines(bookmaker: ApiFootballBookmaker): CornerLineOdd[] {
 }
 
 function groupKey(line: CornerLineOdd): string {
-  return [
-    normalize(line.market),
-    line.line,
-    line.side,
-    normalize(line.label).replace(/\d+(?:[.,]\d+)?/g, '').replace(/\s+/g, ' ').trim(),
-  ].join('|');
+  const normalizedLabelWithoutNumber = normalize(line.label)
+    .replace(/\d+(?:[.,]\d+)?/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return [normalize(line.market), line.line, line.side, normalizedLabelWithoutNumber].join('|');
+}
+
+function uniqueBestByBookmaker(lines: CornerLineOdd[]): CornerLineOdd[] {
+  const uniqueBookmakers = new Map<string, CornerLineOdd>();
+  for (const line of lines) {
+    const key = normalize(line.bookmaker);
+    const previous = uniqueBookmakers.get(key);
+    if (!previous || line.odd > previous.odd) uniqueBookmakers.set(key, line);
+  }
+  return [...uniqueBookmakers.values()].sort((a, b) => b.odd - a.odd);
 }
 
 function buildAlerts(lines: CornerLineOdd[]): CornerAlert[] {
   const groups = new Map<string, CornerLineOdd[]>();
-
   for (const line of lines) {
     const key = groupKey(line);
     const current = groups.get(key) ?? [];
@@ -171,23 +192,14 @@ function buildAlerts(lines: CornerLineOdd[]): CornerAlert[] {
   }
 
   const alerts: CornerAlert[] = [];
-
   for (const group of groups.values()) {
-    const uniqueBookmakers = new Map<string, CornerLineOdd>();
-
-    for (const line of group) {
-      const previous = uniqueBookmakers.get(normalize(line.bookmaker));
-      if (!previous || line.odd > previous.odd) uniqueBookmakers.set(normalize(line.bookmaker), line);
-    }
-
-    const values = [...uniqueBookmakers.values()].sort((a, b) => b.odd - a.odd);
+    const values = uniqueBestByBookmaker(group);
     if (values.length < MIN_BOOKMAKERS_FOR_ALERT) continue;
 
     const best = values[0];
     const secondBest = values[1];
     const average = values.reduce((sum, item) => sum + item.odd, 0) / values.length;
-    const edgePct = Math.round(((best.odd / secondBest.odd) - 1) * 100);
-
+    const edgePct = Math.round((best.odd / secondBest.odd - 1) * 100);
     if (edgePct < MIN_ALERT_EDGE_PCT) continue;
 
     alerts.push({
@@ -197,14 +209,61 @@ function buildAlerts(lines: CornerLineOdd[]): CornerAlert[] {
       label: best.label,
       bookmaker: best.bookmaker,
       odd: best.odd,
+      nextBestBookmaker: secondBest.bookmaker,
       nextBestOdd: secondBest.odd,
       averageOdd: Math.round(average * 100) / 100,
       edgePct,
       comparedBookmakers: values.length,
+      odds: values,
     });
   }
 
   return alerts.sort((a, b) => b.edgePct - a.edgePct);
+}
+
+function buildFeaturedLines(lines: CornerLineOdd[]): FeaturedLine[] {
+  const groups = new Map<string, CornerLineOdd[]>();
+  for (const line of lines) {
+    const key = groupKey(line);
+    const current = groups.get(key) ?? [];
+    current.push(line);
+    groups.set(key, current);
+  }
+
+  const grouped = [...groups.values()]
+    .map((values) => ({
+      key: groupKey(values[0]),
+      market: values[0].market,
+      line: values[0].line,
+      side: values[0].side,
+      label: values[0].label,
+      odds: uniqueBestByBookmaker(values),
+    }))
+    .filter((group) => group.odds.length > 0);
+
+  const preferred = grouped.filter((group) => {
+    const lineNumber = Number(group.line);
+    const market = normalize(group.market);
+    const label = normalize(group.label);
+    const isFirstHalf = market.includes('1st half') || market.includes('first half') || label.includes('1st half');
+    const isFullGame = !market.includes('2nd half') && !label.includes('2nd half');
+    const isOver = group.side === 'over' || label.includes('over');
+    const wantedLine = [3.5, 4.5, 8.5, 9.5, 10.5].includes(lineNumber);
+    return wantedLine && isOver && (isFirstHalf || isFullGame);
+  });
+
+  const sortFeatured = (a: FeaturedLine, b: FeaturedLine) => {
+    const aFirstHalf = normalize(a.market).includes('1st half') || normalize(a.label).includes('1st half');
+    const bFirstHalf = normalize(b.market).includes('1st half') || normalize(b.label).includes('1st half');
+    if (aFirstHalf !== bFirstHalf) return aFirstHalf ? -1 : 1;
+    const aLine = Number(a.line);
+    const bLine = Number(b.line);
+    if (Number.isFinite(aLine) && Number.isFinite(bLine) && aLine !== bLine) return aLine - bLine;
+    return b.odds[0].odd - a.odds[0].odd;
+  };
+
+  const selected = preferred.length > 0 ? preferred.sort(sortFeatured) : grouped.sort(sortFeatured);
+  return selected.slice(0, 6);
 }
 
 async function apiFootballFixtures() {
@@ -240,7 +299,6 @@ async function apiFootballOdds() {
   });
 
   if (!firstPage) return [];
-
   const items = [...(firstPage.response ?? [])];
   const totalPages = Math.min(firstPage.paging?.total ?? 1, MAX_ODDS_PAGES);
 
@@ -252,7 +310,6 @@ async function apiFootballOdds() {
     });
     items.push(...(pageData?.response ?? []));
   }
-
   return items;
 }
 
@@ -260,10 +317,7 @@ async function apiFootballCornerEvents(): Promise<CornerEvent[] | null> {
   if (!isApiFootballConfigured()) return null;
 
   const [fixtures, oddsItems] = await Promise.all([apiFootballFixtures(), apiFootballOdds()]);
-  const missingFixtureIds = [...new Set(oddsItems.map((item) => item.fixture.id).filter((id) => !fixtures.has(id)))].slice(
-    0,
-    MAX_FIXTURE_LOOKUPS
-  );
+  const missingFixtureIds = [...new Set(oddsItems.map((item) => item.fixture.id).filter((id) => !fixtures.has(id)))].slice(0, MAX_FIXTURE_LOOKUPS);
 
   for (const fixtureId of missingFixtureIds) {
     const fixture = await apiFootballFixtureById(fixtureId);
@@ -276,8 +330,7 @@ async function apiFootballCornerEvents(): Promise<CornerEvent[] | null> {
     const fixture = fixtures.get(item.fixture.id);
     if (!fixture) continue;
 
-    const bookmakers = apiFootballBookmakers(item);
-    const cornerLines = bookmakers.flatMap(extractCornerLines);
+    const cornerLines = apiFootballBookmakers(item).flatMap(extractCornerLines);
     if (cornerLines.length === 0) continue;
 
     const fixtureId = String(item.fixture.id);
@@ -286,6 +339,7 @@ async function apiFootballCornerEvents(): Promise<CornerEvent[] | null> {
     if (existing) {
       existing.cornerLines.push(...cornerLines);
       existing.bookmakersCount = new Set(existing.cornerLines.map((line) => normalize(line.bookmaker))).size;
+      existing.featuredLines = buildFeaturedLines(existing.cornerLines);
       existing.alerts = buildAlerts(existing.cornerLines);
       continue;
     }
@@ -298,6 +352,7 @@ async function apiFootballCornerEvents(): Promise<CornerEvent[] | null> {
       awayTeam: fixture.teams.away.name,
       bookmakersCount: new Set(cornerLines.map((line) => normalize(line.bookmaker))).size,
       cornerLines,
+      featuredLines: buildFeaturedLines(cornerLines),
       alerts: buildAlerts(cornerLines),
       source: 'real',
     });
@@ -318,11 +373,15 @@ export async function GET() {
       configured: true,
       source: 'api-football',
       focus: 'corner-lines',
-      note:
-        events.length > 0
-          ? 'Linhas reais de escanteios encontradas na API-Football. Alertas aparecem quando uma casa paga muito acima da segunda melhor odd para a mesma linha.'
-          : 'API-Football esta configurada, mas nao retornou mercados de escanteios para a Copa do Mundo agora.',
-      summary: { eventsChecked: events.length, cornerLines: linesCount, alerts: alertsCount, bookmakersCompared: bookmakers.length },
+      note: events.length > 0
+        ? 'Linhas reais de escanteios encontradas na API-Football. Alertas aparecem quando uma casa paga muito acima da segunda melhor casa para a mesma linha.'
+        : 'API-Football esta configurada, mas nao retornou mercados de escanteios para a Copa do Mundo agora.',
+      summary: {
+        eventsChecked: events.length,
+        cornerLines: linesCount,
+        alerts: alertsCount,
+        bookmakersCompared: bookmakers.length,
+      },
       bookmakers,
       events,
       lastUpdated: new Date().toISOString(),
