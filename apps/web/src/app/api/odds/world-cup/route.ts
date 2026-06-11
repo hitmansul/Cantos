@@ -86,6 +86,10 @@ function normalize(value: string): string {
     .trim();
 }
 
+function bookmakerKey(value: string): string {
+  return normalize(value).replace(/[^a-z0-9]/g, '');
+}
+
 function parseDecimalOdd(value: string | number | null | undefined): number | null {
   if (value === null || value === undefined) return null;
   const parsed = Number(String(value).replace(',', '.'));
@@ -175,7 +179,7 @@ function groupKey(line: CornerLineOdd): string {
 function uniqueBestByBookmaker(lines: CornerLineOdd[]): CornerLineOdd[] {
   const uniqueBookmakers = new Map<string, CornerLineOdd>();
   for (const line of lines) {
-    const key = normalize(line.bookmaker);
+    const key = bookmakerKey(line.bookmaker);
     const previous = uniqueBookmakers.get(key);
     if (!previous || line.odd > previous.odd) uniqueBookmakers.set(key, line);
   }
@@ -248,14 +252,14 @@ function buildFeaturedLines(lines: CornerLineOdd[]): FeaturedLine[] {
     const isFirstHalf = market.includes('1st half') || market.includes('first half') || label.includes('1st half');
     const isFullGame = !market.includes('2nd half') && !label.includes('2nd half');
     const isOver = group.side === 'over' || label.includes('over');
-    const wantedLine = [3.5, 4.5, 8.5, 9.5, 10.5].includes(lineNumber);
+    const wantedLine = [3.5, 4.5, 5.5].includes(lineNumber);
     return wantedLine && isOver && (isFirstHalf || isFullGame);
   });
 
   const sortFeatured = (a: FeaturedLine, b: FeaturedLine) => {
     const aFirstHalf = normalize(a.market).includes('1st half') || normalize(a.label).includes('1st half');
     const bFirstHalf = normalize(b.market).includes('1st half') || normalize(b.label).includes('1st half');
-    if (aFirstHalf !== bFirstHalf) return aFirstHalf ? -1 : 1;
+    if (aFirstHalf !== bFirstHalf) return aFirstHalf ? 1 : -1;
     const aLine = Number(a.line);
     const bLine = Number(b.line);
     if (Number.isFinite(aLine) && Number.isFinite(bLine) && aLine !== bLine) return aLine - bLine;
@@ -362,7 +366,13 @@ async function apiFootballCornerEvents(): Promise<CornerEvent[] | null> {
 }
 
 export async function GET() {
-  const events = await apiFootballCornerEvents();
+  let events: CornerEvent[] | null = null;
+  try {
+    events = await apiFootballCornerEvents();
+  } catch (error) {
+    console.error('[odds/world-cup] Failed to load corner odds', error);
+    events = [];
+  }
 
   if (events !== null) {
     const linesCount = events.reduce((sum, event) => sum + event.cornerLines.length, 0);
@@ -374,8 +384,8 @@ export async function GET() {
       source: 'api-football',
       focus: 'corner-lines',
       note: events.length > 0
-        ? 'Linhas reais de escanteios encontradas na API-Football. Alertas aparecem quando uma casa paga muito acima da segunda melhor casa para a mesma linha.'
-        : 'API-Football esta configurada, mas nao retornou mercados de escanteios para a Copa do Mundo agora.',
+        ? 'Linhas reais de escanteios encontradas. Alertas aparecem quando uma casa paga muito acima da segunda melhor casa para a mesma linha.'
+        : 'A fonte de odds está configurada, mas não retornou mercados de escanteios para a Copa do Mundo agora.',
       summary: {
         eventsChecked: events.length,
         cornerLines: linesCount,
@@ -392,7 +402,7 @@ export async function GET() {
     configured: false,
     source: 'not-configured',
     focus: 'corner-lines',
-    note: 'API-Football nao esta configurada. Configure API_FOOTBALL_KEY para buscar odds reais de escanteios.',
+    note: 'A fonte de odds não está configurada. Configure a chave para buscar odds reais de escanteios.',
     summary: { eventsChecked: 0, cornerLines: 0, alerts: 0, bookmakersCompared: 0 },
     bookmakers: [],
     events: [],

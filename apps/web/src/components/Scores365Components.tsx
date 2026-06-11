@@ -336,7 +336,7 @@ export function Scores365Standings({ league }: Props) {
   );
 }
 
-export function Scores365UpcomingMatches({ league, onMatchClick }: Props) {
+export function Scores365UpcomingMatches({ league }: Props) {
   const { matches, loading, error } = use365Upcoming(league);
   const config = LEAGUE_CONFIG[league];
   const [selectedMatchId, setSelectedMatchId] = useState<number | null>(null);
@@ -397,7 +397,6 @@ export function Scores365UpcomingMatches({ league, onMatchClick }: Props) {
                 <div
                   className="bg-gray-800/50 rounded-lg p-3 flex items-center justify-between transition-colors cursor-pointer hover:bg-emerald-500/20 hover:border-emerald-500/30 border border-transparent"
                   onClick={() => {
-                    onMatchClick?.(match.homeTeam.name, match.awayTeam.name);
                     setSelectedMatchId((current) => (current === match.id ? null : match.id));
                   }}
                 >

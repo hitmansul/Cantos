@@ -33,7 +33,7 @@ import { LeagueSelector } from '@/components/LeagueSelector';
 
 import { InternationalTeamStatsCard } from '@/components/InternationalTeamStatsCard';
 import { InternationalH2HCard } from '@/components/InternationalH2HCard';
-import { LiveCornerStats } from '@/components/LiveCornerStats';
+import LiveCornerStats from '@/components/LiveCornerStats';
 import { MatchPrediction } from '@/components/MatchPrediction';
 import { PredictionsTab } from '@/components/PredictionsTab';
 import { CornerTrendsChart } from '@/components/CornerTrendsChart';

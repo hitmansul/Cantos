@@ -1,7 +1,7 @@
 'use client';
 
-import { useMemo } from 'react';
-import { AlertCircle, BarChart3, Clock, CreditCard, Target, X } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { AlertCircle, BarChart3, Clock, CreditCard, Loader2, Target, X } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -53,6 +53,27 @@ interface StatProfile {
   over105Pct: number;
   source: 'detalhado' | 'basico' | 'estimado';
 }
+
+type MatchOddsOffer = {
+  bookmaker: string;
+  odd: number;
+};
+
+type MatchOddsMarket = {
+  id: string;
+  category: 'corners' | 'cards';
+  marketName: string;
+  selectionLabel: string;
+  lineValue: number | null;
+  offers: MatchOddsOffer[];
+};
+
+type MatchOddsResponse = {
+  configured: boolean;
+  found: boolean;
+  markets: MatchOddsMarket[];
+  lastUpdated: string;
+};
 
 const BASIC_STAT_SETS: Array<{ label: string; stats: TeamCornerStats[] }> = [
   { label: 'Brasileirao Serie A', stats: brazilianTeamStats },
@@ -180,7 +201,7 @@ function basicToProfile(team: TeamCornerStats, fallbackLeague: string): StatProf
 function estimatedProfile(teamName: string, league?: string): StatProfile {
   return {
     team: teamName,
-    league: league || 'Liga nao identificada',
+    league: league || 'Liga não identificada',
     gamesPlayed: 0,
     avgFor: 5.0,
     avgAgainst: 4.8,
@@ -222,6 +243,28 @@ function findProfile(teamName: string, league?: string): { profile: StatProfile;
 
 function round(value: number): number {
   return Math.round(value * 10) / 10;
+}
+
+function preferredTotalCornerLine(total: number): number {
+  return Math.max(0.5, Math.round(total) - 0.5);
+}
+
+function translateOddsMarket(value: string): string {
+  const normalized = normalizeText(value);
+  if (normalized.includes('1st half') || normalized.includes('first half')) return 'Escanteios no 1º tempo';
+  if (normalized.includes('2nd half') || normalized.includes('second half')) return 'Escanteios no 2º tempo';
+  if (normalized.includes('corner')) return 'Escanteios';
+  if (normalized.includes('card') || normalized.includes('booking') || normalized.includes('yellow')) return 'Cartões';
+  return value;
+}
+
+function formatOddsSelection(market: MatchOddsMarket): string {
+  const value = market.selectionLabel
+    .replace(/\bOver\b/i, 'Mais de')
+    .replace(/\bUnder\b/i, 'Menos de')
+    .replace(/\bYes\b/i, 'Sim')
+    .replace(/\bNo\b/i, 'Não');
+  return value;
 }
 
 function calcOverProbability(mean: number, threshold: number, variance = 2.4): number {
@@ -365,8 +408,43 @@ export function FutureMatchPrediction({
         firstHalf: round(expectedCards * (cardsFirstHalfPct / 100)),
         secondHalf: round(expectedCards * (1 - cardsFirstHalfPct / 100)),
       },
+      preferredCornerLine: preferredTotalCornerLine(total),
     };
   }, [awayTeam, homeTeam, league, referee]);
+
+  const [oddsData, setOddsData] = useState<MatchOddsResponse | null>(null);
+  const [oddsLoading, setOddsLoading] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadOdds() {
+      const params = new URLSearchParams({
+        home: homeTeam,
+        away: awayTeam,
+        line: String(prediction.preferredCornerLine),
+      });
+      if (league) params.set('competition', league);
+      if (kickoff) params.set('date', kickoff);
+
+      setOddsLoading(true);
+      try {
+        const response = await fetch(`/api/odds/match?${params.toString()}`, { cache: 'no-store' });
+        if (!response.ok) throw new Error('odds unavailable');
+        const payload = (await response.json()) as MatchOddsResponse;
+        if (!cancelled) setOddsData(payload);
+      } catch {
+        if (!cancelled) setOddsData(null);
+      } finally {
+        if (!cancelled) setOddsLoading(false);
+      }
+    }
+
+    loadOdds();
+    return () => {
+      cancelled = true;
+    };
+  }, [awayTeam, homeTeam, kickoff, league, prediction.preferredCornerLine]);
 
   const kickoffDisplay = formatKickoff(kickoff, kickoffLabel);
   const confidenceClass =
@@ -375,6 +453,9 @@ export function FutureMatchPrediction({
       : prediction.confidence === 'media'
         ? 'border-amber-500/40 text-amber-400'
         : 'border-red-500/40 text-red-400';
+  const cornerOdds = oddsData?.markets.filter((market) => market.category === 'corners').slice(0, 4) ?? [];
+  const cardOdds = oddsData?.markets.filter((market) => market.category === 'cards').slice(0, 4) ?? [];
+  const hasOdds = cornerOdds.length > 0 || cardOdds.length > 0;
 
   return (
     <Card className="p-4 border-primary/20 bg-muted/20 space-y-4">
@@ -382,7 +463,7 @@ export function FutureMatchPrediction({
         <div className="min-w-0">
           <div className="flex items-center gap-2 text-sm text-primary">
             <Target className="w-4 h-4" />
-            <span className="font-semibold">Previsao do jogo</span>
+            <span className="font-semibold">Previsão do jogo</span>
             <Badge variant="outline" className={confidenceClass}>
               {prediction.confidence}
             </Badge>
@@ -414,14 +495,14 @@ export function FutureMatchPrediction({
           <p className="text-xs text-muted-foreground">escanteios</p>
         </div>
         <div className="rounded-lg border border-violet-500/20 bg-violet-500/10 p-3 text-center">
-          <p className="text-xs text-muted-foreground">1o tempo</p>
+          <p className="text-xs text-muted-foreground">1º tempo</p>
           <p className="text-2xl font-bold text-violet-400">{prediction.firstHalf}</p>
           <p className="text-xs text-muted-foreground">
             {prediction.homeFirst} + {prediction.awayFirst}
           </p>
         </div>
         <div className="rounded-lg border border-cyan-500/20 bg-cyan-500/10 p-3 text-center">
-          <p className="text-xs text-muted-foreground">2o tempo</p>
+          <p className="text-xs text-muted-foreground">2º tempo</p>
           <p className="text-2xl font-bold text-cyan-400">{prediction.secondHalf}</p>
           <p className="text-xs text-muted-foreground">
             {round(prediction.homeExpected - prediction.homeFirst)} +{' '}
@@ -466,7 +547,7 @@ export function FutureMatchPrediction({
         <div className="rounded-lg border border-border bg-background/40 p-3">
           <p className="mb-2 flex items-center gap-2 text-sm font-semibold">
             <CreditCard className="w-4 h-4 text-amber-400" />
-            Previsao de cartoes
+            Previsão de cartões
           </p>
           <div className="grid grid-cols-2 gap-2">
             <div className="rounded-lg bg-muted/40 p-2">
@@ -480,22 +561,92 @@ export function FutureMatchPrediction({
               </p>
             </div>
             <div className="rounded-lg bg-muted/40 p-2">
-              <p className="text-xs text-muted-foreground">1o tempo</p>
+              <p className="text-xs text-muted-foreground">1º tempo</p>
               <p className="text-lg font-bold">{prediction.cards.firstHalf}</p>
             </div>
             <div className="rounded-lg bg-muted/40 p-2">
-              <p className="text-xs text-muted-foreground">2o tempo</p>
+              <p className="text-xs text-muted-foreground">2º tempo</p>
               <p className="text-lg font-bold">{prediction.cards.secondHalf}</p>
             </div>
           </div>
           <p className="mt-2 text-xs text-muted-foreground">
             {prediction.cards.refereeStats
-              ? `Arbitro: ${prediction.cards.refereeStats.name} (${prediction.cards.refereeStats.avgCardsPerMatch.toFixed(1)} cartoes/jogo).`
+              ? `Árbitro: ${prediction.cards.refereeStats.name} (${prediction.cards.refereeStats.avgCardsPerMatch.toFixed(1)} cartões/jogo).`
               : prediction.cards.refereeName
-                ? `Arbitro: ${prediction.cards.refereeName} (sem historico detalhado local).`
-                : 'Arbitro ainda nao informado; usei as medias locais dos times quando disponiveis.'}
+                ? `Árbitro: ${prediction.cards.refereeName} (sem histórico detalhado local).`
+                : 'Árbitro ainda não informado; usei as médias locais dos times quando disponíveis.'}
           </p>
         </div>
+      </div>
+
+      <div className="rounded-lg border border-border bg-background/40 p-3">
+        <div className="mb-3 flex items-center justify-between gap-2">
+          <p className="flex items-center gap-2 text-sm font-semibold">
+            <Target className="w-4 h-4 text-emerald-400" />
+            Odds para as previsões
+          </p>
+          {oddsLoading && <Loader2 className="h-4 w-4 animate-spin text-emerald-400" />}
+        </div>
+
+        {oddsLoading && !oddsData ? (
+          <p className="text-sm text-muted-foreground">Buscando odds reais para este jogo...</p>
+        ) : hasOdds ? (
+          <div className="grid gap-3 lg:grid-cols-2">
+            {cornerOdds.length > 0 && (
+              <div className="space-y-2">
+                <p className="text-xs font-semibold uppercase tracking-wide text-emerald-300">Escanteios</p>
+                {cornerOdds.map((market) => {
+                  const best = market.offers[0];
+                  return (
+                    <div key={market.id} className="rounded-lg bg-muted/40 p-2">
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <p className="text-sm font-semibold">{translateOddsMarket(market.marketName)}</p>
+                          <p className="text-xs text-muted-foreground">{formatOddsSelection(market)}</p>
+                        </div>
+                        {best && (
+                          <div className="text-right">
+                            <p className="text-sm font-bold text-emerald-300">{best.odd.toFixed(2)}</p>
+                            <p className="text-xs text-muted-foreground">{best.bookmaker}</p>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            {cardOdds.length > 0 && (
+              <div className="space-y-2">
+                <p className="text-xs font-semibold uppercase tracking-wide text-amber-300">Cartões</p>
+                {cardOdds.map((market) => {
+                  const best = market.offers[0];
+                  return (
+                    <div key={market.id} className="rounded-lg bg-muted/40 p-2">
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <p className="text-sm font-semibold">{translateOddsMarket(market.marketName)}</p>
+                          <p className="text-xs text-muted-foreground">{formatOddsSelection(market)}</p>
+                        </div>
+                        {best && (
+                          <div className="text-right">
+                            <p className="text-sm font-bold text-amber-300">{best.odd.toFixed(2)}</p>
+                            <p className="text-xs text-muted-foreground">{best.bookmaker}</p>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        ) : (
+          <p className="text-sm text-muted-foreground">
+            Sem odds reais de escanteios ou cartões para este jogo agora.
+          </p>
+        )}
       </div>
 
       <div className="rounded-lg border border-border bg-background/40 p-3">
@@ -523,12 +674,12 @@ export function FutureMatchPrediction({
         </div>
         {prediction.h2h ? (
           <p className="mt-2 text-xs text-muted-foreground">
-            H2H local encontrado: media de {prediction.h2h.avgTotalCorners.toFixed(1)} escanteios.
+            H2H local encontrado: média de {prediction.h2h.avgTotalCorners.toFixed(1)} escanteios.
           </p>
         ) : (
           <p className="mt-2 flex items-center gap-1 text-xs text-muted-foreground">
             <AlertCircle className="w-3 h-3" />
-            Sem H2H local para este confronto; a previsao usa medias dos times e liga.
+            Sem H2H local para este confronto; a previsão usa médias dos times e da liga.
           </p>
         )}
       </div>

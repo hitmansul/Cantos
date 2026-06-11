@@ -25,7 +25,7 @@ import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Button } from '@/components/ui/button';
 import { WorldCupOddsAlerts } from '@/components/WorldCupOddsAlerts';
-import { ValueAlerts } from '@/components/ValueAlerts';
+import { FutureMatchPrediction } from '@/components/FutureMatchPrediction';
 
 type WCTeam = { country: string; flag: string };
 
@@ -314,7 +314,7 @@ hour12: false,
 }
 
 function formatSourceDate(value?: string | null): string {
-if (!value) return 'data nao informada';
+if (!value) return 'data não informada';
 const date = new Date(value);
 if (Number.isNaN(date.getTime())) return value;
 return new Intl.DateTimeFormat('pt-BR', {
@@ -481,7 +481,7 @@ return (
 </TabsTrigger>
 <TabsTrigger value="elencos" className="gap-2">
 <Users className="w-4 h-4" />
-<span className="hidden sm:inline">Selecoes</span>
+<span className="hidden sm:inline">Seleções</span>
 </TabsTrigger>
 <TabsTrigger value="odds" className="gap-2">
 <BadgeDollarSign className="w-4 h-4" />
@@ -655,7 +655,7 @@ Jogos do Brasil — Fase de Grupos
 <Card className="p-4">
 <h4 className="font-semibold mb-3 flex items-center gap-2">
 <Radio className="w-4 h-4 text-emerald-500" />
-Próximos Jogos — Copa do Mundo 2026 (ao vivo via API)
+  Próximos Jogos — Copa do Mundo 2026
 </h4>
 <WorldCupMatches autoLoad />
 </Card>
@@ -693,8 +693,7 @@ Auto-atualizado
 
 {/* Odds Tab */}
 <TabsContent value="odds" className="space-y-4">
-          <WorldCupOddsAlerts />
-          <ValueAlerts scope="world_cup" />
+<WorldCupOddsAlerts />
 </TabsContent>
 
 {/* Sedes Tab */}
@@ -823,7 +822,7 @@ setLoading(true);
 setError(null);
 try {
 const res = await fetch(`/api/fifa/world-cup/squads${forceRefresh ? '?refresh=1' : ''}`);
-if (!res.ok) throw new Error('Nao foi possivel carregar os elencos oficiais agora.');
+        if (!res.ok) throw new Error('Não foi possível carregar os elencos oficiais agora.');
 const response = (await res.json()) as FifaSquadsResponse;
 setData(response);
 if (!response.teams.some((team) => team.code === selectedCode)) {
@@ -875,10 +874,10 @@ return (
 <div>
 <h3 className="font-bold text-lg flex items-center gap-2">
 <Users className="w-5 h-5 text-emerald-400" />
-Selecoes e jogadores oficiais FIFA
+                    Seleções e jogadores oficiais FIFA
 </h3>
 <p className="text-sm text-muted-foreground mt-1">
-Lista oficial de convocados extraida do Football Data Platform.
+                    Lista oficial de convocados extraída do Football Data Platform.
 </p>
 </div>
 <div className="flex flex-wrap gap-2">
@@ -900,7 +899,7 @@ PDF oficial
 {data && (
 <div className="grid sm:grid-cols-3 gap-3 mt-4">
 <div className="rounded-lg bg-muted/40 p-3">
-<div className="text-xs text-muted-foreground">Selecoes</div>
+<div className="text-xs text-muted-foreground">Seleções</div>
 <div className="text-xl font-bold text-emerald-400">{data.totalTeams}</div>
 </div>
 <div className="rounded-lg bg-muted/40 p-3">
@@ -913,7 +912,7 @@ PDF oficial
 {formatSourceDate(data.source.lastModified)}
 </div>
 {data.source.version && (
-<div className="text-xs text-muted-foreground">Versao {data.source.version}</div>
+<div className="text-xs text-muted-foreground">Versão {data.source.version}</div>
 )}
 </div>
 </div>
@@ -993,13 +992,13 @@ FIFA {data.source.version ? `v${data.source.version}` : ''}
 <div className="text-lg font-bold text-emerald-400">{selectedTeamStats.clubs}</div>
 </div>
 <div className="rounded-lg bg-muted/30 p-3">
-<div className="text-xs text-muted-foreground">Altura media</div>
+                      <div className="text-xs text-muted-foreground">Altura média</div>
 <div className="text-lg font-bold text-emerald-400">
 {selectedTeamStats.averageHeight ? `${selectedTeamStats.averageHeight} cm` : '-'}
 </div>
 </div>
 <div className="rounded-lg bg-muted/30 p-3">
-<div className="text-xs text-muted-foreground">Idade media</div>
+                      <div className="text-xs text-muted-foreground">Idade média</div>
 <div className="text-lg font-bold text-emerald-400">
 {selectedTeamStats.averageAge ? `${selectedTeamStats.averageAge} anos` : '-'}
 </div>
@@ -1148,17 +1147,17 @@ return (
 <div className="rounded-lg border border-border bg-background/30 p-3 space-y-2">
 <div className="flex items-center gap-2 text-sm font-semibold">
 <BarChart3 className="w-4 h-4 text-emerald-400" />
-Estatisticas pessoais
+          Estatísticas pessoais
 </div>
 <div className="space-y-2 text-sm">
 <div className="flex items-center justify-between gap-3">
-<span className="text-muted-foreground">Altura vs. media da selecao</span>
+          <span className="text-muted-foreground">Altura vs. média da seleção</span>
 <span className="font-semibold">
 {heightDiff === null ? '-' : `${heightDiff > 0 ? '+' : ''}${heightDiff} cm`}
 </span>
 </div>
 <div className="flex items-center justify-between gap-3">
-<span className="text-muted-foreground">Jogadores da posicao</span>
+          <span className="text-muted-foreground">Jogadores da posição</span>
 <span className="font-semibold">
 {team.players.filter((item) => item.position === player.position).length}
 </span>
@@ -1180,22 +1179,34 @@ autoLoad = false,
 showResults?: boolean;
 autoLoad?: boolean;
 }) {
+type WorldCupDisplayMatch = {
+id: number;
+startTime: string;
+homeTeam: string;
+awayTeam: string;
+timeLabel: string;
+roundName?: string;
+statusId?: number;
+statusText?: string;
+referee?: string | null;
+homeScore?: number;
+awayScore?: number;
+};
 const [loading, setLoading] = useState(false);
 const [matchGroups, setMatchGroups] = useState<
 Array<{
 dateLabel: string;
-matches: Array<{
-id: number;
-homeTeam: string;
-awayTeam: string;
-timeLabel: string;
-homeScore?: number;
-awayScore?: number;
-}>;
+matches: WorldCupDisplayMatch[];
 }>
 >([]);
 const [error, setError] = useState<string | null>(null);
 const [loaded, setLoaded] = useState(false);
+const [selectedMatchId, setSelectedMatchId] = useState<number | null>(null);
+
+function isLiveMatch(match: WorldCupDisplayMatch): boolean {
+const status = `${match.statusText ?? ''}`.toLowerCase();
+return match.statusId === 2 || status.includes('live') || status.includes('ao vivo') || status.includes('in play');
+}
 
 const load = async () => {
 setLoading(true);
@@ -1210,6 +1221,10 @@ const data = await res.json();
 const rawMatches: Array<{
 id: number;
 startTime: string;
+roundName?: string;
+statusId?: number;
+statusText?: string;
+referee?: string | null;
 homeTeam: { id: number; name: string; score?: number };
 awayTeam: { id: number; name: string; score?: number };
 }> = data.matches || [];
@@ -1221,14 +1236,26 @@ const timeLabel = formatMatchTime(m.startTime);
 if (!byDate[dateLabel]) byDate[dateLabel] = { dateLabel, matches: [] };
 byDate[dateLabel].matches.push({
 id: m.id,
+startTime: m.startTime,
 homeTeam: m.homeTeam.name,
 awayTeam: m.awayTeam.name,
 timeLabel,
+roundName: m.roundName,
+statusId: m.statusId,
+statusText: m.statusText,
+referee: m.referee,
 homeScore: m.homeTeam.score,
 awayScore: m.awayTeam.score,
 });
 }
-setMatchGroups(Object.values(byDate));
+const sortedGroups = Object.values(byDate)
+.map((group) => ({
+...group,
+matches: group.matches.sort((a, b) => Date.parse(a.startTime) - Date.parse(b.startTime)),
+}))
+.sort((a, b) => Date.parse(a.matches[0]?.startTime ?? '') - Date.parse(b.matches[0]?.startTime ?? ''));
+setMatchGroups(sortedGroups);
+setSelectedMatchId(null);
 setLoaded(true);
 } catch (e) {
 setError(e instanceof Error ? e.message : 'Erro desconhecido');
@@ -1318,10 +1345,19 @@ Atualizar
 <div className="space-y-2">
 {group.matches.map((match) => {
 const hasScore = showResults && match.homeScore !== undefined;
+const live = isLiveMatch(match);
 return (
+<div key={match.id} className="space-y-2">
 <div
-key={match.id}
-className="bg-muted/40 rounded-lg px-4 py-3 flex items-center justify-between"
+className={`bg-muted/40 rounded-lg px-4 py-3 flex items-center justify-between gap-3 border transition-colors ${
+!showResults
+? 'cursor-pointer border-transparent hover:border-emerald-500/40 hover:bg-emerald-500/10'
+: 'border-transparent'
+}`}
+onClick={() => {
+if (showResults) return;
+setSelectedMatchId((current) => (current === match.id ? null : match.id));
+}}
 >
 <div className="flex-1 text-right pr-3">
 <span className="font-semibold text-sm">{match.homeTeam}</span>
@@ -1335,10 +1371,22 @@ className="bg-muted/40 rounded-lg px-4 py-3 flex items-center justify-between"
 ) : (
 <span className="text-emerald-500 font-bold text-sm">vs</span>
 )}
+{live && <Badge className="mt-1 bg-red-500/20 text-red-300 border-red-500/30 text-[10px]">AO VIVO</Badge>}
 </div>
 <div className="flex-1 text-left pl-3">
 <span className="font-semibold text-sm">{match.awayTeam}</span>
 </div>
+</div>
+{selectedMatchId === match.id && !showResults && (
+<FutureMatchPrediction
+homeTeam={match.homeTeam}
+awayTeam={match.awayTeam}
+league="Copa do Mundo 2026"
+kickoff={match.startTime}
+referee={match.referee}
+onClose={() => setSelectedMatchId(null)}
+/>
+)}
 </div>
 );
 })}

@@ -133,6 +133,43 @@ function compact(value: string): string {
   return normalize(value).replace(/[^a-z0-9]/g, '');
 }
 
+const TEAM_ALIASES: Record<string, string[]> = {
+  brasil: ['brazil'],
+  brazil: ['brasil'],
+  mexico: ['mexico'],
+  marrocos: ['morocco'],
+  morocco: ['marrocos'],
+  haiti: ['haiti'],
+  escocia: ['scotland'],
+  scotland: ['escocia'],
+  eua: ['usa', 'united states'],
+  usa: ['eua', 'united states'],
+  paraguai: ['paraguay'],
+  paraguay: ['paraguai'],
+  catar: ['qatar'],
+  qatar: ['catar'],
+  suica: ['switzerland'],
+  switzerland: ['suica'],
+  canada: ['canada'],
+  'africa do sul': ['south africa'],
+  southafrica: ['africadosul'],
+  'coreia do sul': ['south korea', 'korea republic'],
+  southkorea: ['coreiadosul', 'korearepublic'],
+  korearepublic: ['coreiadosul', 'southkorea'],
+  'republica tcheca': ['czechia', 'czech republic'],
+  czechia: ['republica tcheca', 'czech republic'],
+  czechrepublic: ['republicatcheca', 'czechia'],
+  'bosnia e herzegovina': ['bosnia and herzegovina', 'bosnia'],
+  bosniaandherzegovina: ['bosniaeherzegovina', 'bosnia'],
+};
+
+function teamAliases(value: string): Set<string> {
+  const normalized = normalize(value);
+  const compacted = compact(value);
+  const aliases = TEAM_ALIASES[normalized] ?? TEAM_ALIASES[compacted] ?? [];
+  return new Set([normalized, compacted, ...aliases, ...aliases.map(compact)].filter(Boolean));
+}
+
 function parseOdd(value: string | number | null | undefined): number | null {
   const parsed = Number(String(value ?? '').replace(',', '.'));
   return Number.isFinite(parsed) && parsed > 1 ? Math.round(parsed * 100) / 100 : null;
@@ -163,10 +200,20 @@ function marketCategory(name: string): MatchOddsMarket['category'] | null {
 }
 
 function isSameTeam(source: string, candidate: string): boolean {
-  const a = compact(source);
-  const b = compact(candidate);
-  if (!a || !b) return false;
-  return a === b || a.includes(b) || b.includes(a);
+  const sourceAliases = teamAliases(source);
+  const candidateAliases = teamAliases(candidate);
+  for (const sourceAlias of sourceAliases) {
+    for (const candidateAlias of candidateAliases) {
+      if (
+        sourceAlias === candidateAlias ||
+        sourceAlias.includes(candidateAlias) ||
+        candidateAlias.includes(sourceAlias)
+      ) {
+        return true;
+      }
+    }
+  }
+  return false;
 }
 
 function fixtureMatches(fixture: ApiFootballFixture, home: string, away: string): boolean {
@@ -303,7 +350,7 @@ function marketsFromOdds(items: ApiFootballOddsItem[], preferredLine: string | n
     }
   }
 
-  return [...markets.values()]
+  const sortedMarkets = [...markets.values()]
     .map((market) => ({
       ...market,
       offers: market.offers.sort((a, b) => b.odd - a.odd || a.bookmaker.localeCompare(b.bookmaker)),
@@ -315,8 +362,11 @@ function marketsFromOdds(items: ApiFootballOddsItem[], preferredLine: string | n
       if (aLineMatch !== bLineMatch) return aLineMatch - bLineMatch;
       if (a.category !== b.category) return a.category === 'corners' ? -1 : 1;
       return b.offers[0].odd - a.offers[0].odd;
-    })
-    .slice(0, 16);
+    });
+
+  const cornerMarkets = sortedMarkets.filter((market) => market.category === 'corners').slice(0, 16);
+  const cardMarkets = sortedMarkets.filter((market) => market.category === 'cards').slice(0, 12);
+  return [...cornerMarkets, ...cardMarkets];
 }
 
 export async function GET(request: NextRequest) {

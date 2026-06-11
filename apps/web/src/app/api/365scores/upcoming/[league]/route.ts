@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { SCORES365_COMPETITIONS, scores365Get } from '@/app/api/utils/scores365';
+import { apiFootballGet, isApiFootballConfigured } from '@/app/api/utils/apiFootball';
 
 interface Raw365UpcomingGame {
   id: number;
@@ -17,8 +18,31 @@ interface NormalizedUpcomingMatch {
   startTime: string;
   round?: number;
   roundName?: string;
+  statusId?: number;
+  statusText?: string;
+  referee?: string | null;
   homeTeam: { id: number; name: string; shortName?: string };
   awayTeam: { id: number; name: string; shortName?: string };
+}
+
+interface ApiFootballFixture {
+  fixture: {
+    id: number;
+    date: string;
+    referee?: string | null;
+    status?: {
+      short?: string;
+      long?: string;
+      elapsed?: number | null;
+    };
+  };
+  league?: {
+    round?: string;
+  };
+  teams: {
+    home: { id?: number; name: string; code?: string | null };
+    away: { id?: number; name: string; code?: string | null };
+  };
 }
 
 const STATIC_UPCOMING_MATCHES: Record<string, NormalizedUpcomingMatch[]> = {
@@ -59,14 +83,14 @@ const STATIC_UPCOMING_MATCHES: Record<string, NormalizedUpcomingMatch[]> = {
       id: 72060501,
       startTime: '2026-06-05T23:00:00+00:00',
       roundName: 'Rodada 12',
-      homeTeam: { id: 0, name: 'Operario-PR', shortName: 'OPER' },
+      homeTeam: { id: 0, name: 'Operário-PR', shortName: 'OPER' },
       awayTeam: { id: 0, name: 'Juventude', shortName: 'JUV' },
     },
     {
       id: 72060601,
       startTime: '2026-06-06T14:00:00+00:00',
       roundName: 'Rodada 12',
-      homeTeam: { id: 0, name: 'Criciuma', shortName: 'CRI' },
+      homeTeam: { id: 0, name: 'Criciúma', shortName: 'CRI' },
       awayTeam: { id: 0, name: 'Londrina', shortName: 'LON' },
     },
     {
@@ -74,7 +98,7 @@ const STATIC_UPCOMING_MATCHES: Record<string, NormalizedUpcomingMatch[]> = {
       startTime: '2026-06-07T19:00:00+00:00',
       roundName: 'Rodada 12',
       homeTeam: { id: 0, name: 'CRB', shortName: 'CRB' },
-      awayTeam: { id: 0, name: 'Sao Bernardo-SP', shortName: 'SBE' },
+      awayTeam: { id: 0, name: 'São Bernardo-SP', shortName: 'SBE' },
     },
     {
       id: 72060801,
@@ -87,36 +111,36 @@ const STATIC_UPCOMING_MATCHES: Record<string, NormalizedUpcomingMatch[]> = {
       id: 72060802,
       startTime: '2026-06-08T23:00:00+00:00',
       roundName: 'Rodada 12',
-      homeTeam: { id: 0, name: 'America-MG', shortName: 'AME' },
-      awayTeam: { id: 0, name: 'Atletico-GO', shortName: 'ACG' },
+      homeTeam: { id: 0, name: 'América-MG', shortName: 'AME' },
+      awayTeam: { id: 0, name: 'Atlético-GO', shortName: 'ACG' },
     },
     {
       id: 72060901,
       startTime: '2026-06-09T22:00:00+00:00',
       roundName: 'Rodada 12',
       homeTeam: { id: 0, name: 'Ponte Preta', shortName: 'PON' },
-      awayTeam: { id: 0, name: 'Cuiaba', shortName: 'CUI' },
+      awayTeam: { id: 0, name: 'Cuiabá', shortName: 'CUI' },
     },
     {
       id: 72060902,
       startTime: '2026-06-09T22:00:00+00:00',
       roundName: 'Rodada 12',
-      homeTeam: { id: 0, name: 'Nautico', shortName: 'NAU' },
+      homeTeam: { id: 0, name: 'Náutico', shortName: 'NAU' },
       awayTeam: { id: 0, name: 'Fortaleza', shortName: 'FOR' },
     },
     {
       id: 72061001,
       startTime: '2026-06-10T23:00:00+00:00',
       roundName: 'Rodada 12',
-      homeTeam: { id: 0, name: 'Goias', shortName: 'GOI' },
+      homeTeam: { id: 0, name: 'Goiás', shortName: 'GOI' },
       awayTeam: { id: 0, name: 'Novorizontino', shortName: 'NOV' },
     },
     {
       id: 72061002,
       startTime: '2026-06-10T23:00:00+00:00',
       roundName: 'Rodada 12',
-      homeTeam: { id: 0, name: 'Ceara', shortName: 'CEA' },
-      awayTeam: { id: 0, name: 'Avai', shortName: 'AVA' },
+      homeTeam: { id: 0, name: 'Ceará', shortName: 'CEA' },
+      awayTeam: { id: 0, name: 'Avaí', shortName: 'AVA' },
     },
     {
       id: 72061201,
@@ -129,7 +153,7 @@ const STATIC_UPCOMING_MATCHES: Record<string, NormalizedUpcomingMatch[]> = {
       id: 72061202,
       startTime: '2026-06-12T22:00:00+00:00',
       roundName: 'Rodada 13',
-      homeTeam: { id: 0, name: 'Atletico-GO', shortName: 'ACG' },
+      homeTeam: { id: 0, name: 'Atlético-GO', shortName: 'ACG' },
       awayTeam: { id: 0, name: 'CRB', shortName: 'CRB' },
     },
   ],
@@ -141,6 +165,8 @@ function normalizeGame(game: Raw365UpcomingGame): NormalizedUpcomingMatch {
     startTime: game.startTime,
     round: game.roundNum,
     roundName: game.roundName,
+    statusId: game.statusId,
+    statusText: game.statusText,
     homeTeam: {
       id: game.homeCompetitor.id,
       name: game.homeCompetitor.name,
@@ -152,6 +178,56 @@ function normalizeGame(game: Raw365UpcomingGame): NormalizedUpcomingMatch {
       shortName: game.awayCompetitor.symbolicName,
     },
   };
+}
+
+function apiFootballStatusId(status?: ApiFootballFixture['fixture']['status']): number | undefined {
+  const short = status?.short?.toUpperCase();
+  if (!short) return undefined;
+  if (['1H', '2H', 'HT', 'ET', 'P', 'BT', 'INT', 'LIVE'].includes(short)) return 2;
+  if (['NS', 'TBD'].includes(short)) return 1;
+  if (['FT', 'AET', 'PEN'].includes(short)) return 3;
+  return undefined;
+}
+
+function normalizeApiFootballFixture(fixture: ApiFootballFixture): NormalizedUpcomingMatch {
+  return {
+    id: fixture.fixture.id,
+    startTime: fixture.fixture.date,
+    roundName: fixture.league?.round,
+    statusId: apiFootballStatusId(fixture.fixture.status),
+    statusText: fixture.fixture.status?.long ?? fixture.fixture.status?.short,
+    referee: fixture.fixture.referee ?? null,
+    homeTeam: {
+      id: fixture.teams.home.id ?? fixture.fixture.id * 10 + 1,
+      name: fixture.teams.home.name,
+      shortName: fixture.teams.home.code ?? undefined,
+    },
+    awayTeam: {
+      id: fixture.teams.away.id ?? fixture.fixture.id * 10 + 2,
+      name: fixture.teams.away.name,
+      shortName: fixture.teams.away.code ?? undefined,
+    },
+  };
+}
+
+async function apiFootballWorldCupMatches(now = Date.now()): Promise<NormalizedUpcomingMatch[]> {
+  if (!isApiFootballConfigured()) return [];
+
+  const data = await apiFootballGet<ApiFootballFixture[]>('/fixtures', {
+    params: {
+      league: 1,
+      season: 2026,
+      from: '2026-06-11',
+      to: '2026-07-19',
+      timezone: 'America/Sao_Paulo',
+    },
+    revalidate: 600,
+    timeoutMs: 12_000,
+  });
+
+  return (data?.response ?? [])
+    .map(normalizeApiFootballFixture)
+    .filter((match) => isFutureLiveOrToday(match.startTime, match.statusId, now));
 }
 
 function isFutureOrLive(startTime: string, statusId?: number, now = Date.now()): boolean {
@@ -239,6 +315,14 @@ export async function GET(
 
   try {
     const now = Date.now();
+    let apiFootballMatches: NormalizedUpcomingMatch[] = [];
+    if (league === 'copa_do_mundo') {
+      try {
+        apiFootballMatches = await apiFootballWorldCupMatches(now);
+      } catch (error) {
+        console.error('API-Football World Cup upcoming error:', error);
+      }
+    }
 
     // Primary: use /web/games/ endpoint to get all upcoming matches directly
     const gamesData = (await scores365Get('/web/games/', {
@@ -251,9 +335,12 @@ export async function GET(
     if (gamesData.games && gamesData.games.length > 0) {
       const matches = mergeStaticUpcoming(
         league,
-        gamesData.games
+        [
+          ...gamesData.games
           .filter((game) => isFutureOrLive(game.startTime, game.statusId, now))
           .map(normalizeGame),
+          ...apiFootballMatches,
+        ],
         now
       );
 
@@ -291,7 +378,7 @@ export async function GET(
         competition: league,
         competitionName: competition.name,
         country: competition.country,
-        matches: mergeStaticUpcoming(league, [], now),
+        matches: mergeStaticUpcoming(league, apiFootballMatches, now),
         lastUpdated: new Date().toISOString(),
       });
     }
@@ -334,7 +421,11 @@ export async function GET(
       }
     }
 
-    const matches = mergeStaticUpcoming(league, Array.from(matchesMap.values()), now);
+    const matches = mergeStaticUpcoming(
+      league,
+      [...Array.from(matchesMap.values()), ...apiFootballMatches],
+      now
+    );
 
     return NextResponse.json({
       competition: league,
