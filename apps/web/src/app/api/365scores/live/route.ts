@@ -227,14 +227,26 @@ function matchKey(match: Pick<LiveMatch, 'homeTeam' | 'awayTeam'>) {
   return `${clean(match.homeTeam.name)}-${clean(match.awayTeam.name)}`;
 }
 
+function betterCorners(base?: LiveMatch['corners'], incoming?: LiveMatch['corners']) {
+  if (!base) return incoming;
+  if (!incoming) return base;
+  if (incoming.total > base.total) return incoming;
+  if (incoming.total === base.total && (incoming.home !== base.home || incoming.away !== base.away)) return incoming;
+  return base;
+}
+
 function mergeMatch(base: LiveMatch, incoming: LiveMatch): LiveMatch {
+  const mergedCorners = betterCorners(base.corners, incoming.corners);
+  const incomingHasStats = Boolean(incoming.liveStats?.length);
+  const baseHasStats = Boolean(base.liveStats?.length);
+
   return {
     ...base,
     competition: base.competition ?? incoming.competition,
     competitionId: base.competitionId || incoming.competitionId,
-    corners: incoming.corners ?? base.corners,
-    liveStats: incoming.liveStats ?? base.liveStats,
-    statsSource: incoming.statsSource ?? base.statsSource,
+    corners: mergedCorners,
+    liveStats: incomingHasStats ? incoming.liveStats : base.liveStats,
+    statsSource: incomingHasStats ? incoming.statsSource : baseHasStats ? base.statsSource : incoming.statsSource,
     stoppage: base.stoppage ?? incoming.stoppage,
     sourceIds: {
       ...base.sourceIds,
@@ -271,7 +283,8 @@ function parseClockMs(value?: string) {
 }
 
 function calculateStoppageFromActualPlayTime(
-  actualPlayTime?: Scores365ActualPlayTime
+  actualPlayTime?: Scores365ActualPlayTime,
+  currentMinute?: number | string
 ): StoppageInfo | undefined {
   const ballInPlayMs = parseClockMs(actualPlayTime?.actualTime?.name ?? actualPlayTime?.title);
   const totalElapsedMs = parseClockMs(actualPlayTime?.totalTime?.name);
@@ -280,12 +293,32 @@ function calculateStoppageFromActualPlayTime(
   const totalStoppedMs = totalElapsedMs - ballInPlayMs;
   if (totalStoppedMs < STOPPAGE_MIN_DURATION_MS) return undefined;
 
+  const totalStoppedMinutes = toRoundedMinutes(totalStoppedMs);
+  const elapsedMinute = typeof currentMinute === 'number' ? currentMinute : parseAddedTimeMinutes(currentMinute) ?? null;
+
+  // A 365Scores às vezes envia "actualPlayTime" acumulado/defasado e isso gera absurdos
+  // como 14–17 minutos parados ainda no 1º tempo. Para não enganar o usuário,
+  // só aceitamos essa métrica quando ela passa em limites conservadores.
+  const maxReasonableStopped = elapsedMinute && elapsedMinute > 0
+    ? Math.max(6, Math.min(12, elapsedMinute * 0.28))
+    : 10;
+
+  if (totalStoppedMinutes > maxReasonableStopped) {
+    return undefined;
+  }
+
   const predictedAddedMs = Math.round(totalStoppedMs * 0.8);
+  const predictedAddedMinutes = toRoundedMinutes(predictedAddedMs);
+
+  if (elapsedMinute && elapsedMinute < 45 && predictedAddedMinutes > 8) {
+    return undefined;
+  }
+
   return {
     totalStoppedMs,
-    totalStoppedMinutes: toRoundedMinutes(totalStoppedMs),
+    totalStoppedMinutes,
     predictedAddedMs,
-    predictedAddedMinutes: toRoundedMinutes(predictedAddedMs),
+    predictedAddedMinutes,
     source: '365scores-actual-play-time',
     kind: 'calculated-stoppage',
     incidents: [],
@@ -628,21 +661,21 @@ async function fetchStoppageInfo(gameId: number): Promise<StoppageInfo | undefin
       };
     };
 
-    const fromActualPlayTime = calculateStoppageFromActualPlayTime(detail.game?.actualPlayTime);
-    if (fromActualPlayTime) return fromActualPlayTime;
-
     const feedURL = detail.game?.playByPlay?.feedURL;
-    if (!feedURL) return undefined;
+    if (feedURL) {
+      const playByPlayRes = await fetchWithTimeout(feedURL, {
+        headers: SCORES365_HEADERS,
+        cache: 'no-store',
+      });
 
-    const playByPlayRes = await fetchWithTimeout(feedURL, {
-      headers: SCORES365_HEADERS,
-      cache: 'no-store',
-    });
+      if (playByPlayRes.ok) {
+        const playByPlay = (await playByPlayRes.json()) as { Messages?: PlayByPlayMessage[] };
+        const fromPlayByPlay = calculateStoppageInfo(playByPlay.Messages ?? []);
+        if (fromPlayByPlay) return fromPlayByPlay;
+      }
+    }
 
-    if (!playByPlayRes.ok) return undefined;
-
-    const playByPlay = (await playByPlayRes.json()) as { Messages?: PlayByPlayMessage[] };
-    return calculateStoppageInfo(playByPlay.Messages ?? []);
+    return calculateStoppageFromActualPlayTime(detail.game?.actualPlayTime);
   } catch (err) {
     console.warn('[live/365scores/stoppage] error:', err);
     return undefined;
@@ -686,7 +719,7 @@ async function fetchFrom365Scores(): Promise<LiveMatch[]> {
       .map((game) => {
         const displayMinute = game.gameTimeDisplay ?? game.preciseGameTime ?? game.statusText;
         const addedTimeMinutes = parseAddedTimeMinutes(displayMinute);
-        const calculatedStoppage = calculateStoppageFromActualPlayTime(game.actualPlayTime);
+        const calculatedStoppage = calculateStoppageFromActualPlayTime(game.actualPlayTime, game.gameTime);
         const announcedAddedTime = calculateAnnouncedAddedTime(
           addedTimeMinutes,
           '365scores-announced-added-time',
