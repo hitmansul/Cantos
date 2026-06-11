@@ -121,6 +121,92 @@ type AiOddsAlertsResponse = {
   alerts?: AiOddsAlert[];
 };
 
+
+type AiWorldCupRawGame = {
+  id: number;
+  startTime: string;
+  statusId?: number;
+  statusText?: string;
+  roundNum?: number;
+  roundName?: string;
+  homeCompetitor?: { id?: number; name?: string; score?: number };
+  awayCompetitor?: { id?: number; name?: string; score?: number };
+  homeTeam?: { id?: number; name?: string; score?: number };
+  awayTeam?: { id?: number; name?: string; score?: number };
+};
+
+type AiWorldCupMatch = {
+  id: number;
+  startTime: string;
+  roundName?: string;
+  homeTeam: string;
+  awayTeam: string;
+  statusId?: number;
+  statusText?: string;
+  homeScore?: number;
+  awayScore?: number;
+};
+
+type AiWorldCupCornerLine = {
+  bookmaker: string;
+  market: string;
+  line: string;
+  side: 'over' | 'under' | 'home' | 'away' | 'exact' | 'other';
+  label: string;
+  odd: number;
+};
+
+type AiWorldCupFeaturedLine = {
+  market: string;
+  line: string;
+  side: 'over' | 'under' | 'home' | 'away' | 'exact' | 'other';
+  label: string;
+  odds: AiWorldCupCornerLine[];
+};
+
+type AiWorldCupCornerAlert = {
+  market: string;
+  line: string;
+  side: 'over' | 'under' | 'home' | 'away' | 'exact' | 'other';
+  label: string;
+  bookmaker: string;
+  odd: number;
+  nextBestBookmaker?: string;
+  nextBestOdd: number;
+  averageOdd: number;
+  edgePct: number;
+  comparedBookmakers: number;
+  odds?: AiWorldCupCornerLine[];
+};
+
+type AiWorldCupOddsEvent = {
+  id: string;
+  startTime: string;
+  roundName?: string;
+  homeTeam: string;
+  awayTeam: string;
+  bookmakersCount: number;
+  cornerLines: AiWorldCupCornerLine[];
+  featuredLines?: AiWorldCupFeaturedLine[];
+  alerts: AiWorldCupCornerAlert[];
+};
+
+type AiWorldCupOddsResponse = {
+  configured: boolean;
+  source: 'api-football' | 'not-configured';
+  focus: 'corner-lines';
+  note?: string;
+  summary?: {
+    eventsChecked: number;
+    cornerLines: number;
+    alerts: number;
+    bookmakersCompared: number;
+  };
+  bookmakers?: string[];
+  events?: AiWorldCupOddsEvent[];
+  lastUpdated?: string;
+};
+
 type AiLiveMatch = {
   id: number;
   minute: number | string;
@@ -198,7 +284,7 @@ function isContextAnchor(text: string): boolean {
   if (!normalized || isFollowUpQuestion(text)) return false;
   if (hasExplicitStatsScope(text)) return true;
   if (askedBestCornerConfrontation(text) || askedBestCornerLeague(text) || askedBestCornerTeam(text)) return true;
-  return askedUpcoming(text) || askedCards(text) || askedAddedTime(text) || askedWorldCupSquad(text);
+  return askedUpcoming(text) || askedCards(text) || askedAddedTime(text) || askedWorldCupSquad(text) || mentionsWorldCup(text);
 }
 
 function oneDecimal(value: number): number {
@@ -752,7 +838,7 @@ function coverageReply(): string {
     return `- ${set.label}: ${teams.length} times com media geral e por tempo.`;
   }).join('\n');
 
-  return `Ligas integradas no app:\n\n${formatCatalog()}\n\nBases estatisticas carregadas:\n${statsLines}\n\nCopa do Mundo:\n- Elencos oficiais da FIFA com cache diario pela rota de elencos da Copa.\n\nOdds e alertas:\n- Odds reais para as ligas integradas quando a fonte retorna casas e mercados para os jogos.\n- Linhas de escanteios sao prioridade. Outros mercados so aparecem quando uma casa paga bem acima das demais.\n\nTempo Real:\n- Placar, tempo, estatisticas e acrescimos tentam usar fontes ao vivo em camadas. Se uma fonte nao trouxer um numero, eu tento a outra; se nenhuma trouxer, aviso que nao tenho.\n\nA IA tenta responder primeiro por esses dados locais e pelas rotas internas. O Gemini so entra quando a pergunta pede interpretacao aberta ou quando o dado nao existe na base.`;
+  return `Dados integrados no app:\n\n${formatCatalog()}\n\nBases estatisticas locais carregadas:\n${statsLines}\n\nCopa do Mundo 2026:\n- Agenda e resultados pela 365Scores na competicao Copa do Mundo.\n- Elencos oficiais da FIFA com cache diario.\n- Odds reais de escanteios pela API-Football quando as casas enviam mercados.\n- Alertas de valor quando uma casa paga bem acima das demais na mesma linha.\n- Medias reais da Copa somente depois que houver jogos da propria Copa com estatisticas. Eu nao uso amistosos, eliminatorias ou outras competicoes para responder media da Copa.\n\nTempo Real:\n- Placar, tempo, estatisticas e acrescimos tentam usar fontes ao vivo em camadas. Se uma fonte nao trouxer um numero, eu aviso que nao tenho em vez de inventar.\n\nPerguntas que eu ja consigo responder melhor sobre a Copa:\n- \"quais dados temos da Copa do Mundo?\"\n- \"proximos jogos da Copa do Mundo\"\n- \"convocados do Brasil na Copa\"\n- \"odds de escanteios de Brasil x Marrocos\"\n- \"alertas de escanteios da Copa\"\n- \"media de escanteios da Copa\" — quando ainda nao houver jogo da Copa com estatistica, eu digo que a amostra e insuficiente.`;
 }
 
 const SQUAD_POSITION_LABELS: Record<FifaSquadPlayer['position'], string> = {
@@ -1479,6 +1565,246 @@ async function oddsAlertsReply(question: string, origin: string): Promise<string
   }
 }
 
+
+function mentionsWorldCup(text: string): boolean {
+  const normalized = normalize(text);
+  return ['copa do mundo', 'mundial', 'world cup', 'fifa world cup', 'copa 2026', 'copa do mundo 2026'].some((term) =>
+    normalized.includes(term)
+  );
+}
+
+function askedWorldCupData(text: string): boolean {
+  const normalized = normalize(text);
+  if (!mentionsWorldCup(text)) return false;
+  return [
+    'quais dados',
+    'que dados',
+    'dados temos',
+    'temos da copa',
+    'o que temos',
+    'informacoes temos',
+    'informacoes da copa',
+  ].some((term) => normalized.includes(term));
+}
+
+function askedWorldCupStats(text: string): boolean {
+  if (!mentionsWorldCup(text)) return false;
+  const normalized = normalize(text);
+  return (
+    normalized.includes('media') ||
+    normalized.includes('medias') ||
+    normalized.includes('estatistica') ||
+    normalized.includes('estatisticas') ||
+    normalized.includes('ranking') ||
+    normalized.includes('escanteio') ||
+    normalized.includes('corner')
+  );
+}
+
+function normalizeWorldCupRawGame(game: AiWorldCupRawGame): AiWorldCupMatch | null {
+  const home = game.homeCompetitor ?? game.homeTeam;
+  const away = game.awayCompetitor ?? game.awayTeam;
+  if (!home?.name || !away?.name) return null;
+
+  return {
+    id: game.id,
+    startTime: game.startTime,
+    roundName: game.roundName ?? (game.roundNum ? `Rodada ${game.roundNum}` : undefined),
+    homeTeam: home.name,
+    awayTeam: away.name,
+    statusId: game.statusId,
+    statusText: game.statusText,
+    homeScore: home.score,
+    awayScore: away.score,
+  };
+}
+
+async function fetchWorldCupMatches(origin: string, type: 'upcoming' | 'results'): Promise<AiWorldCupMatch[]> {
+  try {
+    const response = await fetch(`${origin}/api/365scores/${type}/copa_do_mundo`, { cache: 'no-store' });
+    if (!response.ok) return [];
+    const data = (await response.json()) as { matches?: AiWorldCupRawGame[] };
+    return (data.matches ?? [])
+      .map(normalizeWorldCupRawGame)
+      .filter((match): match is AiWorldCupMatch => Boolean(match))
+      .sort((a, b) => Date.parse(a.startTime) - Date.parse(b.startTime));
+  } catch (error) {
+    console.error('AI world cup matches error:', error);
+    return [];
+  }
+}
+
+async function fetchWorldCupOdds(origin: string): Promise<AiWorldCupOddsResponse | null> {
+  try {
+    const response = await fetch(`${origin}/api/odds/world-cup`, { cache: 'no-store' });
+    if (!response.ok) return null;
+    return (await response.json()) as AiWorldCupOddsResponse;
+  } catch (error) {
+    console.error('AI world cup odds error:', error);
+    return null;
+  }
+}
+
+function worldCupMatchScore(question: string, homeTeam: string, awayTeam: string, roundName?: string): number {
+  const normalized = normalize(question);
+  let score = 0;
+
+  for (const name of [homeTeam, awayTeam]) {
+    const team = normalize(name);
+    if (team && normalized.includes(team)) score += 12;
+    for (const part of team.split(' ').filter((item) => item.length >= 4)) {
+      if (normalized.includes(part)) score += 3;
+    }
+  }
+
+  if (roundName && normalized.includes(normalize(roundName))) score += 2;
+  return score;
+}
+
+function worldCupMatchLine(match: AiWorldCupMatch): string {
+  const score =
+    match.homeScore !== undefined && match.awayScore !== undefined
+      ? ` | placar: ${match.homeScore} x ${match.awayScore}`
+      : '';
+  const round = match.roundName ? ` | ${match.roundName}` : '';
+  return `- ${match.homeTeam} x ${match.awayTeam} (${format365Date(match.startTime)}${round}${score})`;
+}
+
+function formatWorldCupFeaturedLine(line: AiWorldCupFeaturedLine): string {
+  const best = [...line.odds].sort((a, b) => b.odd - a.odd)[0];
+  const odds = line.odds
+    .slice(0, 5)
+    .map((odd) => `${odd.bookmaker} ${odd.odd.toFixed(2)}`)
+    .join(' | ');
+  const side = line.side === 'over' ? 'Over' : line.side === 'under' ? 'Under' : line.side;
+  return `- ${line.market}: ${side} ${line.line} (${line.label}). Melhor: ${best ? `${best.bookmaker} ${best.odd.toFixed(2)}` : 'sem odd'}${odds ? `. Casas: ${odds}` : ''}.`;
+}
+
+function formatWorldCupAlert(event: AiWorldCupOddsEvent, alert: AiWorldCupCornerAlert): string {
+  const compared = (alert.odds ?? [])
+    .slice(0, 5)
+    .map((odd) => `${odd.bookmaker} ${odd.odd.toFixed(2)}`)
+    .join(' | ');
+  const nextBest = alert.nextBestBookmaker
+    ? `${alert.nextBestBookmaker} ${alert.nextBestOdd.toFixed(2)}`
+    : `segunda melhor ${alert.nextBestOdd.toFixed(2)}`;
+  return `- ${event.homeTeam} x ${event.awayTeam}: ${alert.market} — ${alert.label}. Melhor odd: ${alert.bookmaker} ${alert.odd.toFixed(2)}; ${nextBest}; diferenca +${alert.edgePct}%.${compared ? ` Comparacao: ${compared}.` : ''}`;
+}
+
+async function worldCupDataOverviewReply(origin: string): Promise<string> {
+  const [upcoming, results, odds, squads] = await Promise.all([
+    fetchWorldCupMatches(origin, 'upcoming'),
+    fetchWorldCupMatches(origin, 'results'),
+    fetchWorldCupOdds(origin),
+    getFifaWorldCupSquads().catch(() => null),
+  ]);
+
+  const nextGames = upcoming.slice(0, 6).map(worldCupMatchLine).join('\n') || '- Nenhum proximo jogo retornado agora pela 365Scores.';
+  const resultLine =
+    results.length > 0
+      ? `${results.length} resultado(s) retornado(s) pela 365Scores.`
+      : 'Ainda nao tenho resultados com estatisticas reais da Copa carregados.';
+  const oddsLine = odds?.configured
+    ? `${odds.summary?.eventsChecked ?? odds.events?.length ?? 0} jogos com odds de escanteios, ${odds.summary?.cornerLines ?? 0} linhas e ${odds.summary?.alerts ?? 0} alertas.`
+    : 'Odds de escanteios ainda nao configuradas ou nao retornadas.';
+  const squadLine = squads
+    ? `${squads.totalTeams} selecoes e ${squads.totalPlayers} jogadores na base oficial FIFA.`
+    : 'Elencos FIFA indisponiveis agora.';
+
+  return `Dados que tenho da Copa do Mundo 2026 agora:\n\n- Agenda/proximos jogos: pela 365Scores.\n- Resultados: ${resultLine}\n- Elencos: ${squadLine}\n- Odds de escanteios: ${oddsLine}\n\nProximos jogos:\n${nextGames}\n\nImportante: medias reais da Copa so devem usar jogos da propria Copa. Se ainda nao houver jogos com estatisticas oficiais carregadas, eu nao uso amistosos, eliminatorias ou dados gerais das selecoes para preencher media da Copa.`;
+}
+
+async function worldCupOddsReply(question: string, origin: string): Promise<string | null> {
+  if (!mentionsWorldCup(question) || !askedOdds(question)) return null;
+
+  const data = await fetchWorldCupOdds(origin);
+  if (!data?.configured) return 'As odds reais de escanteios da Copa ainda nao estao configuradas ou nao retornaram agora.';
+
+  const events = data.events ?? [];
+  if (events.length === 0) return data.note ?? 'A fonte esta conectada, mas nao retornou linhas de escanteios da Copa agora.';
+
+  const scored = events
+    .map((event) => ({ event, score: worldCupMatchScore(question, event.homeTeam, event.awayTeam, event.roundName) }))
+    .sort((a, b) => b.score - a.score || Date.parse(a.event.startTime) - Date.parse(b.event.startTime));
+  const hasSpecificMatch = scored.some((item) => item.score > 0);
+  const selected = (hasSpecificMatch ? scored.filter((item) => item.score > 0) : scored).slice(0, hasSpecificMatch ? 2 : 5);
+
+  const lines = selected
+    .map(({ event }) => {
+      const featured = (event.featuredLines ?? [])
+        .slice(0, 4)
+        .map(formatWorldCupFeaturedLine)
+        .join('\n');
+      const alerts = event.alerts.slice(0, 3).map((alert) => formatWorldCupAlert(event, alert)).join('\n');
+      return `${event.homeTeam} x ${event.awayTeam} (${format365Date(event.startTime)}${event.roundName ? ` | ${event.roundName}` : ''})\nLinhas principais de escanteios:\n${featured || '- Nenhuma linha principal retornada.'}${alerts ? `\nAlertas:\n${alerts}` : ''}`;
+    })
+    .join('\n\n');
+
+  return `Odds reais de escanteios da Copa do Mundo:\n\n${lines}\n\nNao crio odds estimadas: so mostro casas e linhas retornadas pela fonte real.`;
+}
+
+async function worldCupStatsReply(question: string, origin: string): Promise<string | null> {
+  if (!askedWorldCupStats(question)) return null;
+  if (askedOdds(question)) return worldCupOddsReply(question, origin);
+
+  const [results, upcoming, odds] = await Promise.all([
+    fetchWorldCupMatches(origin, 'results'),
+    fetchWorldCupMatches(origin, 'upcoming'),
+    fetchWorldCupOdds(origin),
+  ]);
+
+  const scopedEvents = (odds?.events ?? [])
+    .map((event) => ({ event, score: worldCupMatchScore(question, event.homeTeam, event.awayTeam, event.roundName) }))
+    .sort((a, b) => b.score - a.score || Date.parse(a.event.startTime) - Date.parse(b.event.startTime));
+  const specificEvent = scopedEvents.find((item) => item.score > 0)?.event;
+
+  if (specificEvent) {
+    const featured = (specificEvent.featuredLines ?? [])
+      .slice(0, 5)
+      .map(formatWorldCupFeaturedLine)
+      .join('\n');
+    const alerts = specificEvent.alerts.slice(0, 3).map((alert) => formatWorldCupAlert(specificEvent, alert)).join('\n');
+    return `${specificEvent.homeTeam} x ${specificEvent.awayTeam} na Copa do Mundo 2026:\n\n- Jogo: ${format365Date(specificEvent.startTime)}${specificEvent.roundName ? ` | ${specificEvent.roundName}` : ''}.\n- Linhas reais de escanteios disponiveis: ${specificEvent.cornerLines.length}.\n- Casas comparadas: ${specificEvent.bookmakersCount}.\n${featured ? `\nLinhas principais:\n${featured}` : ''}${alerts ? `\n\nAlertas de valor:\n${alerts}` : ''}\n\nMedia real da Copa para esse confronto: ainda depende de jogos da propria Copa com estatisticas oficiais. Eu nao misturo amistosos ou outras competicoes para calcular media da Copa.`;
+  }
+
+  const completedWithScore = results.filter((match) => match.homeScore !== undefined || match.awayScore !== undefined);
+  if (completedWithScore.length === 0) {
+    const nextGames = upcoming.slice(0, 5).map(worldCupMatchLine).join('\n');
+    const oddsSummary = odds?.configured
+      ? `\n\nOdds de escanteios ja disponiveis: ${odds.summary?.eventsChecked ?? odds.events?.length ?? 0} jogos, ${odds.summary?.cornerLines ?? 0} linhas e ${odds.summary?.alerts ?? 0} alertas.`
+      : '';
+    return `Ainda nao tenho media real de escanteios da Copa do Mundo 2026.\n\nRegra aplicada: para media da Copa, eu uso somente jogos da propria Copa. Nao uso amistosos, eliminatorias, Nations League, Copa Ouro, Euro ou historico geral das selecoes.\n\nO que ja tenho agora:\n- Agenda da Copa.\n- Elencos oficiais FIFA.\n- Odds reais de escanteios quando a API-Football retorna mercados.\n${nextGames ? `\nProximos jogos:\n${nextGames}` : ''}${oddsSummary}`;
+  }
+
+  return `Tenho ${completedWithScore.length} resultado(s) da Copa retornado(s) pela fonte de jogos, mas ainda nao tenho escanteios oficiais desses resultados nesta rota. Por isso nao calculo media real de escanteios da Copa ate a estatistica de escanteios por jogo estar disponivel.`;
+}
+
+async function worldCupReply(question: string, ctx: string, origin: string): Promise<string | null> {
+  const scoped = scopeForQuestion(question, ctx);
+  if (!mentionsWorldCup(scoped)) return null;
+
+  if (askedWorldCupData(question)) return worldCupDataOverviewReply(origin);
+
+  const squad = await worldCupSquadReply(question, ctx);
+  if (squad) return squad;
+
+  const odds = await worldCupOddsReply(scoped, origin);
+  if (odds) return odds;
+
+  const stats = await worldCupStatsReply(scoped, origin);
+  if (stats) return stats;
+
+  if (askedUpcoming(question)) {
+    const matches = await fetchWorldCupMatches(origin, 'upcoming');
+    if (matches.length > 0) {
+      return `Proximos jogos da Copa do Mundo 2026:\n\n${matches.slice(0, 12).map(worldCupMatchLine).join('\n')}`;
+    }
+    return 'Nao encontrei proximos jogos da Copa do Mundo retornados pela 365Scores agora.';
+  }
+
+  return null;
+}
+
 function liveMatchQuestionScore(question: string, match: AiLiveMatch): number {
   const normalized = normalize(question);
   const names = [match.homeTeam.name, match.awayTeam.name];
@@ -1543,6 +1869,8 @@ async function liveAddedTimeReply(question: string, ctx: string, origin: string)
 }
 
 async function localReply(question: string, ctx: string, origin: string): Promise<string | null> {
+  const worldCup = await worldCupReply(question, ctx, origin);
+  if (worldCup) return worldCup;
   if (askedDataUpdate(question)) return dataUpdateReply();
   if (askedCoverage(question)) return coverageReply();
   const squad = await worldCupSquadReply(question, ctx);
