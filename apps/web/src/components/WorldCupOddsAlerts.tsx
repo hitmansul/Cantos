@@ -3,10 +3,11 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
   AlertTriangle,
+  ArrowLeft,
   BadgeDollarSign,
   Check,
   ChevronDown,
-  ChevronUp,
+  CreditCard,
   Flag,
   Loader2,
   RefreshCw,
@@ -62,6 +63,7 @@ type CornerEvent = {
   awayTeam: string;
   bookmakersCount: number;
   cornerLines: CornerLineOdd[];
+  cardLines?: CornerLineOdd[];
   featuredLines?: FeaturedLine[];
   alerts: CornerAlert[];
   source: 'real';
@@ -75,6 +77,7 @@ type OddsResponse = {
   summary: {
     eventsChecked: number;
     cornerLines: number;
+    cardLines?: number;
     alerts: number;
     bookmakersCompared: number;
   };
@@ -277,11 +280,70 @@ function isFullGameLine(line: Pick<FeaturedLine, 'market' | 'label'>) {
   return !isFirstHalfLine(line) && !isSecondHalfLine(line);
 }
 
+function isCardLine(line: Pick<FeaturedLine, 'market' | 'label'>) {
+  const text = normalize(`${line.market} ${line.label}`);
+  return (
+    text.includes('card') ||
+    text.includes('cards') ||
+    text.includes('cartao') ||
+    text.includes('cartoes') ||
+    text.includes('booking') ||
+    text.includes('yellow') ||
+    text.includes('red')
+  );
+}
+
+function isCornerLine(line: Pick<FeaturedLine, 'market' | 'label'>) {
+  return !isCardLine(line);
+}
+
+function isTeamSpecificCornerLine(line: Pick<FeaturedLine, 'market' | 'label'>) {
+  const text = normalize(`${line.market} ${line.label}`);
+  return (
+    text.includes('home') ||
+    text.includes('away') ||
+    text.includes('mandante') ||
+    text.includes('visitante') ||
+    text.includes('team total') ||
+    text.includes('time da casa') ||
+    text.includes('time visitante')
+  );
+}
+
+function cardAmount(line: Pick<FeaturedLine, 'market' | 'label' | 'line'>): number | null {
+  const direct = Number(line.line);
+  if (Number.isFinite(direct) && direct > 0) return direct;
+  const text = normalize(`${line.market} ${line.label}`);
+  if (text.includes(' a card') || text.includes(' one card') || text.includes(' um cartao')) return 1;
+  const match = text.match(/(\d+(?:[.,]\d+)?)(?:\+)?/);
+  if (!match) return null;
+  const parsed = Number(match[1].replace(',', '.'));
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function cardCountFromLine(line: Pick<FeaturedLine, 'market' | 'label' | 'line'>): number | null {
+  const amount = cardAmount(line);
+  if (amount === null) return null;
+  if (amount <= 1) return 1;
+  if (amount <= 2) return 2;
+  return Math.ceil(amount);
+}
+
+function isBothTeamsCardLine(line: Pick<FeaturedLine, 'market' | 'label' | 'line'>) {
+  if (!isCardLine(line)) return false;
+  const text = normalize(`${line.market} ${line.label}`);
+  return (
+    text.includes('both') ||
+    text.includes('ambos') ||
+    text.includes('ambas') ||
+    text.includes('each team') ||
+    text.includes('cada time')
+  );
+}
+
 function importantLines(lines: FeaturedLine[]): FeaturedLine[] {
   const selected = new Map<string, FeaturedLine>();
-  const wantedLines = new Set(['3.5', '4.5', '5.5']);
   const isMainSide = (line: FeaturedLine) => line.side === 'over' || line.side === 'under';
-  const isPreferredSide = (line: FeaturedLine) => line.side === 'over';
   const sorted = [...lines].sort((a, b) => {
     const aPeriod = isFullGameLine(a) ? 0 : isFirstHalfLine(a) ? 1 : 2;
     const bPeriod = isFullGameLine(b) ? 0 : isFirstHalfLine(b) ? 1 : 2;
@@ -298,31 +360,81 @@ function importantLines(lines: FeaturedLine[]): FeaturedLine[] {
     return (b.odds[0]?.odd ?? 0) - (a.odds[0]?.odd ?? 0);
   });
 
+  const firstHalf45 = sorted
+    .filter(
+      (line) =>
+        isCornerLine(line) &&
+        isFirstHalfLine(line) &&
+        line.line === '4.5' &&
+        isMainSide(line) &&
+        !isTeamSpecificCornerLine(line)
+    )
+    .slice(0, 2);
+  for (const line of firstHalf45) selected.set(line.key, line);
+
+  const firstFullGameLines = sorted
+    .filter(
+      (line) =>
+        isCornerLine(line) &&
+        isFullGameLine(line) &&
+        isMainSide(line) &&
+        !isTeamSpecificCornerLine(line)
+    )
+    .slice(0, 4);
+  for (const line of firstFullGameLines) selected.set(line.key, line);
+
+  const bothTeamsCards = sorted
+    .filter((line) => {
+      const amount = cardCountFromLine(line);
+      return isBothTeamsCardLine(line) && (amount === 1 || amount === 2);
+    })
+    .slice(0, 4);
+  for (const line of bothTeamsCards) selected.set(line.key, line);
+
   for (const line of sorted) {
-    if ((isFullGameLine(line) || isFirstHalfLine(line)) && isPreferredSide(line) && wantedLines.has(line.line)) {
+    if (selected.size >= 8) break;
+    if (isCornerLine(line) && isFullGameLine(line) && isMainSide(line) && !selected.has(line.key)) {
       selected.set(line.key, line);
     }
   }
 
-  for (const line of sorted) {
-    if (selected.size >= 8) break;
-    if (isFullGameLine(line) && isMainSide(line) && !selected.has(line.key)) selected.set(line.key, line);
-  }
-
   if (selected.size === 0) {
-    for (const line of sorted.slice(0, 8)) selected.set(line.key, line);
+    for (const line of sorted.slice(0, 6)) selected.set(line.key, line);
   }
 
   return [...selected.values()].slice(0, 8);
 }
 
 function compactMarketLabel(line: FeaturedLine | CornerAlert) {
+  if (isCardLine(line)) {
+    const amount = cardCountFromLine(line);
+    if (isBothTeamsCardLine(line) && amount) {
+      return `Ambos os times tomam ${amount} ${amount === 1 ? 'cartão' : 'cartões'}`;
+    }
+
+    const side = SIDE_LABELS[line.side] ?? 'Linha';
+    return line.line && line.line !== 'sem linha'
+      ? `${translateMarketName(line.market)} - ${side} ${line.line}`
+      : `${translateMarketName(line.market)} - ${line.label}`;
+  }
+
   const side = SIDE_LABELS[line.side] ?? 'Linha';
   return `${translateMarketName(line.market)} - ${side} ${line.line}`;
 }
 
 function translateMarketName(value: string): string {
   const normalized = normalize(value);
+  const isCards =
+    normalized.includes('card') ||
+    normalized.includes('cards') ||
+    normalized.includes('cartao') ||
+    normalized.includes('cartoes') ||
+    normalized.includes('booking') ||
+    normalized.includes('yellow') ||
+    normalized.includes('red');
+  if (isCards && (normalized.includes('1st half') || normalized.includes('first half'))) return 'Cartões no 1º tempo';
+  if (isCards && (normalized.includes('2nd half') || normalized.includes('second half'))) return 'Cartões no 2º tempo';
+  if (isCards) return 'Cartões';
   if (normalized.includes('1st half') || normalized.includes('first half')) return 'Escanteios no 1º tempo';
   if (normalized.includes('2nd half') || normalized.includes('second half')) return 'Escanteios no 2º tempo';
   if (normalized.includes('home')) return 'Escanteios do mandante';
@@ -430,19 +542,19 @@ function FeaturedLineRow({ line }: { line: FeaturedLine }) {
 function WorldCupCornerEventCard({
   event,
   selectedBookmakers,
+  onOpenAllOdds,
 }: {
   event: CornerEvent;
   selectedBookmakers: string[];
+  onOpenAllOdds: (eventId: string) => void;
 }) {
-  const [expanded, setExpanded] = useState(false);
   const allLines = useMemo(() => {
-    const grouped = groupCornerLines(event.cornerLines)
+    const grouped = groupCornerLines([...event.cornerLines, ...(event.cardLines ?? [])])
       .map((line) => filterLineByBookmakers(line, selectedBookmakers))
       .filter((line) => line.odds.length > 0);
     return grouped;
-  }, [event.cornerLines, selectedBookmakers]);
+  }, [event.cardLines, event.cornerLines, selectedBookmakers]);
   const primaryLines = useMemo(() => importantLines(allLines), [allLines]);
-  const visibleLines = expanded ? allLines : primaryLines;
   const visibleAlerts = event.alerts.filter((alert) => alertMatchesBookmakers(alert, selectedBookmakers));
 
   return (
@@ -482,7 +594,7 @@ function WorldCupCornerEventCard({
           </div>
 
           <div className="grid gap-2">
-            {visibleAlerts.slice(0, expanded ? visibleAlerts.length : 3).map((alert) => (
+            {visibleAlerts.slice(0, 3).map((alert) => (
               <AlertOddsDetails key={`${alert.market}-${alert.line}-${alert.side}-${alert.bookmaker}`} alert={alert} />
             ))}
           </div>
@@ -493,26 +605,96 @@ function WorldCupCornerEventCard({
         <div className="mb-3 flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
           <div className="flex items-center gap-2 text-sm font-semibold">
             <Target className="h-4 w-4 text-emerald-300" />
-            {expanded ? 'Todas as linhas de escanteios do jogo' : 'Linhas principais'}
+            Linhas principais
           </div>
 
-          <Button type="button" variant="ghost" size="sm" onClick={() => setExpanded((current) => !current)}>
-            {expanded ? (
-              <><ChevronUp className="mr-2 h-4 w-4" />Recolher</>
-            ) : (
-              <><ChevronDown className="mr-2 h-4 w-4" />Ver mais odds</>
-            )}
+          <Button type="button" variant="ghost" size="sm" onClick={() => onOpenAllOdds(event.id)}>
+            Ver todas as odds
           </Button>
         </div>
 
         <div className="grid gap-3">
-          {visibleLines.map((line) => <FeaturedLineRow key={line.key} line={line} />)}
-          {visibleLines.length === 0 && (
+          {primaryLines.map((line) => <FeaturedLineRow key={line.key} line={line} />)}
+          {primaryLines.length === 0 && (
             <div className="rounded-lg bg-background/30 p-6 text-center text-sm text-muted-foreground">Nenhuma linha encontrada com esses filtros.</div>
           )}
         </div>
       </div>
     </Card>
+  );
+}
+
+function AllEventOddsView({
+  event,
+  selectedBookmakers,
+  onBack,
+}: {
+  event: CornerEvent;
+  selectedBookmakers: string[];
+  onBack: () => void;
+}) {
+  const cornerLines = useMemo(
+    () =>
+      groupCornerLines(event.cornerLines)
+        .map((line) => filterLineByBookmakers(line, selectedBookmakers))
+        .filter((line) => line.odds.length > 0),
+    [event.cornerLines, selectedBookmakers]
+  );
+  const cardLines = useMemo(
+    () =>
+      groupCornerLines(event.cardLines ?? [])
+        .map((line) => filterLineByBookmakers(line, selectedBookmakers))
+        .filter((line) => line.odds.length > 0),
+    [event.cardLines, selectedBookmakers]
+  );
+
+  return (
+    <div className="space-y-4">
+      <Card className="overflow-visible p-4 border-emerald-500/20 bg-emerald-950/10">
+        <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+          <div className="space-y-1">
+            <Button type="button" variant="ghost" size="sm" onClick={onBack} className="-ml-2 mb-2">
+              <ArrowLeft className="mr-2 h-4 w-4" />
+              Voltar
+            </Button>
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge className="bg-emerald-500/15 text-emerald-300 border-emerald-500/30">Copa do Mundo</Badge>
+              {event.roundName && <Badge variant="outline" className="text-muted-foreground">{event.roundName}</Badge>}
+              <Badge variant="outline" className="text-emerald-300">{cornerLines.length} linhas de escanteios</Badge>
+              <Badge variant="outline" className="text-amber-300">{cardLines.length} linhas de cartões</Badge>
+            </div>
+            <h3 className="text-xl font-bold">{displayTeamName(event.homeTeam)} x {displayTeamName(event.awayTeam)}</h3>
+            <p className="text-sm text-muted-foreground">{formatDate(event.startTime)} BRT</p>
+          </div>
+        </div>
+      </Card>
+
+      <Card className="p-4 border-emerald-500/20 bg-muted/20">
+        <div className="mb-3 flex items-center gap-2 font-semibold">
+          <Target className="h-4 w-4 text-emerald-300" />
+          Todas as odds de escanteios
+        </div>
+        <div className="grid gap-3">
+          {cornerLines.map((line) => <FeaturedLineRow key={line.key} line={line} />)}
+          {cornerLines.length === 0 && (
+            <div className="rounded-lg bg-background/30 p-6 text-center text-sm text-muted-foreground">Nenhuma linha de escanteios encontrada com esses filtros.</div>
+          )}
+        </div>
+      </Card>
+
+      <Card className="p-4 border-amber-500/20 bg-muted/20">
+        <div className="mb-3 flex items-center gap-2 font-semibold">
+          <CreditCard className="h-4 w-4 text-amber-300" />
+          Todas as odds de cartões
+        </div>
+        <div className="grid gap-3">
+          {cardLines.map((line) => <FeaturedLineRow key={line.key} line={line} />)}
+          {cardLines.length === 0 && (
+            <div className="rounded-lg bg-background/30 p-6 text-center text-sm text-muted-foreground">Nenhuma linha de cartões encontrada com esses filtros.</div>
+          )}
+        </div>
+      </Card>
+    </div>
   );
 }
 
@@ -530,7 +712,7 @@ function SearchableTeamFilter({
   const filtered = options.filter((option) => normalize(option).includes(normalize(query))).slice(0, 80);
 
   return (
-    <div className="relative">
+    <div className={open ? 'relative z-[1000]' : 'relative z-10'}>
       <button
         type="button"
         className="flex w-full items-center justify-between rounded-lg border border-border bg-background px-3 py-2 text-left"
@@ -541,7 +723,7 @@ function SearchableTeamFilter({
       </button>
 
       {open && (
-        <div className="absolute z-30 mt-2 w-full rounded-lg border border-border bg-popover p-2 shadow-xl">
+        <div className="absolute left-0 right-0 z-[1000] mt-2 w-full rounded-lg border border-border bg-popover p-2 shadow-2xl">
           <div className="relative mb-2">
             <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
             <input
@@ -604,7 +786,7 @@ function BookmakerFilter({
   }
 
   return (
-    <div className="relative">
+    <div className={open ? 'relative z-[1000]' : 'relative z-10'}>
       <button
         type="button"
         className="flex w-full items-center justify-between rounded-lg border border-border bg-background px-3 py-2 text-left"
@@ -615,7 +797,7 @@ function BookmakerFilter({
       </button>
 
       {open && (
-        <div className="absolute z-30 mt-2 w-full rounded-lg border border-border bg-popover p-2 shadow-xl">
+        <div className="absolute left-0 right-0 z-[1000] mt-2 w-full rounded-lg border border-border bg-popover p-2 shadow-2xl">
           <div className="relative mb-2">
             <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
             <input
@@ -663,6 +845,7 @@ export function WorldCupOddsAlerts() {
   const [error, setError] = useState<string | null>(null);
   const [teamFilter, setTeamFilter] = useState('');
   const [bookmakerFilters, setBookmakerFilters] = useState<string[]>([]);
+  const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
 
   async function load() {
     setLoading(true);
@@ -695,7 +878,7 @@ export function WorldCupOddsAlerts() {
     return (data?.events ?? []).filter((event) => {
       if (teamFilter && !teamMatches(event.homeTeam, teamFilter) && !teamMatches(event.awayTeam, teamFilter)) return false;
       if (selectedBookmakers.size === 0) return true;
-      return event.cornerLines.some((line) => selectedBookmakers.has(bookmakerKey(line.bookmaker)));
+      return [...event.cornerLines, ...(event.cardLines ?? [])].some((line) => selectedBookmakers.has(bookmakerKey(line.bookmaker)));
     });
   }, [bookmakerFilters, data?.events, teamFilter]);
 
@@ -747,6 +930,21 @@ export function WorldCupOddsAlerts() {
   }
 
   const hasFilters = Boolean(teamFilter || bookmakerFilters.length > 0);
+  const selectedEvent = selectedEventId
+    ? filteredEvents.find((event) => event.id === selectedEventId) ??
+      data.events.find((event) => event.id === selectedEventId) ??
+      null
+    : null;
+
+  if (selectedEvent) {
+    return (
+      <AllEventOddsView
+        event={selectedEvent}
+        selectedBookmakers={bookmakerFilters}
+        onBack={() => setSelectedEventId(null)}
+      />
+    );
+  }
 
   return (
     <div className="space-y-4">
@@ -768,7 +966,7 @@ export function WorldCupOddsAlerts() {
         <p className="mt-3 text-xs text-muted-foreground">Atualizado em {formatUpdated(data.lastUpdated)}. Alertas aparecem quando uma casa paga pelo menos 25% acima da segunda melhor casa na mesma linha.</p>
       </Card>
 
-      <Card className="p-4 border-primary/20">
+      <Card className="relative z-[200] !overflow-visible p-4 border-primary/20">
         <div className="mb-3 flex items-center justify-between gap-2">
           <h4 className="flex items-center gap-2 font-semibold">
             <Search className="h-4 w-4 text-emerald-300" />
@@ -802,7 +1000,7 @@ export function WorldCupOddsAlerts() {
       </Card>
 
       {filteredAlerts.length > 0 && (
-        <Card className="p-4 border-amber-500/20 bg-amber-500/5">
+        <Card className="relative z-0 p-4 border-amber-500/20 bg-amber-500/5">
           <div className="mb-3 flex items-center gap-2 font-semibold text-amber-300"><TrendingUp className="h-4 w-4" />Principais alertas</div>
           <div className="grid gap-2 md:grid-cols-2">
             {filteredAlerts.slice(0, 6).map(({ event, alert }) => (
@@ -816,9 +1014,14 @@ export function WorldCupOddsAlerts() {
         </Card>
       )}
 
-      <div className="grid gap-3">
+      <div className="relative z-0 grid gap-3">
         {filteredEvents.map((event) => (
-          <WorldCupCornerEventCard key={event.id} event={event} selectedBookmakers={bookmakerFilters} />
+          <WorldCupCornerEventCard
+            key={event.id}
+            event={event}
+            selectedBookmakers={bookmakerFilters}
+            onOpenAllOdds={setSelectedEventId}
+          />
         ))}
         {filteredEvents.length === 0 && (
           <Card className="p-8 text-center">

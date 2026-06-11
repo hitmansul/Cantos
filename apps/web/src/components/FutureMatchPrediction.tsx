@@ -414,6 +414,7 @@ export function FutureMatchPrediction({
 
   const [oddsData, setOddsData] = useState<MatchOddsResponse | null>(null);
   const [oddsLoading, setOddsLoading] = useState(false);
+  const [activeOddsCategory, setActiveOddsCategory] = useState<'corners' | 'cards'>('corners');
 
   useEffect(() => {
     let cancelled = false;
@@ -453,8 +454,9 @@ export function FutureMatchPrediction({
       : prediction.confidence === 'media'
         ? 'border-amber-500/40 text-amber-400'
         : 'border-red-500/40 text-red-400';
-  const cornerOdds = oddsData?.markets.filter((market) => market.category === 'corners').slice(0, 4) ?? [];
-  const cardOdds = oddsData?.markets.filter((market) => market.category === 'cards').slice(0, 4) ?? [];
+  const cornerOdds = oddsData?.markets.filter((market) => market.category === 'corners') ?? [];
+  const cardOdds = oddsData?.markets.filter((market) => market.category === 'cards') ?? [];
+  const selectedOdds = activeOddsCategory === 'corners' ? cornerOdds : cardOdds;
   const hasOdds = cornerOdds.length > 0 || cardOdds.length > 0;
 
   return (
@@ -569,13 +571,23 @@ export function FutureMatchPrediction({
               <p className="text-lg font-bold">{prediction.cards.secondHalf}</p>
             </div>
           </div>
-          <p className="mt-2 text-xs text-muted-foreground">
-            {prediction.cards.refereeStats
-              ? `Árbitro: ${prediction.cards.refereeStats.name} (${prediction.cards.refereeStats.avgCardsPerMatch.toFixed(1)} cartões/jogo).`
-              : prediction.cards.refereeName
-                ? `Árbitro: ${prediction.cards.refereeName} (sem histórico detalhado local).`
-                : 'Árbitro ainda não informado; usei as médias locais dos times quando disponíveis.'}
-          </p>
+          <div className="mt-3 rounded-lg border border-amber-500/20 bg-amber-500/5 p-3 text-xs">
+            <p className="mb-2 font-semibold uppercase tracking-wide text-amber-300">Árbitro e médias de cartões</p>
+            {prediction.cards.refereeStats ? (
+              <div className="grid gap-2 sm:grid-cols-2">
+                <span>Árbitro: <strong className="text-foreground">{prediction.cards.refereeStats.name}</strong></span>
+                <span>Média: <strong className="text-foreground">{prediction.cards.refereeStats.avgCardsPerMatch.toFixed(1)}</strong> cartões/jogo</span>
+                <span>Amarelos: <strong className="text-foreground">{prediction.cards.refereeStats.avgYellowPerMatch.toFixed(1)}</strong></span>
+                <span>Vermelhos: <strong className="text-foreground">{prediction.cards.refereeStats.avgRedPerMatch.toFixed(1)}</strong></span>
+                <span>1º tempo: <strong className="text-foreground">{prediction.cards.refereeStats.halfDistribution.firstHalf}%</strong></span>
+                <span>2º tempo: <strong className="text-foreground">{prediction.cards.refereeSummary?.secondHalfPct ?? prediction.cards.refereeStats.halfDistribution.secondHalf}%</strong></span>
+              </div>
+            ) : prediction.cards.refereeName ? (
+              <p>Árbitro: <strong className="text-foreground">{prediction.cards.refereeName}</strong>. Ainda não temos histórico detalhado local desse árbitro.</p>
+            ) : (
+              <p>Árbitro ainda não informado pela fonte para esta partida. A previsão de cartões usa as médias locais dos times quando disponíveis.</p>
+            )}
+          </div>
         </div>
       </div>
 
@@ -591,56 +603,83 @@ export function FutureMatchPrediction({
         {oddsLoading && !oddsData ? (
           <p className="text-sm text-muted-foreground">Buscando odds reais para este jogo...</p>
         ) : hasOdds ? (
-          <div className="grid gap-3 lg:grid-cols-2">
-            {cornerOdds.length > 0 && (
-              <div className="space-y-2">
-                <p className="text-xs font-semibold uppercase tracking-wide text-emerald-300">Escanteios</p>
-                {cornerOdds.map((market) => {
-                  const best = market.offers[0];
-                  return (
-                    <div key={market.id} className="rounded-lg bg-muted/40 p-2">
-                      <div className="flex items-start justify-between gap-3">
-                        <div>
-                          <p className="text-sm font-semibold">{translateOddsMarket(market.marketName)}</p>
-                          <p className="text-xs text-muted-foreground">{formatOddsSelection(market)}</p>
-                        </div>
-                        {best && (
-                          <div className="text-right">
-                            <p className="text-sm font-bold text-emerald-300">{best.odd.toFixed(2)}</p>
-                            <p className="text-xs text-muted-foreground">{best.bookmaker}</p>
+          <div className="space-y-3">
+            <div className="flex flex-wrap gap-2">
+              <Button
+                type="button"
+                size="sm"
+                variant={activeOddsCategory === 'corners' ? 'default' : 'outline'}
+                onClick={() => setActiveOddsCategory('corners')}
+                className={activeOddsCategory === 'corners' ? 'bg-emerald-600 hover:bg-emerald-700' : ''}
+              >
+                Escanteios ({cornerOdds.length})
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant={activeOddsCategory === 'cards' ? 'default' : 'outline'}
+                onClick={() => setActiveOddsCategory('cards')}
+                className={activeOddsCategory === 'cards' ? 'bg-amber-600 hover:bg-amber-700' : ''}
+              >
+                Cartões ({cardOdds.length})
+              </Button>
+            </div>
+            <div className="grid gap-3">
+              {activeOddsCategory === 'corners' && cornerOdds.length > 0 && (
+                <div className="space-y-2">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-emerald-300">Escanteios</p>
+                  {cornerOdds.map((market) => {
+                    const best = market.offers[0];
+                    return (
+                      <div key={market.id} className="rounded-lg bg-muted/40 p-2">
+                        <div className="flex items-start justify-between gap-3">
+                          <div>
+                            <p className="text-sm font-semibold">{translateOddsMarket(market.marketName)}</p>
+                            <p className="text-xs text-muted-foreground">{formatOddsSelection(market)}</p>
                           </div>
-                        )}
+                          {best && (
+                            <div className="text-right">
+                              <p className="text-sm font-bold text-emerald-300">{best.odd.toFixed(2)}</p>
+                              <p className="text-xs text-muted-foreground">{best.bookmaker}</p>
+                            </div>
+                          )}
+                        </div>
                       </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
+                    );
+                  })}
+                </div>
+              )}
 
-            {cardOdds.length > 0 && (
-              <div className="space-y-2">
-                <p className="text-xs font-semibold uppercase tracking-wide text-amber-300">Cartões</p>
-                {cardOdds.map((market) => {
-                  const best = market.offers[0];
-                  return (
-                    <div key={market.id} className="rounded-lg bg-muted/40 p-2">
-                      <div className="flex items-start justify-between gap-3">
-                        <div>
-                          <p className="text-sm font-semibold">{translateOddsMarket(market.marketName)}</p>
-                          <p className="text-xs text-muted-foreground">{formatOddsSelection(market)}</p>
-                        </div>
-                        {best && (
-                          <div className="text-right">
-                            <p className="text-sm font-bold text-amber-300">{best.odd.toFixed(2)}</p>
-                            <p className="text-xs text-muted-foreground">{best.bookmaker}</p>
+              {activeOddsCategory === 'cards' && cardOdds.length > 0 && (
+                <div className="space-y-2">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-amber-300">Cartões</p>
+                  {cardOdds.map((market) => {
+                    const best = market.offers[0];
+                    return (
+                      <div key={market.id} className="rounded-lg bg-muted/40 p-2">
+                        <div className="flex items-start justify-between gap-3">
+                          <div>
+                            <p className="text-sm font-semibold">{translateOddsMarket(market.marketName)}</p>
+                            <p className="text-xs text-muted-foreground">{formatOddsSelection(market)}</p>
                           </div>
-                        )}
+                          {best && (
+                            <div className="text-right">
+                              <p className="text-sm font-bold text-amber-300">{best.odd.toFixed(2)}</p>
+                              <p className="text-xs text-muted-foreground">{best.bookmaker}</p>
+                            </div>
+                          )}
+                        </div>
                       </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
+                    );
+                  })}
+                </div>
+              )}
+              {selectedOdds.length === 0 && (
+                <div className="rounded-lg bg-muted/40 p-6 text-center text-sm text-muted-foreground">
+                  Nenhuma linha de {activeOddsCategory === 'cards' ? 'cartões' : 'escanteios'} encontrada para este jogo agora.
+                </div>
+              )}
+            </div>
           </div>
         ) : (
           <p className="text-sm text-muted-foreground">

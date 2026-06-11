@@ -364,8 +364,8 @@ function marketsFromOdds(items: ApiFootballOddsItem[], preferredLine: string | n
       return b.offers[0].odd - a.offers[0].odd;
     });
 
-  const cornerMarkets = sortedMarkets.filter((market) => market.category === 'corners').slice(0, 16);
-  const cardMarkets = sortedMarkets.filter((market) => market.category === 'cards').slice(0, 12);
+  const cornerMarkets = sortedMarkets.filter((market) => market.category === 'corners');
+  const cardMarkets = sortedMarkets.filter((market) => market.category === 'cards');
   return [...cornerMarkets, ...cardMarkets];
 }
 

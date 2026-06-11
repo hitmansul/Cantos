@@ -64,6 +64,7 @@ type CornerEvent = {
   awayTeam: string;
   bookmakersCount: number;
   cornerLines: CornerLineOdd[];
+  cardLines: CornerLineOdd[];
   featuredLines: FeaturedLine[];
   alerts: CornerAlert[];
   source: 'real';
@@ -123,6 +124,20 @@ function isCornerBet(bet: ApiFootballBet): boolean {
   );
 }
 
+function isCardBet(bet: ApiFootballBet): boolean {
+  const name = normalize(bet.name);
+  return (
+    name.includes('card') ||
+    name.includes('cards') ||
+    name.includes('booking') ||
+    name.includes('bookings') ||
+    name.includes('yellow') ||
+    name.includes('red card') ||
+    name.includes('cartao') ||
+    name.includes('cartoes')
+  );
+}
+
 function detectSide(value: string): CornerSide {
   const normalized = normalize(value);
   if (normalized.includes('over') || normalized.includes('mais') || normalized.includes('acima')) return 'over';
@@ -149,6 +164,30 @@ function extractCornerLines(bookmaker: ApiFootballBookmaker): CornerLineOdd[] {
 
   for (const bet of bookmaker.bets ?? []) {
     if (!isCornerBet(bet)) continue;
+
+    for (const value of bet.values ?? []) {
+      const odd = parseDecimalOdd(value.odd);
+      if (!odd) continue;
+
+      lines.push({
+        bookmaker: bookmaker.name,
+        market: bet.name,
+        line: detectLine(value.value),
+        side: detectSide(value.value),
+        label: cleanLabel(value.value),
+        odd,
+      });
+    }
+  }
+
+  return lines;
+}
+
+function extractCardLines(bookmaker: ApiFootballBookmaker): CornerLineOdd[] {
+  const lines: CornerLineOdd[] = [];
+
+  for (const bet of bookmaker.bets ?? []) {
+    if (!isCardBet(bet)) continue;
 
     for (const value of bet.values ?? []) {
       const odd = parseDecimalOdd(value.odd);
@@ -334,19 +373,25 @@ async function apiFootballCornerEvents(): Promise<CornerEvent[] | null> {
     const fixture = fixtures.get(item.fixture.id);
     if (!fixture) continue;
 
-    const cornerLines = apiFootballBookmakers(item).flatMap(extractCornerLines);
-    if (cornerLines.length === 0) continue;
+    const bookmakersForItem = apiFootballBookmakers(item);
+    const cornerLines = bookmakersForItem.flatMap(extractCornerLines);
+    const cardLines = bookmakersForItem.flatMap(extractCardLines);
+    if (cornerLines.length === 0 && cardLines.length === 0) continue;
 
     const fixtureId = String(item.fixture.id);
     const existing = byFixture.get(fixtureId);
 
     if (existing) {
       existing.cornerLines.push(...cornerLines);
-      existing.bookmakersCount = new Set(existing.cornerLines.map((line) => normalize(line.bookmaker))).size;
-      existing.featuredLines = buildFeaturedLines(existing.cornerLines);
+      existing.cardLines.push(...cardLines);
+      const allLines = [...existing.cornerLines, ...existing.cardLines];
+      existing.bookmakersCount = new Set(allLines.map((line) => normalize(line.bookmaker))).size;
+      existing.featuredLines = buildFeaturedLines(allLines);
       existing.alerts = buildAlerts(existing.cornerLines);
       continue;
     }
+
+    const allLines = [...cornerLines, ...cardLines];
 
     byFixture.set(fixtureId, {
       id: fixtureId,
@@ -354,9 +399,10 @@ async function apiFootballCornerEvents(): Promise<CornerEvent[] | null> {
       roundName: item.league?.round ?? fixture.league?.round,
       homeTeam: fixture.teams.home.name,
       awayTeam: fixture.teams.away.name,
-      bookmakersCount: new Set(cornerLines.map((line) => normalize(line.bookmaker))).size,
+      bookmakersCount: new Set(allLines.map((line) => normalize(line.bookmaker))).size,
       cornerLines,
-      featuredLines: buildFeaturedLines(cornerLines),
+      cardLines,
+      featuredLines: buildFeaturedLines(allLines),
       alerts: buildAlerts(cornerLines),
       source: 'real',
     });
@@ -376,8 +422,11 @@ export async function GET() {
 
   if (events !== null) {
     const linesCount = events.reduce((sum, event) => sum + event.cornerLines.length, 0);
+    const cardLinesCount = events.reduce((sum, event) => sum + event.cardLines.length, 0);
     const alertsCount = events.reduce((sum, event) => sum + event.alerts.length, 0);
-    const bookmakers = [...new Set(events.flatMap((event) => event.cornerLines.map((line) => line.bookmaker)))].sort();
+    const bookmakers = [
+      ...new Set(events.flatMap((event) => [...event.cornerLines, ...event.cardLines].map((line) => line.bookmaker))),
+    ].sort();
 
     return NextResponse.json({
       configured: true,
@@ -389,6 +438,7 @@ export async function GET() {
       summary: {
         eventsChecked: events.length,
         cornerLines: linesCount,
+        cardLines: cardLinesCount,
         alerts: alertsCount,
         bookmakersCompared: bookmakers.length,
       },
@@ -403,7 +453,7 @@ export async function GET() {
     source: 'not-configured',
     focus: 'corner-lines',
     note: 'A fonte de odds não está configurada. Configure a chave para buscar odds reais de escanteios.',
-    summary: { eventsChecked: 0, cornerLines: 0, alerts: 0, bookmakersCompared: 0 },
+    summary: { eventsChecked: 0, cornerLines: 0, cardLines: 0, alerts: 0, bookmakersCompared: 0 },
     bookmakers: [],
     events: [],
     lastUpdated: new Date().toISOString(),
