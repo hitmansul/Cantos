@@ -27,12 +27,12 @@ interface FaqItem {
 }
 
 const FALLBACK_QUESTIONS = [
-  'Quais ligas estão disponíveis no app?',
-  'Como funciona o Cantos Estatísticas?',
-  'Como interpretar o Over 9.5 de escanteios?',
-  'Como adicionar times favoritos?',
-  'Como os dados são atualizados?',
-  'O que significa a média de escanteios em casa vs fora?',
+  'Quais dados temos da Copa do Mundo?',
+  'Média de escanteios da Copa do Mundo',
+  'Odds de escanteios da Copa do Mundo',
+  'Próximos jogos da Copa do Mundo',
+  'Convocados do Brasil na Copa',
+  'Como interpretar alertas de odds de escanteios?',
 ];
 
 let msgCounter = 0;
@@ -97,8 +97,8 @@ export function AIChat() {
       .catch(() => setFaqsLoaded(true));
   }, []);
 
-  const suggestions = faqs.length >= 3 ? faqs : null;
-  const fallbackSuggestions = !suggestions && faqsLoaded ? FALLBACK_QUESTIONS : null;
+  const suggestions = faqs.filter((faq) => /copa|mundial|escanteio|corner|odds?/i.test(faq.question)).slice(0, 6);
+  const fallbackSuggestions = (suggestions.length >= 3 ? null : FALLBACK_QUESTIONS) && faqsLoaded ? FALLBACK_QUESTIONS : null;
 
   const sendMessage = useCallback(
     async (text: string) => {
@@ -220,7 +220,7 @@ export function AIChat() {
                 </p>
               </div>
               <div className="w-full max-w-lg space-y-2">
-                {suggestions && (
+                {suggestions.length >= 3 && (
                   <>
                     <div className="flex items-center justify-center gap-2 mb-3">
                       <TrendingUp className="w-3.5 h-3.5 text-emerald-500" />
