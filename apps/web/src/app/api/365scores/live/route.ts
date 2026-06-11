@@ -4,8 +4,8 @@
  *
  * Sofascore's /sport/football/events/live returns ALL live football matches globally.
  */
-import { NextResponse } from 'next/server';
-import { apiFootballGet } from '../../utils/apiFootball';
+import { NextResponse } from "next/server";
+import { apiFootballGet } from "../../utils/apiFootball";
 
 interface LiveMatch {
   id: number;
@@ -17,7 +17,7 @@ interface LiveMatch {
   competitionId: number;
   corners?: { home: number; away: number; total: number };
   liveStats?: LiveStatRow[];
-  statsSource?: '365scores' | 'sofascore' | 'api-football';
+  statsSource?: "365scores" | "sofascore" | "api-football";
   source?: string;
   sourceIds?: {
     scores365?: number;
@@ -34,6 +34,14 @@ interface StoppageIncident {
   reason: string;
   period?: string;
   timeline?: string;
+  eventType?:
+    | "goal"
+    | "substitution"
+    | "var"
+    | "medical"
+    | "yellow-card"
+    | "red-card"
+    | "other";
 }
 
 interface StoppageInfo {
@@ -42,12 +50,16 @@ interface StoppageInfo {
   predictedAddedMs: number;
   predictedAddedMinutes: number;
   source:
-    | '365scores-actual-play-time'
-    | '365scores-sportradar'
-    | '365scores-announced-added-time'
-    | 'sofascore-announced-added-time'
-    | 'api-football-announced-added-time';
-  kind?: 'calculated-stoppage' | 'announced-added-time';
+    | "365scores-actual-play-time"
+    | "365scores-sportradar"
+    | "365scores-event-estimate"
+    | "365scores-announced-added-time"
+    | "sofascore-announced-added-time"
+    | "api-football-announced-added-time";
+  kind?:
+    | "calculated-stoppage"
+    | "announced-added-time"
+    | "estimated-from-events";
   incidents: StoppageIncident[];
 }
 
@@ -60,8 +72,20 @@ interface Scores365Game {
   competitionId?: number;
   competitionDisplayName?: string;
   competition?: { name?: string };
-  homeCompetitor?: { id?: number; name?: string; score?: number; sportId?: number; countryId?: number };
-  awayCompetitor?: { id?: number; name?: string; score?: number; sportId?: number; countryId?: number };
+  homeCompetitor?: {
+    id?: number;
+    name?: string;
+    score?: number;
+    sportId?: number;
+    countryId?: number;
+  };
+  awayCompetitor?: {
+    id?: number;
+    name?: string;
+    score?: number;
+    sportId?: number;
+    countryId?: number;
+  };
   actualPlayTime?: Scores365ActualPlayTime;
   gameTimeDisplay?: string;
   preciseGameTime?: string;
@@ -122,23 +146,23 @@ interface ApiFootballTeamStatistics {
 }
 
 const SCORES365_HEADERS = {
-  'User-Agent':
-    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-  Accept: 'application/json',
+  "User-Agent":
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+  Accept: "application/json",
 };
 
 const SCORES365_COUNTRIES: Record<number, string> = {
-  18: 'EUA',
-  24: 'Suecia',
-  25: 'Finlandia',
-  51: 'Equador',
-  70: 'Etiopia',
-  73: 'Camaroes',
-  86: 'Coreia do Sul',
-  113: 'Bolivia',
-  121: 'Uzbequistao',
-  146: 'Panama',
-  252: 'Aruba',
+  18: "EUA",
+  24: "Suecia",
+  25: "Finlandia",
+  51: "Equador",
+  70: "Etiopia",
+  73: "Camaroes",
+  86: "Coreia do Sul",
+  113: "Bolivia",
+  121: "Uzbequistao",
+  146: "Panama",
+  252: "Aruba",
 };
 
 const MAX_STOPPAGE_ENRICHMENT = 24;
@@ -161,77 +185,133 @@ let liveResponseCache:
   | undefined;
 
 const STOPPAGE_START_TERMS = [
-  'interrupted',
-  'match is stopped',
-  'play has been stopped',
-  'waits before resuming play',
-  'down injured',
-  'still down',
-  'down on the field',
-  'receiving treatment',
-  'medical staff',
-  'var check',
-  'video assistant referee',
-  'interromp',
-  'paralis',
-  'atendimento',
-  'lesionado',
-  'revisao do var',
-  'cheque do var',
+  "interrupted",
+  "match is stopped",
+  "play has been stopped",
+  "waits before resuming play",
+  "down injured",
+  "still down",
+  "down on the field",
+  "receiving treatment",
+  "medical staff",
+  "var check",
+  "video assistant referee",
+  "interromp",
+  "paralis",
+  "atendimento",
+  "lesionado",
+  "revisao do var",
+  "cheque do var",
 ];
 
 const STOPPAGE_END_TERMS = [
-  'back on his feet',
-  'back on her feet',
-  'back on the field',
-  'play resumes',
-  'resume play',
-  'back underway',
-  'retoma',
-  'jogo recomeca',
-  'bola volta',
-  'de volta ao campo',
+  "back on his feet",
+  "back on her feet",
+  "back on the field",
+  "play resumes",
+  "resume play",
+  "back underway",
+  "retoma",
+  "jogo recomeca",
+  "bola volta",
+  "de volta ao campo",
 ];
+
+const EVENT_STOPPAGE_WEIGHTS_MS = {
+  goal: 45_000,
+  substitution: 30_000,
+  var: 120_000,
+  medical: 90_000,
+  "yellow-card": 10_000,
+  "red-card": 30_000,
+  other: 0,
+} as const;
+
+const EVENT_TERMS: Record<keyof typeof EVENT_STOPPAGE_WEIGHTS_MS, string[]> = {
+  goal: ["goal", "gol", "scored", "scores", "balanca a rede"],
+  substitution: [
+    "substitution",
+    "substituicao",
+    "substituição",
+    "entra no lugar",
+    "replaces",
+    "comes on",
+  ],
+  var: [
+    "var",
+    "video assistant referee",
+    "revisao",
+    "revisão",
+    "cheque do var",
+    "var check",
+  ],
+  medical: [
+    "injury",
+    "injured",
+    "medical",
+    "treatment",
+    "lesionado",
+    "atendimento",
+    "maca",
+    "stretcher",
+  ],
+  "yellow-card": ["yellow card", "cartao amarelo", "cartão amarelo"],
+  "red-card": ["red card", "cartao vermelho", "cartão vermelho"],
+  other: [],
+};
 
 function normalizeText(value: string) {
   return value
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
     .toLowerCase();
 }
 
 function formatScores365Competition(game: Scores365Game) {
-  const baseName = game.competitionDisplayName ?? game.competition?.name ?? 'Competicao';
+  const baseName =
+    game.competitionDisplayName ?? game.competition?.name ?? "Competicao";
   const homeCountry = game.homeCompetitor?.countryId
     ? SCORES365_COUNTRIES[game.homeCompetitor.countryId]
     : undefined;
   const awayCountry = game.awayCompetitor?.countryId
     ? SCORES365_COUNTRIES[game.awayCompetitor.countryId]
     : undefined;
-  const sharedCountry = homeCountry && homeCountry === awayCountry ? homeCountry : undefined;
+  const sharedCountry =
+    homeCountry && homeCountry === awayCountry ? homeCountry : undefined;
 
   if (!sharedCountry) return baseName;
-  if (normalizeText(baseName).includes(normalizeText(sharedCountry))) return baseName;
-  if (baseName.includes('(')) return baseName;
+  if (normalizeText(baseName).includes(normalizeText(sharedCountry)))
+    return baseName;
+  if (baseName.includes("(")) return baseName;
 
   return `${baseName} (${sharedCountry})`;
 }
 
-function matchKey(match: Pick<LiveMatch, 'homeTeam' | 'awayTeam'>) {
+function matchKey(match: Pick<LiveMatch, "homeTeam" | "awayTeam">) {
   const clean = (value: string) =>
     normalizeText(value)
-      .replace(/\b(fc|cf|sc|ac|ec|club|clube|futebol|sport|sporting|real|atletico)\b/g, '')
-      .replace(/[^a-z0-9]+/g, ' ')
-      .replace(/\s+/g, ' ')
+      .replace(
+        /\b(fc|cf|sc|ac|ec|club|clube|futebol|sport|sporting|real|atletico)\b/g,
+        "",
+      )
+      .replace(/[^a-z0-9]+/g, " ")
+      .replace(/\s+/g, " ")
       .trim();
   return `${clean(match.homeTeam.name)}-${clean(match.awayTeam.name)}`;
 }
 
-function betterCorners(base?: LiveMatch['corners'], incoming?: LiveMatch['corners']) {
+function betterCorners(
+  base?: LiveMatch["corners"],
+  incoming?: LiveMatch["corners"],
+) {
   if (!base) return incoming;
   if (!incoming) return base;
   if (incoming.total > base.total) return incoming;
-  if (incoming.total === base.total && (incoming.home !== base.home || incoming.away !== base.away)) return incoming;
+  if (
+    incoming.total === base.total &&
+    (incoming.home !== base.home || incoming.away !== base.away)
+  )
+    return incoming;
   return base;
 }
 
@@ -246,7 +326,11 @@ function mergeMatch(base: LiveMatch, incoming: LiveMatch): LiveMatch {
     competitionId: base.competitionId || incoming.competitionId,
     corners: mergedCorners,
     liveStats: incomingHasStats ? incoming.liveStats : base.liveStats,
-    statsSource: incomingHasStats ? incoming.statsSource : baseHasStats ? base.statsSource : incoming.statsSource,
+    statsSource: incomingHasStats
+      ? incoming.statsSource
+      : baseHasStats
+        ? base.statsSource
+        : incoming.statsSource,
     stoppage: base.stoppage ?? incoming.stoppage,
     sourceIds: {
       ...base.sourceIds,
@@ -272,7 +356,11 @@ function parseClockMs(value?: string) {
   const first = Number(match[1]);
   const second = Number(match[2]);
   const third = match[3] ? Number(match[3]) : null;
-  if (!Number.isFinite(first) || !Number.isFinite(second) || (third !== null && !Number.isFinite(third))) {
+  if (
+    !Number.isFinite(first) ||
+    !Number.isFinite(second) ||
+    (third !== null && !Number.isFinite(third))
+  ) {
     return null;
   }
 
@@ -284,9 +372,11 @@ function parseClockMs(value?: string) {
 
 function calculateStoppageFromActualPlayTime(
   actualPlayTime?: Scores365ActualPlayTime,
-  currentMinute?: number | string
+  currentMinute?: number | string,
 ): StoppageInfo | undefined {
-  const ballInPlayMs = parseClockMs(actualPlayTime?.actualTime?.name ?? actualPlayTime?.title);
+  const ballInPlayMs = parseClockMs(
+    actualPlayTime?.actualTime?.name ?? actualPlayTime?.title,
+  );
   const totalElapsedMs = parseClockMs(actualPlayTime?.totalTime?.name);
   if (ballInPlayMs === null || totalElapsedMs === null) return undefined;
 
@@ -294,14 +384,18 @@ function calculateStoppageFromActualPlayTime(
   if (totalStoppedMs < STOPPAGE_MIN_DURATION_MS) return undefined;
 
   const totalStoppedMinutes = toRoundedMinutes(totalStoppedMs);
-  const elapsedMinute = typeof currentMinute === 'number' ? currentMinute : parseAddedTimeMinutes(currentMinute) ?? null;
+  const elapsedMinute =
+    typeof currentMinute === "number"
+      ? currentMinute
+      : (parseAddedTimeMinutes(currentMinute) ?? null);
 
   // A 365Scores às vezes envia "actualPlayTime" acumulado/defasado e isso gera absurdos
   // como 14–17 minutos parados ainda no 1º tempo. Para não enganar o usuário,
   // só aceitamos essa métrica quando ela passa em limites conservadores.
-  const maxReasonableStopped = elapsedMinute && elapsedMinute > 0
-    ? Math.max(6, Math.min(12, elapsedMinute * 0.28))
-    : 10;
+  const maxReasonableStopped =
+    elapsedMinute && elapsedMinute > 0
+      ? Math.max(6, Math.min(12, elapsedMinute * 0.28))
+      : 10;
 
   if (totalStoppedMinutes > maxReasonableStopped) {
     return undefined;
@@ -319,15 +413,15 @@ function calculateStoppageFromActualPlayTime(
     totalStoppedMinutes,
     predictedAddedMs,
     predictedAddedMinutes,
-    source: '365scores-actual-play-time',
-    kind: 'calculated-stoppage',
+    source: "365scores-actual-play-time",
+    kind: "calculated-stoppage",
     incidents: [],
   };
 }
 
 function parseAddedTimeMinutes(value?: string | number | null) {
   if (value === undefined || value === null) return null;
-  const normalized = String(value).replace(/\s+/g, '');
+  const normalized = String(value).replace(/\s+/g, "");
   const match = normalized.match(/(?:45|90|105|120)\+(\d{1,2})/);
   if (!match) return null;
   const minutes = Number(match[1]);
@@ -336,9 +430,9 @@ function parseAddedTimeMinutes(value?: string | number | null) {
 
 function calculateAnnouncedAddedTime(
   addedMinutes: number | null,
-  source: StoppageInfo['source'],
+  source: StoppageInfo["source"],
   reason: string,
-  timeline?: string
+  timeline?: string,
 ): StoppageInfo | undefined {
   if (!addedMinutes || addedMinutes <= 0) return undefined;
   const predictedAddedMs = addedMinutes * 60_000;
@@ -348,26 +442,29 @@ function calculateAnnouncedAddedTime(
     predictedAddedMs,
     predictedAddedMinutes: addedMinutes,
     source,
-    kind: 'announced-added-time',
+    kind: "announced-added-time",
     incidents: [],
   };
 }
 
-function statDisplayValue(value: Scores365Statistic['value']) {
-  if (value === undefined || value === null || value === '') return '-';
+function statDisplayValue(value: Scores365Statistic["value"]) {
+  if (value === undefined || value === null || value === "") return "-";
   return String(value);
 }
 
 function parseStatNumber(value: string) {
-  const numeric = Number(value.replace('%', '').replace(',', '.').trim());
+  const numeric = Number(value.replace("%", "").replace(",", ".").trim());
   return Number.isFinite(numeric) ? numeric : null;
 }
 
 function statKey(stat: Scores365Statistic) {
-  return `${stat.id ?? 'stat'}:${normalizeText(stat.name ?? '')}`;
+  return `${stat.id ?? "stat"}:${normalizeText(stat.name ?? "")}`;
 }
 
-function extractRowsForMatch(stats: Scores365Statistic[], match: LiveMatch): LiveStatRow[] {
+function extractRowsForMatch(
+  stats: Scores365Statistic[],
+  match: LiveMatch,
+): LiveStatRow[] {
   const rows = new Map<string, LiveStatRow>();
   const homeId = match.homeTeam.id;
   const awayId = match.awayTeam.id;
@@ -380,32 +477,35 @@ function extractRowsForMatch(stats: Scores365Statistic[], match: LiveMatch): Liv
       rows.get(key) ??
       ({
         key,
-        label: stat.name ?? 'Estatistica',
-        home: '-',
-        away: '-',
+        label: stat.name ?? "Estatistica",
+        home: "-",
+        away: "-",
         order: stat.order ?? 999,
         categoryOrder: stat.categoryOrder ?? 999,
         category: stat.categoryName,
         isMajor: stat.isMajor,
       } satisfies LiveStatRow);
 
-    if (stat.competitorId === homeId) current.home = statDisplayValue(stat.value);
-    if (stat.competitorId === awayId) current.away = statDisplayValue(stat.value);
+    if (stat.competitorId === homeId)
+      current.home = statDisplayValue(stat.value);
+    if (stat.competitorId === awayId)
+      current.away = statDisplayValue(stat.value);
     current.isMajor = current.isMajor || stat.isMajor;
     rows.set(key, current);
   }
 
   return [...rows.values()].sort((a, b) => {
     if (a.order !== b.order) return a.order - b.order;
-    if (a.categoryOrder !== b.categoryOrder) return a.categoryOrder - b.categoryOrder;
-    return a.label.localeCompare(b.label, 'pt-BR');
+    if (a.categoryOrder !== b.categoryOrder)
+      return a.categoryOrder - b.categoryOrder;
+    return a.label.localeCompare(b.label, "pt-BR");
   });
 }
 
 function extractCornersFromRows(rows: LiveStatRow[]) {
   const cornerRow = rows.find((row) => {
     const label = normalizeText(row.label);
-    return label.includes('escanteio') || label.includes('corner');
+    return label.includes("escanteio") || label.includes("corner");
   });
 
   if (!cornerRow) return undefined;
@@ -418,19 +518,24 @@ function extractCornersFromRows(rows: LiveStatRow[]) {
 }
 
 function apiFootballStatValue(value: number | string | null) {
-  if (value === undefined || value === null || value === '') return '-';
+  if (value === undefined || value === null || value === "") return "-";
   return String(value);
 }
 
 function extractApiFootballRows(
   stats: ApiFootballTeamStatistics[],
   homeTeamId: number,
-  awayTeamId: number
+  awayTeamId: number,
 ): LiveStatRow[] {
   const rows = new Map<string, LiveStatRow>();
 
   for (const teamStats of stats) {
-    const side = teamStats.team.id === homeTeamId ? 'home' : teamStats.team.id === awayTeamId ? 'away' : null;
+    const side =
+      teamStats.team.id === homeTeamId
+        ? "home"
+        : teamStats.team.id === awayTeamId
+          ? "away"
+          : null;
     if (!side) continue;
 
     teamStats.statistics.forEach((stat, index) => {
@@ -440,12 +545,18 @@ function extractApiFootballRows(
         ({
           key,
           label: stat.type,
-          home: '-',
-          away: '-',
+          home: "-",
+          away: "-",
           order: index,
           categoryOrder: 0,
-          category: 'API-Football',
-          isMajor: ['corner kicks', 'shots on goal', 'ball possession', 'yellow cards', 'red cards'].includes(key),
+          category: "API-Football",
+          isMajor: [
+            "corner kicks",
+            "shots on goal",
+            "ball possession",
+            "yellow cards",
+            "red cards",
+          ].includes(key),
         } satisfies LiveStatRow);
 
       current[side] = apiFootballStatValue(stat.value);
@@ -453,30 +564,43 @@ function extractApiFootballRows(
     });
   }
 
-  return [...rows.values()].sort((a, b) => a.order - b.order || a.label.localeCompare(b.label, 'pt-BR'));
+  return [...rows.values()].sort(
+    (a, b) => a.order - b.order || a.label.localeCompare(b.label, "pt-BR"),
+  );
 }
 
-async function fetchApiFootballStats(match: LiveMatch): Promise<Pick<LiveMatch, 'corners' | 'liveStats' | 'statsSource'> | null> {
-  const response = await apiFootballGet<ApiFootballTeamStatistics[]>('/fixtures/statistics', {
-    params: { fixture: match.sourceIds?.apiFootball ?? match.id },
-    cache: 'no-store',
-    timeoutMs: 8_000,
-  });
+async function fetchApiFootballStats(
+  match: LiveMatch,
+): Promise<Pick<LiveMatch, "corners" | "liveStats" | "statsSource"> | null> {
+  const response = await apiFootballGet<ApiFootballTeamStatistics[]>(
+    "/fixtures/statistics",
+    {
+      params: { fixture: match.sourceIds?.apiFootball ?? match.id },
+      cache: "no-store",
+      timeoutMs: 8_000,
+    },
+  );
 
   const stats = response?.response ?? [];
   if (stats.length === 0) return null;
 
-  const liveStats = extractApiFootballRows(stats, match.homeTeam.id, match.awayTeam.id);
+  const liveStats = extractApiFootballRows(
+    stats,
+    match.homeTeam.id,
+    match.awayTeam.id,
+  );
   if (liveStats.length === 0) return null;
 
   return {
     corners: extractCornersFromRows(liveStats) ?? match.corners,
     liveStats,
-    statsSource: 'api-football',
+    statsSource: "api-football",
   };
 }
 
-async function enrichWithApiFootballStats(matches: LiveMatch[]): Promise<LiveMatch[]> {
+async function enrichWithApiFootballStats(
+  matches: LiveMatch[],
+): Promise<LiveMatch[]> {
   const enrichedMatches = [...matches];
   const candidates = enrichedMatches
     .map((match, index) => ({ match, index }))
@@ -493,35 +617,37 @@ async function enrichWithApiFootballStats(matches: LiveMatch[]): Promise<LiveMat
         liveStats: stats.liveStats,
         statsSource: stats.statsSource,
       };
-    })
+    }),
   );
 
   return enrichedMatches;
 }
 
 async function enrichWith365Stats(matches: LiveMatch[]): Promise<LiveMatch[]> {
-  const ids = [...new Set(matches.map((match) => match.sourceIds?.scores365 ?? match.id))].filter(
-    (id) => Number.isFinite(id) && id > 0
-  );
+  const ids = [
+    ...new Set(matches.map((match) => match.sourceIds?.scores365 ?? match.id)),
+  ].filter((id) => Number.isFinite(id) && id > 0);
 
   if (ids.length === 0) return matches;
 
   try {
     const statsRes = await fetchWithTimeout(
-      `https://webws.365scores.com/web/game/stats/?appTypeId=5&langId=31&games=${ids.join(',')}`,
+      `https://webws.365scores.com/web/game/stats/?appTypeId=5&langId=31&games=${ids.join(",")}`,
       {
         headers: {
           ...SCORES365_HEADERS,
-          Referer: 'https://www.365scores.com/pt-br',
-          Origin: 'https://www.365scores.com',
+          Referer: "https://www.365scores.com/pt-br",
+          Origin: "https://www.365scores.com",
         },
-        cache: 'no-store',
-      }
+        cache: "no-store",
+      },
     );
 
     if (!statsRes.ok) return matches;
 
-    const data = (await statsRes.json()) as { statistics?: Scores365Statistic[] };
+    const data = (await statsRes.json()) as {
+      statistics?: Scores365Statistic[];
+    };
     const stats = data.statistics ?? [];
     if (stats.length === 0) return matches;
 
@@ -533,11 +659,11 @@ async function enrichWith365Stats(matches: LiveMatch[]): Promise<LiveMatch[]> {
         ...match,
         corners: extractCornersFromRows(liveStats) ?? match.corners,
         liveStats,
-        statsSource: '365scores',
+        statsSource: "365scores",
       };
     });
   } catch (err) {
-    console.warn('[live/365scores/stats] error:', err);
+    console.warn("[live/365scores/stats] error:", err);
     return matches;
   }
 }
@@ -551,7 +677,7 @@ function messageTime(message: PlayByPlayMessage) {
 async function fetchWithTimeout(
   input: string,
   init: RequestInit,
-  timeoutMs = STOPPAGE_FETCH_TIMEOUT_MS
+  timeoutMs = STOPPAGE_FETCH_TIMEOUT_MS,
 ) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
@@ -562,12 +688,104 @@ async function fetchWithTimeout(
   }
 }
 
-function calculateStoppageInfo(messages: PlayByPlayMessage[]): StoppageInfo | undefined {
+function detectEventType(
+  comment: string,
+): keyof typeof EVENT_STOPPAGE_WEIGHTS_MS | null {
+  const normalized = normalizeText(comment);
+
+  if (EVENT_TERMS.var.some((term) => normalized.includes(normalizeText(term))))
+    return "var";
+  if (
+    EVENT_TERMS.medical.some((term) => normalized.includes(normalizeText(term)))
+  )
+    return "medical";
+  if (
+    EVENT_TERMS.substitution.some((term) =>
+      normalized.includes(normalizeText(term)),
+    )
+  )
+    return "substitution";
+  if (
+    EVENT_TERMS["red-card"].some((term) =>
+      normalized.includes(normalizeText(term)),
+    )
+  )
+    return "red-card";
+  if (
+    EVENT_TERMS["yellow-card"].some((term) =>
+      normalized.includes(normalizeText(term)),
+    )
+  )
+    return "yellow-card";
+  if (EVENT_TERMS.goal.some((term) => normalized.includes(normalizeText(term))))
+    return "goal";
+
+  return null;
+}
+
+function calculateStoppageFromRealEvents(
+  messages: PlayByPlayMessage[],
+): StoppageInfo | undefined {
+  const incidents = messages
+    .map((message) => {
+      const comment = message.Comment ?? "";
+      const eventType = detectEventType(comment);
+      const timestamp = messageTime(message);
+
+      if (!eventType || timestamp === null) return null;
+
+      const durationMs = EVENT_STOPPAGE_WEIGHTS_MS[eventType];
+      if (durationMs <= 0) return null;
+
+      return {
+        startAt: new Date(timestamp).toISOString(),
+        durationMs,
+        reason: comment,
+        period: message.Period,
+        timeline: message.Timeline,
+        eventType,
+      } satisfies StoppageIncident;
+    })
+    .filter((incident): incident is StoppageIncident => Boolean(incident));
+
+  if (incidents.length === 0) return undefined;
+
+  const uniqueIncidents = new Map<string, StoppageIncident>();
+  for (const incident of incidents) {
+    const minuteKey = incident.timeline ?? incident.startAt.slice(0, 16);
+    const key = `${minuteKey}:${incident.eventType}:${normalizeText(incident.reason).slice(0, 80)}`;
+    if (!uniqueIncidents.has(key)) uniqueIncidents.set(key, incident);
+  }
+
+  const finalIncidents = [...uniqueIncidents.values()].sort(
+    (a, b) => Date.parse(a.startAt) - Date.parse(b.startAt),
+  );
+
+  const totalStoppedMs = finalIncidents.reduce(
+    (sum, incident) => sum + incident.durationMs,
+    0,
+  );
+  if (totalStoppedMs <= 0) return undefined;
+
+  return {
+    totalStoppedMs,
+    totalStoppedMinutes: toRoundedMinutes(totalStoppedMs),
+    predictedAddedMs: totalStoppedMs,
+    predictedAddedMinutes: toRoundedMinutes(totalStoppedMs),
+    source: "365scores-event-estimate",
+    kind: "estimated-from-events",
+    incidents: finalIncidents,
+  };
+}
+
+function calculateStoppageInfo(
+  messages: PlayByPlayMessage[],
+): StoppageInfo | undefined {
   const sortedMessages = messages
     .map((message) => ({ message, timestamp: messageTime(message) }))
     .filter(
       (entry): entry is { message: PlayByPlayMessage; timestamp: number } =>
-        typeof entry.timestamp === 'number' && Boolean(entry.message.Comment)
+        typeof entry.timestamp === "number" && Boolean(entry.message.Comment),
     )
     .sort((a, b) => a.timestamp - b.timestamp);
 
@@ -583,7 +801,7 @@ function calculateStoppageInfo(messages: PlayByPlayMessage[]): StoppageInfo | un
     | undefined;
 
   for (const entry of sortedMessages) {
-    const comment = entry.message.Comment ?? '';
+    const comment = entry.message.Comment ?? "";
 
     if (!openIncident && hasTerm(comment, STOPPAGE_START_TERMS)) {
       openIncident = {
@@ -598,7 +816,10 @@ function calculateStoppageInfo(messages: PlayByPlayMessage[]): StoppageInfo | un
 
     if (openIncident && hasTerm(comment, STOPPAGE_END_TERMS)) {
       const durationMs = entry.timestamp - openIncident.startMs;
-      if (durationMs >= STOPPAGE_MIN_DURATION_MS && durationMs <= STOPPAGE_MAX_OPEN_DURATION_MS) {
+      if (
+        durationMs >= STOPPAGE_MIN_DURATION_MS &&
+        durationMs <= STOPPAGE_MAX_OPEN_DURATION_MS
+      ) {
         incidents.push({
           startAt: openIncident.startAt,
           endAt: new Date(entry.timestamp).toISOString(),
@@ -613,7 +834,10 @@ function calculateStoppageInfo(messages: PlayByPlayMessage[]): StoppageInfo | un
   }
 
   if (openIncident) {
-    const durationMs = Math.min(Date.now() - openIncident.startMs, STOPPAGE_MAX_OPEN_DURATION_MS);
+    const durationMs = Math.min(
+      Date.now() - openIncident.startMs,
+      STOPPAGE_MAX_OPEN_DURATION_MS,
+    );
     if (durationMs >= STOPPAGE_MIN_DURATION_MS) {
       incidents.push({
         startAt: openIncident.startAt,
@@ -625,7 +849,10 @@ function calculateStoppageInfo(messages: PlayByPlayMessage[]): StoppageInfo | un
     }
   }
 
-  const totalStoppedMs = incidents.reduce((sum, incident) => sum + incident.durationMs, 0);
+  const totalStoppedMs = incidents.reduce(
+    (sum, incident) => sum + incident.durationMs,
+    0,
+  );
   if (totalStoppedMs <= 0) return undefined;
 
   const predictedAddedMs = Math.round(totalStoppedMs * 0.8);
@@ -634,20 +861,22 @@ function calculateStoppageInfo(messages: PlayByPlayMessage[]): StoppageInfo | un
     totalStoppedMinutes: toRoundedMinutes(totalStoppedMs),
     predictedAddedMs,
     predictedAddedMinutes: toRoundedMinutes(predictedAddedMs),
-    source: '365scores-sportradar',
-    kind: 'calculated-stoppage',
+    source: "365scores-sportradar",
+    kind: "calculated-stoppage",
     incidents,
   };
 }
 
-async function fetchStoppageInfo(gameId: number): Promise<StoppageInfo | undefined> {
+async function fetchStoppageInfo(
+  gameId: number,
+): Promise<StoppageInfo | undefined> {
   try {
     const detailRes = await fetchWithTimeout(
       `https://webws.365scores.com/web/game/?appTypeId=5&langId=31&gameId=${gameId}`,
       {
         headers: SCORES365_HEADERS,
-        cache: 'no-store',
-      }
+        cache: "no-store",
+      },
     );
 
     if (!detailRes.ok) return undefined;
@@ -665,19 +894,27 @@ async function fetchStoppageInfo(gameId: number): Promise<StoppageInfo | undefin
     if (feedURL) {
       const playByPlayRes = await fetchWithTimeout(feedURL, {
         headers: SCORES365_HEADERS,
-        cache: 'no-store',
+        cache: "no-store",
       });
 
       if (playByPlayRes.ok) {
-        const playByPlay = (await playByPlayRes.json()) as { Messages?: PlayByPlayMessage[] };
-        const fromPlayByPlay = calculateStoppageInfo(playByPlay.Messages ?? []);
+        const playByPlay = (await playByPlayRes.json()) as {
+          Messages?: PlayByPlayMessage[];
+        };
+        const messages = playByPlay.Messages ?? [];
+        const fromRealEvents = calculateStoppageFromRealEvents(messages);
+        if (fromRealEvents) return fromRealEvents;
+
+        const fromPlayByPlay = calculateStoppageInfo(messages);
         if (fromPlayByPlay) return fromPlayByPlay;
       }
     }
 
-    return calculateStoppageFromActualPlayTime(detail.game?.actualPlayTime);
+    // Evitamos usar actualPlayTime como base principal porque a 365Scores pode enviar
+    // tempo de bola rolando acumulado/defasado e gerar acréscimos irreais.
+    return undefined;
   } catch (err) {
-    console.warn('[live/365scores/stoppage] error:', err);
+    console.warn("[live/365scores/stoppage] error:", err);
     return undefined;
   }
 }
@@ -692,7 +929,7 @@ async function enrichWithStoppage(matches: LiveMatch[]): Promise<LiveMatch[]> {
       if (stoppage) {
         enrichedMatches[index] = { ...match, stoppage };
       }
-    })
+    }),
   );
 
   return enrichedMatches;
@@ -700,10 +937,13 @@ async function enrichWithStoppage(matches: LiveMatch[]): Promise<LiveMatch[]> {
 
 async function fetchFrom365Scores(): Promise<LiveMatch[]> {
   try {
-    const res = await fetch('https://webws.365scores.com/web/games/?appTypeId=5&langId=31&statuses=2', {
-      headers: SCORES365_HEADERS,
-      cache: 'no-store',
-    });
+    const res = await fetch(
+      "https://webws.365scores.com/web/games/?appTypeId=5&langId=31&statuses=2",
+      {
+        headers: SCORES365_HEADERS,
+        cache: "no-store",
+      },
+    );
 
     if (!res.ok) return [];
 
@@ -713,18 +953,24 @@ async function fetchFrom365Scores(): Promise<LiveMatch[]> {
 
     const liveMatches = (data.games ?? [])
       .filter((game) => {
-        const isFootball = game.sportId === 1 || game.homeCompetitor?.sportId === 1;
-        return isFootball && game.statusGroup === 3 && game.homeCompetitor && game.awayCompetitor;
+        const isFootball =
+          game.sportId === 1 || game.homeCompetitor?.sportId === 1;
+        return (
+          isFootball &&
+          game.statusGroup === 3 &&
+          game.homeCompetitor &&
+          game.awayCompetitor
+        );
       })
       .map((game) => {
-        const displayMinute = game.gameTimeDisplay ?? game.preciseGameTime ?? game.statusText;
+        const displayMinute =
+          game.gameTimeDisplay ?? game.preciseGameTime ?? game.statusText;
         const addedTimeMinutes = parseAddedTimeMinutes(displayMinute);
-        const calculatedStoppage = calculateStoppageFromActualPlayTime(game.actualPlayTime, game.gameTime);
         const announcedAddedTime = calculateAnnouncedAddedTime(
           addedTimeMinutes,
-          '365scores-announced-added-time',
-          'Acréscimo anunciado no relógio da 365Scores.',
-          displayMinute
+          "365scores-announced-added-time",
+          "Acréscimo anunciado no relógio da 365Scores.",
+          displayMinute,
         );
 
         return {
@@ -732,32 +978,32 @@ async function fetchFrom365Scores(): Promise<LiveMatch[]> {
           minute:
             displayMinute && addedTimeMinutes
               ? displayMinute
-              : typeof game.gameTime === 'number' && game.gameTime >= 0
+              : typeof game.gameTime === "number" && game.gameTime >= 0
                 ? game.gameTime
-                : game.statusText || 'AO VIVO',
-          statusText: game.statusText || 'Ao vivo',
+                : game.statusText || "AO VIVO",
+          statusText: game.statusText || "Ao vivo",
           homeTeam: {
             id: game.homeCompetitor?.id ?? 0,
-            name: game.homeCompetitor?.name ?? 'Mandante',
+            name: game.homeCompetitor?.name ?? "Mandante",
             score: Math.max(0, game.homeCompetitor?.score ?? 0),
           },
           awayTeam: {
             id: game.awayCompetitor?.id ?? 0,
-            name: game.awayCompetitor?.name ?? 'Visitante',
+            name: game.awayCompetitor?.name ?? "Visitante",
             score: Math.max(0, game.awayCompetitor?.score ?? 0),
           },
           competition: formatScores365Competition(game),
           competitionId: game.competitionId ?? 0,
-          source: '365scores',
+          source: "365scores",
           sourceIds: { scores365: game.id },
-          stoppage: calculatedStoppage ?? announcedAddedTime,
+          stoppage: announcedAddedTime,
         };
       });
 
     const withStats = await enrichWith365Stats(liveMatches);
     return enrichWithStoppage(withStats);
   } catch (err) {
-    console.error('[live/365scores] error:', err);
+    console.error("[live/365scores] error:", err);
     return [];
   }
 }
@@ -766,21 +1012,24 @@ async function fetchFrom365Scores(): Promise<LiveMatch[]> {
 
 async function fetchFromSofascore(): Promise<LiveMatch[]> {
   try {
-    const res = await fetch('https://api.sofascore.com/api/v1/sport/football/events/live', {
-      headers: {
-        'User-Agent':
-          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-        Accept: 'application/json, text/plain, */*',
-        'Accept-Language': 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7',
-        Referer: 'https://www.sofascore.com/',
-        Origin: 'https://www.sofascore.com',
-        'Cache-Control': 'no-cache',
+    const res = await fetch(
+      "https://api.sofascore.com/api/v1/sport/football/events/live",
+      {
+        headers: {
+          "User-Agent":
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+          Accept: "application/json, text/plain, */*",
+          "Accept-Language": "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
+          Referer: "https://www.sofascore.com/",
+          Origin: "https://www.sofascore.com",
+          "Cache-Control": "no-cache",
+        },
+        cache: "no-store",
       },
-      cache: 'no-store',
-    });
+    );
 
     if (!res.ok) {
-      console.warn('[live/sofascore] status:', res.status);
+      console.warn("[live/sofascore] status:", res.status);
       return [];
     }
 
@@ -797,40 +1046,46 @@ async function fetchFromSofascore(): Promise<LiveMatch[]> {
         homeScore?: { current?: number; display?: number };
         awayScore?: { current?: number; display?: number };
         status?: { description?: string; type?: string; period?: string };
-        time?: { currentPeriodStartTimestamp?: number; played?: number; extra?: number };
+        time?: {
+          currentPeriodStartTimestamp?: number;
+          played?: number;
+          extra?: number;
+        };
       }>;
     };
 
     const events = data.events ?? [];
-    console.log('[live/sofascore] events:', events.length);
+    console.log("[live/sofascore] events:", events.length);
 
     return events.map((ev) => {
       // Calculate elapsed minutes
-      let minute: number | string = ev.status?.description ?? 'AO VIVO';
+      let minute: number | string = ev.status?.description ?? "AO VIVO";
       if (ev.time?.currentPeriodStartTimestamp && ev.status?.period) {
-        const elapsed = Math.floor((Date.now() / 1000 - ev.time.currentPeriodStartTimestamp) / 60);
-        if (ev.status.period === '1st' || ev.status.period === 'HT') {
+        const elapsed = Math.floor(
+          (Date.now() / 1000 - ev.time.currentPeriodStartTimestamp) / 60,
+        );
+        if (ev.status.period === "1st" || ev.status.period === "HT") {
           minute = Math.min(45, elapsed);
-        } else if (ev.status.period === '2nd') {
+        } else if (ev.status.period === "2nd") {
           minute = Math.min(90, 45 + elapsed);
-        } else if (ev.status.period === 'OT') {
+        } else if (ev.status.period === "OT") {
           minute = 90 + elapsed;
         }
       }
 
       const announcedAddedTime = calculateAnnouncedAddedTime(
-        typeof ev.time?.extra === 'number'
+        typeof ev.time?.extra === "number"
           ? ev.time.extra
           : parseAddedTimeMinutes(ev.status?.description),
-        'sofascore-announced-added-time',
-        'Acréscimo anunciado pelo relógio/status do SofaScore.',
-        ev.status?.description
+        "sofascore-announced-added-time",
+        "Acréscimo anunciado pelo relógio/status do SofaScore.",
+        ev.status?.description,
       );
 
       return {
         id: ev.id,
         minute,
-        statusText: ev.status?.description ?? 'Ao vivo',
+        statusText: ev.status?.description ?? "Ao vivo",
         homeTeam: {
           id: ev.homeTeam.id,
           name: ev.homeTeam.name,
@@ -841,15 +1096,18 @@ async function fetchFromSofascore(): Promise<LiveMatch[]> {
           name: ev.awayTeam.name,
           score: ev.awayScore?.current ?? ev.awayScore?.display ?? 0,
         },
-        competition: ev.tournament?.uniqueTournament?.name ?? ev.tournament?.name ?? 'Competição',
+        competition:
+          ev.tournament?.uniqueTournament?.name ??
+          ev.tournament?.name ??
+          "Competição",
         competitionId: ev.tournament?.uniqueTournament?.id ?? 0,
-        source: 'sofascore',
+        source: "sofascore",
         sourceIds: { sofascore: ev.id },
         stoppage: announcedAddedTime,
       };
     });
   } catch (err) {
-    console.error('[live/sofascore] error:', err);
+    console.error("[live/sofascore] error:", err);
     return [];
   }
 }
@@ -858,20 +1116,22 @@ async function fetchFromSofascore(): Promise<LiveMatch[]> {
 
 async function fetchFromApiFootball(): Promise<LiveMatch[]> {
   try {
-    const data = await apiFootballGet<ApiFootballLiveFixture[]>('/fixtures', {
-      params: { live: 'all' },
-      cache: 'no-store',
+    const data = await apiFootballGet<ApiFootballLiveFixture[]>("/fixtures", {
+      params: { live: "all" },
+      cache: "no-store",
       timeoutMs: 12_000,
     });
 
     const matches = (data?.response ?? []).map((item) => {
       const announcedAddedTime = calculateAnnouncedAddedTime(
-        typeof item.fixture.status.extra === 'number'
+        typeof item.fixture.status.extra === "number"
           ? item.fixture.status.extra
-          : parseAddedTimeMinutes(item.fixture.status.short ?? item.fixture.status.long),
-        'api-football-announced-added-time',
-        'Acréscimo anunciado pela API-Football.',
-        item.fixture.status.short ?? item.fixture.status.long
+          : parseAddedTimeMinutes(
+              item.fixture.status.short ?? item.fixture.status.long,
+            ),
+        "api-football-announced-added-time",
+        "Acréscimo anunciado pela API-Football.",
+        item.fixture.status.short ?? item.fixture.status.long,
       );
 
       return {
@@ -879,8 +1139,10 @@ async function fetchFromApiFootball(): Promise<LiveMatch[]> {
         minute:
           item.fixture.status.extra && item.fixture.status.elapsed
             ? `${item.fixture.status.elapsed}+${item.fixture.status.extra}'`
-            : item.fixture.status.elapsed ?? item.fixture.status.short ?? 'AO VIVO',
-        statusText: item.fixture.status.long ?? 'Em andamento',
+            : (item.fixture.status.elapsed ??
+              item.fixture.status.short ??
+              "AO VIVO"),
+        statusText: item.fixture.status.long ?? "Em andamento",
         homeTeam: {
           id: item.teams.home.id,
           name: item.teams.home.name,
@@ -893,7 +1155,7 @@ async function fetchFromApiFootball(): Promise<LiveMatch[]> {
         },
         competition: `${item.league.name} (${item.league.country})`,
         competitionId: item.league.id,
-        source: 'api-football',
+        source: "api-football",
         sourceIds: { apiFootball: item.fixture.id },
         stoppage: announcedAddedTime,
       };
@@ -901,7 +1163,7 @@ async function fetchFromApiFootball(): Promise<LiveMatch[]> {
 
     return enrichWithApiFootballStats(matches);
   } catch (err) {
-    console.error('[live/api-football] error:', err);
+    console.error("[live/api-football] error:", err);
     return [];
   }
 }
@@ -917,15 +1179,19 @@ export async function GET() {
       });
     }
 
-    const [scores365Result, sofascoreResult, apiFootballResult] = await Promise.allSettled([
-      fetchFrom365Scores(),
-      fetchFromSofascore(),
-      fetchFromApiFootball(),
-    ]);
+    const [scores365Result, sofascoreResult, apiFootballResult] =
+      await Promise.allSettled([
+        fetchFrom365Scores(),
+        fetchFromSofascore(),
+        fetchFromApiFootball(),
+      ]);
 
-    const scores365Matches = scores365Result.status === 'fulfilled' ? scores365Result.value : [];
-    const sfMatches = sofascoreResult.status === 'fulfilled' ? sofascoreResult.value : [];
-    const afMatches = apiFootballResult.status === 'fulfilled' ? apiFootballResult.value : [];
+    const scores365Matches =
+      scores365Result.status === "fulfilled" ? scores365Result.value : [];
+    const sfMatches =
+      sofascoreResult.status === "fulfilled" ? sofascoreResult.value : [];
+    const afMatches =
+      apiFootballResult.status === "fulfilled" ? apiFootballResult.value : [];
 
     const allMatches: LiveMatch[] = [];
     const indexByKey = new Map<string, number>();
@@ -937,7 +1203,10 @@ export async function GET() {
         indexByKey.set(key, allMatches.length);
         allMatches.push(match);
       } else {
-        allMatches[existingIndex] = mergeMatch(allMatches[existingIndex], match);
+        allMatches[existingIndex] = mergeMatch(
+          allMatches[existingIndex],
+          match,
+        );
       }
     };
 
@@ -963,10 +1232,10 @@ export async function GET() {
 
     return NextResponse.json(body);
   } catch (error) {
-    console.error('[live] error:', error);
+    console.error("[live] error:", error);
     return NextResponse.json(
-      { matches: [], error: 'Failed to fetch live matches' },
-      { status: 500 }
+      { matches: [], error: "Failed to fetch live matches" },
+      { status: 500 },
     );
   }
 }
