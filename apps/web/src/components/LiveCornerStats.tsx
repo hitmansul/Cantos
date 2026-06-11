@@ -133,6 +133,23 @@ function formatMinuteValue(value: number) {
   return `${value.toFixed(1).replace('.0', '')} min`;
 }
 
+type LiveStoppageIncident = NonNullable<LiveMatch['stoppage']>['incidents'][number];
+
+function parseTimelineMinute(value?: string) {
+  if (!value) return null;
+  const match = value.match(/(\d{1,3})(?:\s*\+\s*(\d{1,2}))?/);
+  if (!match) return null;
+
+  const base = Number(match[1]);
+  const extra = match[2] ? Number(match[2]) : 0;
+  if (!Number.isFinite(base) || !Number.isFinite(extra)) return null;
+  return base + extra;
+}
+
+function formatMatchMinute(value: number) {
+  return `${Math.round(value)} min`;
+}
+
 function getOfficialAddedTimePrediction(
   match: LiveMatch
 ): { totalLabel?: string; addedLabel: string; sourceLabel: string; announcedOnly: boolean } | null {
@@ -193,19 +210,54 @@ function formatDurationMs(value: number) {
   return `${minutes}min ${String(seconds).padStart(2, '0')}s`;
 }
 
-function stoppageReasonLabel(reason: string) {
-  if (!reason) return 'Paralisação';
-  return reason
-    .replace(/_/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
 function normalizeStatKey(value: string) {
   return value
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
     .toLowerCase();
+}
+
+function stoppageReasonLabel(reason: string) {
+  const normalized = normalizeStatKey(reason);
+  if (normalized.includes('var') || normalized.includes('video assistant')) return 'Parada para revisão do VAR';
+  if (
+    normalized.includes('medical') ||
+    normalized.includes('treatment') ||
+    normalized.includes('injur') ||
+    normalized.includes('lesion') ||
+    normalized.includes('atendimento')
+  ) {
+    return 'Parada para atendimento médico';
+  }
+  if (normalized.includes('interrupted') || normalized.includes('stopped') || normalized.includes('paralis')) {
+    return 'Paralisação do jogo';
+  }
+  return reason
+    ? reason
+        .replace(/_/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim()
+    : 'Paralisação do jogo';
+}
+
+function incidentStartLabel(incident: LiveStoppageIncident) {
+  const minute = parseTimelineMinute(incident.timeline);
+  if (minute !== null) return `aos ${formatMatchMinute(minute)}`;
+  return `às ${formatIncidentTime(incident.startAt)}`;
+}
+
+function incidentEndLabel(incident: LiveStoppageIncident) {
+  const startMinute = parseTimelineMinute(incident.timeline);
+  if (startMinute !== null && incident.durationMs > 0) {
+    const durationMinutes = Math.max(1, Math.round(incident.durationMs / 60_000));
+    return `aos ${formatMatchMinute(startMinute + durationMinutes)}`;
+  }
+  return incident.endAt ? `às ${formatIncidentTime(incident.endAt)}` : 'não informado';
+}
+
+function detailedStoppageIncidents(match: LiveMatch) {
+  if (match.stoppage?.kind !== 'calculated-stoppage') return [];
+  return match.stoppage.incidents.filter((incident) => incident.durationMs > 0);
 }
 
 function statValue(item: SofascoreStatItem, side: 'home' | 'away') {
@@ -416,6 +468,7 @@ function LiveMatchDetails({
   const [statsError, setStatsError] = useState<string | null>(null);
   const sofascoreId = match.sourceIds?.sofascore ?? (match.source === 'sofascore' ? match.id : null);
   const addedTime = getOfficialAddedTimePrediction(match);
+  const stoppageIncidents = useMemo(() => detailedStoppageIncidents(match), [match]);
   const hasEmbeddedStats = Boolean(match.liveStats?.length);
   const statRows = useMemo(
     () => (match.liveStats?.length ? match.liveStats : extractLiveStatRows(stats)),
@@ -512,30 +565,42 @@ function LiveMatchDetails({
       </div>
 
       {addedTime ? (
-        <div className={`grid gap-3 ${addedTime.announcedOnly ? 'md:grid-cols-1' : 'md:grid-cols-2'}`}>
-          {!addedTime.announcedOnly && (
+        <>
+          <div className="grid gap-3 md:grid-cols-2">
             <div className="rounded-lg border border-cyan-500/20 bg-cyan-500/10 p-3">
               <p className="flex items-center gap-2 text-sm font-semibold text-cyan-300">
                 <Timer className="w-4 h-4" />
                 Tempo total de bola parada
               </p>
-              <p className="mt-1 text-2xl font-bold">{addedTime.totalLabel}</p>
-              <p className="text-xs text-muted-foreground">{addedTime.sourceLabel}</p>
+              <p className="mt-1 text-2xl font-bold">{addedTime.totalLabel ?? 'não informado'}</p>
+              <p className="text-xs text-muted-foreground">
+                {addedTime.announcedOnly
+                  ? 'A fonte não enviou início e fim das paradas.'
+                  : addedTime.sourceLabel}
+              </p>
             </div>
-          )}
-          <div className="rounded-lg border border-amber-500/20 bg-amber-500/10 p-3">
-            <p className="flex items-center gap-2 text-sm font-semibold text-amber-300">
-              <Clock className="w-4 h-4" />
-              Previsão de Acréscimo
-            </p>
-            <p className="mt-1 text-2xl font-bold">{addedTime.addedLabel}</p>
-            <p className="text-xs text-muted-foreground">
-              {addedTime.announcedOnly
-                ? `${addedTime.sourceLabel}. A fonte nao enviou o tempo total de bola parada.`
-                : '80% do tempo total parado identificado.'}
-            </p>
+            <div className="rounded-lg border border-amber-500/20 bg-amber-500/10 p-3">
+              <p className="flex items-center gap-2 text-sm font-semibold text-amber-300">
+                <Clock className="w-4 h-4" />
+                Previsão de Acréscimo
+              </p>
+              <p className="mt-1 text-2xl font-bold">{addedTime.addedLabel}</p>
+              <p className="text-xs text-muted-foreground">
+                {addedTime.announcedOnly
+                  ? `${addedTime.sourceLabel}. A fonte não enviou o tempo total de bola parada.`
+                  : '80% do tempo total parado identificado.'}
+              </p>
+            </div>
           </div>
-        </div>
+          <div className="rounded-lg border border-border bg-background/40 p-3 text-sm text-muted-foreground">
+            <span className="font-semibold text-foreground">Como chegamos nesse número: </span>
+            {addedTime.announcedOnly
+              ? 'a fonte ao vivo informou apenas o acréscimo anunciado no relógio/status do jogo. Como ela não enviou paradas e retomadas, a aplicação mostra o acréscimo, mas não calcula tempo de bola parada.'
+              : stoppageIncidents.length > 0
+                ? 'somamos as paradas com início e retomada recebidas no play-by-play e usamos 80% desse total como Previsão de Acréscimo.'
+                : 'a fonte informou tempo total e tempo de bola rolando. A diferença vira tempo total de bola parada, e a Previsão de Acréscimo usa 80% desse total.'}
+          </div>
+        </>
       ) : (
         <div className="rounded-lg border border-border bg-background/40 p-3 text-sm text-muted-foreground">
           A fonte ao vivo ainda não enviou paradas e retomadas suficientes para calcular tempo de
@@ -543,39 +608,26 @@ function LiveMatchDetails({
         </div>
       )}
 
-      {match.stoppage?.incidents?.length ? (
+      {stoppageIncidents.length > 0 ? (
         <div className="rounded-lg border border-cyan-500/20 bg-cyan-500/5 p-3">
           <p className="mb-3 flex items-center gap-2 text-sm font-semibold text-cyan-300">
             <Timer className="w-4 h-4" />
-            Paralisações detectadas
+            Paradas detectadas
           </p>
           <div className="space-y-2">
-            {match.stoppage.incidents.map((incident, index) => (
+            {stoppageIncidents.map((incident, index) => (
               <div
                 key={`${incident.startAt}-${index}`}
                 className="rounded-md border border-border/70 bg-background/50 p-3 text-sm"
               >
-                <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-                  <span className="font-medium">
-                    {incident.timeline || incident.period || `Paralisação ${index + 1}`}
-                  </span>
+                <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+                  <div className="font-medium">
+                    {stoppageReasonLabel(incident.reason)}: parou {incidentStartLabel(incident)} -
+                    jogo reiniciado {incidentEndLabel(incident)}
+                  </div>
                   <Badge variant="outline" className="text-xs">
                     {formatDurationMs(incident.durationMs)}
                   </Badge>
-                </div>
-                <div className="grid gap-1 text-xs text-muted-foreground sm:grid-cols-3">
-                  <span>
-                    <strong className="text-foreground">Parou:</strong>{' '}
-                    {formatIncidentTime(incident.startAt)}
-                  </span>
-                  <span>
-                    <strong className="text-foreground">Voltou:</strong>{' '}
-                    {formatIncidentTime(incident.endAt)}
-                  </span>
-                  <span>
-                    <strong className="text-foreground">Motivo:</strong>{' '}
-                    {stoppageReasonLabel(incident.reason)}
-                  </span>
                 </div>
               </div>
             ))}
@@ -613,7 +665,7 @@ function LiveMatchDetails({
           </p>
         ) : (
           <p className="text-sm text-muted-foreground">
-            A 365Scores trouxe placar e tempo, mas ainda não enviou estatisticas detalhadas deste
+            A 365Scores trouxe placar e tempo, mas ainda não enviou estatísticas detalhadas deste
             evento.
           </p>
         )}

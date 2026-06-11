@@ -556,6 +556,7 @@ function WorldCupCornerEventCard({
   }, [event.cardLines, event.cornerLines, selectedBookmakers]);
   const primaryLines = useMemo(() => importantLines(allLines), [allLines]);
   const visibleAlerts = event.alerts.filter((alert) => alertMatchesBookmakers(alert, selectedBookmakers));
+  const [showPrimaryLines, setShowPrimaryLines] = useState(false);
 
   return (
     <Card className="p-4 space-y-4 border-emerald-500/20 bg-emerald-950/10">
@@ -606,19 +607,39 @@ function WorldCupCornerEventCard({
           <div className="flex items-center gap-2 text-sm font-semibold">
             <Target className="h-4 w-4 text-emerald-300" />
             Linhas principais
+            <Badge variant="outline" className="text-xs text-muted-foreground">
+              {primaryLines.length} linhas
+            </Badge>
           </div>
 
-          <Button type="button" variant="ghost" size="sm" onClick={() => onOpenAllOdds(event.id)}>
-            Ver todas as odds
-          </Button>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={() => setShowPrimaryLines((current) => !current)}
+            >
+              <ChevronDown className={`mr-2 h-4 w-4 transition-transform ${showPrimaryLines ? 'rotate-180' : ''}`} />
+              {showPrimaryLines ? 'Ocultar linhas' : 'Ver linhas principais'}
+            </Button>
+            <Button type="button" variant="ghost" size="sm" onClick={() => onOpenAllOdds(event.id)}>
+              Ver todas as odds
+            </Button>
+          </div>
         </div>
 
-        <div className="grid gap-3">
-          {primaryLines.map((line) => <FeaturedLineRow key={line.key} line={line} />)}
-          {primaryLines.length === 0 && (
-            <div className="rounded-lg bg-background/30 p-6 text-center text-sm text-muted-foreground">Nenhuma linha encontrada com esses filtros.</div>
-          )}
-        </div>
+        {showPrimaryLines ? (
+          <div className="grid gap-3">
+            {primaryLines.map((line) => <FeaturedLineRow key={line.key} line={line} />)}
+            {primaryLines.length === 0 && (
+              <div className="rounded-lg bg-background/30 p-6 text-center text-sm text-muted-foreground">Nenhuma linha encontrada com esses filtros.</div>
+            )}
+          </div>
+        ) : (
+          <div className="rounded-lg border border-border/60 bg-background/30 p-3 text-sm text-muted-foreground">
+            Clique em <span className="font-semibold text-foreground">Ver linhas principais</span> para abrir as odds resumidas deste jogo.
+          </div>
+        )}
       </div>
     </Card>
   );

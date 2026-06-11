@@ -288,14 +288,7 @@ function calculateStoppageFromActualPlayTime(
     predictedAddedMinutes: toRoundedMinutes(predictedAddedMs),
     source: '365scores-actual-play-time',
     kind: 'calculated-stoppage',
-    incidents: [
-      {
-        startAt: new Date().toISOString(),
-        durationMs: totalStoppedMs,
-        reason: 'Tempo total menos tempo de bola rolando informado pela 365Scores.',
-        timeline: actualPlayTime?.totalTime?.name,
-      },
-    ],
+    incidents: [],
   };
 }
 
@@ -323,14 +316,7 @@ function calculateAnnouncedAddedTime(
     predictedAddedMinutes: addedMinutes,
     source,
     kind: 'announced-added-time',
-    incidents: [
-      {
-        startAt: new Date().toISOString(),
-        durationMs: 0,
-        reason,
-        timeline,
-      },
-    ],
+    incidents: [],
   };
 }
 
