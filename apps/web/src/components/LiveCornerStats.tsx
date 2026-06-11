@@ -312,20 +312,61 @@ function matchKey(match: Pick<LiveMatch, 'homeTeam' | 'awayTeam'>) {
   return `${clean(match.homeTeam.name)}-${clean(match.awayTeam.name)}`;
 }
 
+function betterCorners(base?: LiveMatch['corners'], incoming?: LiveMatch['corners']) {
+  if (!base) return incoming;
+  if (!incoming) return base;
+  if (incoming.total > base.total) return incoming;
+  if (incoming.total === base.total && (incoming.home !== base.home || incoming.away !== base.away)) return incoming;
+  return base;
+}
+
 function mergeLiveMatch(base: LiveMatch, incoming: LiveMatch): LiveMatch {
+  const incomingHasStats = Boolean(incoming.liveStats?.length);
+  const baseHasStats = Boolean(base.liveStats?.length);
+
   return {
     ...base,
     competition: base.competition ?? incoming.competition,
     competitionId: base.competitionId || incoming.competitionId,
-    corners: incoming.corners ?? base.corners,
-    liveStats: incoming.liveStats ?? base.liveStats,
-    statsSource: incoming.statsSource ?? base.statsSource,
+    corners: betterCorners(base.corners, incoming.corners),
+    liveStats: incomingHasStats ? incoming.liveStats : base.liveStats,
+    statsSource: incomingHasStats ? incoming.statsSource : baseHasStats ? base.statsSource : incoming.statsSource,
     stoppage: base.stoppage ?? incoming.stoppage,
     sourceIds: {
       ...base.sourceIds,
       ...incoming.sourceIds,
     },
   };
+}
+
+
+function parseLiveStatNumber(value: string | number | undefined | null): number | null {
+  if (value === undefined || value === null || value === '') return null;
+  const parsed = Number(String(value).replace('%', '').replace(',', '.').trim());
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function cornersFromRows(rows: LiveStatRow[]): LiveMatch['corners'] | undefined {
+  const row = rows.find((item) => {
+    const label = normalizeStatKey(`${item.key} ${item.label}`);
+    return label.includes('corner') || label.includes('escanteio');
+  });
+
+  if (!row) return undefined;
+  const home = parseLiveStatNumber(row.home);
+  const away = parseLiveStatNumber(row.away);
+  if (home === null || away === null) return undefined;
+  return { home, away, total: home + away };
+}
+
+function liveCornersFor(match: LiveMatch, rows: LiveStatRow[], stats: SofascoreStatsResponse | null): LiveMatch['corners'] | undefined {
+  if (match.corners) return match.corners;
+  const fromRows = cornersFromRows(rows);
+  if (fromRows) return fromRows;
+  if (stats && Number.isFinite(stats.homeCorners) && Number.isFinite(stats.awayCorners)) {
+    return { home: stats.homeCorners, away: stats.awayCorners, total: stats.totalCorners };
+  }
+  return undefined;
 }
 
 function LiveMatchCard({
@@ -341,6 +382,7 @@ function LiveMatchCard({
   const minuteDisplay =
     typeof match.minute === 'number' ? `${match.minute}'` : match.minute || match.statusText;
   const addedTime = getOfficialAddedTimePrediction(match);
+  const corners = match.corners;
   return (
     <Card
       role="button"
@@ -432,21 +474,21 @@ function LiveMatchCard({
         </div>
       </div>
 
-      {match.corners && (
+      {corners && (
         <div className="mt-3 pt-3 border-t border-border/50">
           <div className="flex items-center justify-center gap-4 text-sm">
             <div className="flex items-center gap-1 text-amber-400">
               <CornerUpRight className="w-4 h-4" />
-              <span className="font-medium">{match.corners.home}</span>
+              <span className="font-medium">{corners.home}</span>
             </div>
             <span className="text-muted-foreground">Escanteios</span>
             <div className="flex items-center gap-1 text-amber-400">
-              <span className="font-medium">{match.corners.away}</span>
+              <span className="font-medium">{corners.away}</span>
               <CornerUpRight className="w-4 h-4 scale-x-[-1]" />
             </div>
           </div>
           <p className="text-center text-xs text-muted-foreground mt-1">
-            Total: {match.corners.total}
+            Total: {corners.total}
           </p>
         </div>
       )}
@@ -509,6 +551,8 @@ function LiveMatchDetails({
     };
   }, [hasEmbeddedStats, sofascoreId]);
 
+  const liveCorners = liveCornersFor(match, statRows, stats);
+
   const statsSourceLabel =
     match.statsSource === '365scores'
       ? '365Scores'
@@ -555,11 +599,7 @@ function LiveMatchDetails({
         <div className="rounded-lg border border-border bg-background/40 p-3 text-center">
           <p className="text-xs text-muted-foreground">Escanteios ao vivo</p>
           <p className="text-2xl font-bold text-amber-400">
-            {match.corners
-              ? `${match.corners.home} - ${match.corners.away}`
-              : stats
-                ? `${stats.homeCorners} - ${stats.awayCorners}`
-                : '-'}
+            {liveCorners ? `${liveCorners.home} - ${liveCorners.away}` : '-'}
           </p>
         </div>
       </div>
