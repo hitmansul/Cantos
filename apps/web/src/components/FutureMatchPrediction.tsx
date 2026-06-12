@@ -1,7 +1,17 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { AlertCircle, BarChart3, Clock, Loader2, Target, X } from 'lucide-react';
+
+type LocalIconProps = { className?: string };
+const LocalIcon = ({ className = '' }: LocalIconProps) => <span className={`inline-block ${className}`} aria-hidden="true">•</span>;
+const AlertCircle = ({ className = '' }: LocalIconProps) => <span className={`inline-block ${className}`} aria-hidden="true">⚠</span>;
+const BarChart3 = ({ className = '' }: LocalIconProps) => <span className={`inline-block ${className}`} aria-hidden="true">▥</span>;
+const Clock = ({ className = '' }: LocalIconProps) => <span className={`inline-block ${className}`} aria-hidden="true">◷</span>;
+const CreditCard = ({ className = '' }: LocalIconProps) => <span className={`inline-block ${className}`} aria-hidden="true">▣</span>;
+const Loader2 = ({ className = '' }: LocalIconProps) => <span className={`inline-block ${className}`} aria-hidden="true">◌</span>;
+const Target = ({ className = '' }: LocalIconProps) => <span className={`inline-block ${className}`} aria-hidden="true">◎</span>;
+const X = ({ className = '' }: LocalIconProps) => <span className={`inline-block ${className}`} aria-hidden="true">×</span>;
+
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -548,7 +558,7 @@ export function FutureMatchPrediction({
 
         <div className="rounded-lg border border-border bg-background/40 p-3">
           <p className="mb-2 flex items-center gap-2 text-sm font-semibold">
-            <BarChart3 className="w-4 h-4 text-amber-400" />
+            <CreditCard className="w-4 h-4 text-amber-400" />
             Previsão de cartões
           </p>
           <div className="grid grid-cols-2 gap-2">
