@@ -1,1213 +1,1450 @@
-"use client";
+'use client';
 
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect } from 'react';
 import {
-  RefreshCw,
-  AlertCircle,
-  Radio,
-  CornerUpRight,
-  Clock,
   Trophy,
+  Calendar,
+  MapPin,
+  Users,
+  Radio,
+  RefreshCw,
+  Loader2,
+  ExternalLink,
+  Search,
+  UserRound,
+  Ruler,
+  Cake,
+  Building2,
+  Shirt,
   BarChart3,
-  Timer,
-  X,
-} from "lucide-react";
-import { Card } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { FutureMatchPrediction } from "@/components/FutureMatchPrediction";
+  ChevronRight,
+  BadgeDollarSign,
+} from 'lucide-react';
+import { Card } from '@/components/ui/card';
+import { Badge } from '@/components/ui/badge';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Button } from '@/components/ui/button';
+import { ValueAlerts } from '@/components/ValueAlerts';
 
-interface LiveMatch {
-  id: number;
-  minute: number | string;
-  statusText: string;
-  homeTeam: { id: number; name: string; score: number };
-  awayTeam: { id: number; name: string; score: number };
-  competition?: string;
-  competitionId: number;
-  corners?: { home: number; away: number; total: number };
-  liveStats?: LiveStatRow[];
-  statsSource?: "365scores" | "sofascore" | "api-football";
-  source?: string;
-  sourceIds?: {
-    scores365?: number;
-    sofascore?: number;
-    apiFootball?: number;
-  };
-  stoppage?: {
-    totalStoppedMs: number;
-    totalStoppedMinutes: number;
-    predictedAddedMs: number;
-    predictedAddedMinutes: number;
-    source:
-      | "365scores-actual-play-time"
-      | "365scores-sportradar"
-      | "365scores-event-estimate"
-      | "365scores-announced-added-time"
-      | "sofascore-announced-added-time"
-      | "api-football-announced-added-time";
-    kind?:
-      | "calculated-stoppage"
-      | "announced-added-time"
-      | "estimated-from-events";
-    incidents: Array<{
-      startAt: string;
-      endAt?: string;
-      durationMs: number;
-      reason: string;
-      period?: string;
-      timeline?: string;
-      eventType?:
-        | "goal"
-        | "substitution"
-        | "var"
-        | "medical"
-        | "yellow-card"
-        | "red-card"
-        | "other";
-    }>;
-  };
-}
+type WCTeam = { country: string; flag: string };
 
-interface LiveStatRow {
-  key: string;
-  label: string;
-  home: string;
-  away: string;
-  category?: string;
-  isMajor?: boolean;
-}
-
-interface SofascoreStatItem {
-  name: string;
-  home: string | number;
-  away: string | number;
-  homeValue?: number;
-  awayValue?: number;
-  key: string;
-}
-
-interface SofascoreStatsResponse {
-  homeCorners: number;
-  awayCorners: number;
-  totalCorners: number;
-  homeCorners1stHalf: number;
-  awayCorners1stHalf: number;
-  homeCorners2ndHalf: number;
-  awayCorners2ndHalf: number;
-  fullStatistics?: {
-    statistics?: Array<{
-      period: string;
-      groups: Array<{
-        statisticsItems: SofascoreStatItem[];
-      }>;
-    }>;
-  };
-}
-
-// Competition ID to emoji/flag mapping (365Scores IDs + API-Football IDs)
-const COMPETITION_ICONS: Record<number, string> = {
-  // 365Scores
-  113: "🇧🇷",
-  116: "🇧🇷",
-  117: "🇧🇷",
-  7: "🏴󠁧󠁢󠁥󠁮󠁧󠁿",
-  17: "🇮🇹",
-  25: "🇩🇪",
-  35: "🇫🇷",
-  572: "🏆",
-  573: "🏆",
-  // API-Football
-  71: "🇧🇷",
-  72: "🇧🇷",
-  73: "🇧🇷",
-  2: "🏆",
-  3: "🏆",
-  848: "🏆",
-  39: "🏴󠁧󠁢󠁥󠁮󠁧󠁿",
-  40: "🏴󠁧󠁢󠁥󠁮󠁧󠁿",
-  140: "🇪🇸",
-  135: "🇮🇹",
-  78: "🇩🇪",
-  61: "🇫🇷",
-  88: "🇳🇱",
-  94: "🇵🇹",
-  65: "🇧🇪",
-  203: "🇹🇷",
-  197: "🇬🇷",
-  179: "🏴󠁧󠁢󠁳󠁣󠁴󠁿",
-  128: "🇦🇷",
-  13: "🏆",
+type DisplayMatch = {
+  id?: number;
+  startTime: string;
+  venue?: string;
+  flag?: string;
+  homeTeam: WCTeam;
+  awayTeam: WCTeam;
 };
 
-function formatMinuteValue(value: number) {
-  if (value < 1) return `${Math.max(1, Math.round(value * 60))}s`;
-  return `${value.toFixed(1).replace(".0", "")} min`;
-}
+type FifaSquadPlayer = {
+  number: number;
+  position: 'GK' | 'DF' | 'MF' | 'FW';
+  playerName: string;
+  shirtName: string;
+  dateOfBirth: string;
+  club: string;
+  heightCm: number | null;
+};
 
-type LiveStoppageIncident = NonNullable<
-  LiveMatch["stoppage"]
->["incidents"][number];
-
-function parseTimelineMinute(value?: string) {
-  if (!value) return null;
-  const match = value.match(/(\d{1,3})(?:\s*\+\s*(\d{1,2}))?/);
-  if (!match) return null;
-
-  const base = Number(match[1]);
-  const extra = match[2] ? Number(match[2]) : 0;
-  if (!Number.isFinite(base) || !Number.isFinite(extra)) return null;
-  return base + extra;
-}
-
-function formatMatchMinute(value: number) {
-  return `${Math.round(value)} min`;
-}
-
-function getOfficialAddedTimePrediction(match: LiveMatch): {
-  totalLabel?: string;
-  addedLabel: string;
-  sourceLabel: string;
-  announcedOnly: boolean;
-} | null {
-  if (!match.stoppage) return null;
-
-  const incidentCount = match.stoppage.incidents.length;
-  const announcedOnly = match.stoppage.kind === "announced-added-time";
-  const sourceLabels: Record<
-    NonNullable<LiveMatch["stoppage"]>["source"],
-    string
-  > = {
-    "365scores-actual-play-time": "tempo de bola rolando da 365Scores",
-    "365scores-sportradar": "play-by-play da 365Scores/Sportradar",
-    "365scores-event-estimate":
-      "eventos reais do jogo (gol, substituição, VAR, atendimento e cartão)",
-    "365scores-announced-added-time": "acréscimo anunciado pela 365Scores",
-    "sofascore-announced-added-time": "acréscimo anunciado pelo SofaScore",
-    "api-football-announced-added-time":
-      "acréscimo anunciado pela API-Football",
+type FifaSquad = {
+  team: string;
+  code: string;
+  coach?: {
+    name: string;
+    nationality: string;
   };
-  const sourceLabel = sourceLabels[match.stoppage.source] ?? "fonte ao vivo";
+  players: FifaSquadPlayer[];
+};
 
-  if (announcedOnly && match.stoppage.predictedAddedMinutes > 0) {
-    return {
-      totalLabel: "não informado",
-      addedLabel: `+${formatMinuteValue(match.stoppage.predictedAddedMinutes)}`,
-      sourceLabel: `Acréscimo informado via ${sourceLabel}`,
-      announcedOnly: true,
-    };
-  }
+type PositionFilter = FifaSquadPlayer['position'] | 'ALL';
 
-  if (match.stoppage.totalStoppedMs <= 0) return null;
-
-  if (match.stoppage.kind === "estimated-from-events") {
-    return {
-      totalLabel: formatMinuteValue(match.stoppage.totalStoppedMinutes),
-      addedLabel: `+${formatMinuteValue(match.stoppage.predictedAddedMinutes)}`,
-      sourceLabel: `${incidentCount} evento${incidentCount === 1 ? "" : "s"} real${incidentCount === 1 ? "" : "is"} usado${incidentCount === 1 ? "" : "s"} na estimativa: gol, substituição, VAR, atendimento e cartão`,
-      announcedOnly: false,
-    };
-  }
-
-  return {
-    totalLabel: formatMinuteValue(match.stoppage.totalStoppedMinutes),
-    addedLabel: `+${formatMinuteValue(match.stoppage.predictedAddedMinutes)}`,
-    sourceLabel: `${incidentCount} parada${incidentCount === 1 ? "" : "s"} detectada${
-      incidentCount === 1 ? "" : "s"
-    } via ${sourceLabel}`,
-    announcedOnly: false,
+type FifaSquadsResponse = {
+  source: {
+    url: string;
+    articleUrl: string;
+    lastModified: string | null;
+    footerUpdatedAt: string | null;
+    version: string | null;
   };
+  generatedAt: string;
+  totalTeams: number;
+  totalPlayers: number;
+  teams: FifaSquad[];
+};
+
+const POSITION_LABELS: Record<FifaSquadPlayer['position'], string> = {
+  GK: 'Goleiros',
+  DF: 'Defensores',
+  MF: 'Meias',
+  FW: 'Atacantes',
+};
+
+const POSITION_SHORT_LABELS: Record<FifaSquadPlayer['position'], string> = {
+  GK: 'Goleiro',
+  DF: 'Defensor',
+  MF: 'Meia',
+  FW: 'Atacante',
+};
+
+const POSITION_FILTERS: Array<{ value: PositionFilter; label: string }> = [
+  { value: 'ALL', label: 'Todos' },
+  { value: 'GK', label: 'Goleiros' },
+  { value: 'DF', label: 'Defensores' },
+  { value: 'MF', label: 'Meias' },
+  { value: 'FW', label: 'Atacantes' },
+];
+
+const SQUAD_TEAM_ALIASES: Record<string, string> = {
+  alemanha: 'Germany',
+  argentina: 'Argentina',
+  argelia: 'Algeria',
+  australia: 'Australia',
+  austria: 'Austria',
+  belgica: 'Belgium',
+  bosnia: 'Bosnia And Herzegovina',
+  'bosnia e herzegovina': 'Bosnia And Herzegovina',
+  brasil: 'Brazil',
+  canada: 'Canada',
+  catar: 'Qatar',
+  colombia: 'Colombia',
+  'coreia do sul': 'Korea Republic',
+  croacia: 'Croatia',
+  curacao: 'Curacao',
+  equador: 'Ecuador',
+  escocia: 'Scotland',
+  espanha: 'Spain',
+  estados: 'USA',
+  'estados unidos': 'USA',
+  eua: 'USA',
+  franca: 'France',
+  gana: 'Ghana',
+  haiti: 'Haiti',
+  holanda: 'Netherlands',
+  inglaterra: 'England',
+  ira: 'IR Iran',
+  japao: 'Japan',
+  marrocos: 'Morocco',
+  mexico: 'Mexico',
+  noruega: 'Norway',
+  paraguai: 'Paraguay',
+  portugal: 'Portugal',
+  'rep tcheca': 'Czechia',
+  'republica tcheca': 'Czechia',
+  senegal: 'Senegal',
+  suica: 'Switzerland',
+  turquia: 'Turkiye',
+  uruguai: 'Uruguay',
+};
+
+const TEAM_FLAGS: Record<string, string> = {
+  Brasil: '🇧🇷',
+  Brazil: '🇧🇷',
+  Marrocos: '🇲🇦',
+  Morocco: '🇲🇦',
+  Haiti: '🇭🇹',
+  Escócia: '🏴',
+  Scotland: '🏴',
+  México: '🇲🇽',
+  'África do Sul': '🇿🇦',
+  'Coreia do Sul': '🇰🇷',
+  'República Tcheca': '🇨🇿',
+  Canadá: '🇨🇦',
+  'Bósnia e Herzegovina': '🇧🇦',
+  EUA: '🇺🇸',
+  Paraguai: '🇵🇾',
+  Catar: '🇶🇦',
+  Suíça: '🇨🇭',
+};
+
+// Copa do Mundo 2026 — 12 grupos, 48 seleções (Sorteio: 5 de dezembro de 2024)
+const WC_GROUPS: Record<string, WCTeam[]> = {
+  A: [
+    { country: 'México', flag: '🇲🇽' },
+    { country: 'Argentina', flag: '🇦🇷' },
+    { country: 'Polônia', flag: '🇵🇱' },
+    { country: 'Eswatini', flag: '🇸🇿' },
+  ],
+  B: [
+    { country: 'Holanda', flag: '🇳🇱' },
+    { country: 'Portugal', flag: '🇵🇹' },
+    { country: 'Irã', flag: '🇮🇷' },
+    { country: 'Equador', flag: '🇪🇨' },
+  ],
+  C: [
+    { country: 'Brasil', flag: '🇧🇷' },
+    { country: 'Marrocos', flag: '🇲🇦' },
+    { country: 'Haiti', flag: '🇭🇹' },
+    { country: 'Escócia', flag: '🏴󠁧󠁢󠁳󠁣󠁴󠁿' },
+  ],
+  D: [
+    { country: 'França', flag: '🇫🇷' },
+    { country: 'Bélgica', flag: '🇧🇪' },
+    { country: 'Suíça', flag: '🇨🇭' },
+    { country: 'Tailândia', flag: '🇹🇭' },
+  ],
+  E: [
+    { country: 'Alemanha', flag: '🇩🇪' },
+    { country: 'Espanha', flag: '🇪🇸' },
+    { country: 'Indonésia', flag: '🇮🇩' },
+    { country: 'Paraguai', flag: '🇵🇾' },
+  ],
+  F: [
+    { country: 'Portugal', flag: '🇵🇹' },
+    { country: 'Camarões', flag: '🇨🇲' },
+    { country: 'Cuba', flag: '🇨🇺' },
+    { country: 'Eslováquia', flag: '🇸🇰' },
+  ],
+  G: [
+    { country: 'EUA', flag: '🇺🇸' },
+    { country: 'Canadá', flag: '🇨🇦' },
+    { country: 'Uruguai', flag: '🇺🇾' },
+    { country: 'Panamá', flag: '🇵🇦' },
+  ],
+  H: [
+    { country: 'Colômbia', flag: '🇨🇴' },
+    { country: 'Holanda', flag: '🇳🇱' },
+    { country: 'Gana', flag: '🇬🇭' },
+    { country: 'Azerbaijão', flag: '🇦🇿' },
+  ],
+  I: [
+    { country: 'Japão', flag: '🇯🇵' },
+    { country: 'Turquia', flag: '🇹🇷' },
+    { country: 'Costa do Marfim', flag: '🇨🇮' },
+    { country: 'Rep. Tcheca', flag: '🇨🇿' },
+  ],
+  J: [
+    { country: 'Croácia', flag: '🇭🇷' },
+    { country: 'Argélia', flag: '🇩🇿' },
+    { country: 'Bolívia', flag: '🇧🇴' },
+    { country: 'Austrália', flag: '🇦🇺' },
+  ],
+  K: [
+    { country: 'Coreia do Sul', flag: '🇰🇷' },
+    { country: 'Polônia', flag: '🇵🇱' },
+    { country: 'El Salvador', flag: '🇸🇻' },
+    { country: 'Gabão', flag: '🇬🇦' },
+  ],
+  L: [
+    { country: 'Peru', flag: '🇵🇪' },
+    { country: 'Costa Rica', flag: '🇨🇷' },
+    { country: 'Romênia', flag: '🇷🇴' },
+    { country: 'Angola', flag: '🇦🇴' },
+  ],
+};
+
+// Lista reserva confirmada no 365Scores em 01/06/2026.
+const BRAZIL_MATCHES: DisplayMatch[] = [
+  {
+    startTime: '2026-06-13T22:00:00+00:00',
+    venue: 'SoFi Stadium, Los Angeles',
+    homeTeam: { country: 'Brasil', flag: TEAM_FLAGS.Brasil },
+    awayTeam: { country: 'Marrocos', flag: TEAM_FLAGS.Marrocos },
+  },
+  {
+    startTime: '2026-06-20T00:30:00+00:00',
+    venue: 'MetLife Stadium, Nova York/NJ',
+    homeTeam: { country: 'Brasil', flag: TEAM_FLAGS.Brasil },
+    awayTeam: { country: 'Haiti', flag: TEAM_FLAGS.Haiti },
+  },
+  {
+    startTime: '2026-06-24T22:00:00+00:00',
+    flag: '🏴󠁧󠁢󠁳󠁣󠁴󠁿',
+    venue: 'AT&T Stadium, Dallas',
+    homeTeam: { country: 'Escócia', flag: TEAM_FLAGS.Escócia },
+    awayTeam: { country: 'Brasil', flag: TEAM_FLAGS.Brasil },
+  },
+];
+
+// Sedes do torneio
+const VENUES = [
+  { city: 'Nova York/Nova Jersey', stadium: 'MetLife Stadium', cap: '82.500', flag: '🇺🇸' },
+  { city: 'Los Angeles', stadium: 'SoFi Stadium', cap: '70.240', flag: '🇺🇸' },
+  { city: 'Dallas', stadium: 'AT&T Stadium', cap: '80.000', flag: '🇺🇸' },
+  { city: 'San Francisco', stadium: "Levi's Stadium", cap: '68.500', flag: '🇺🇸' },
+  { city: 'Miami', stadium: 'Hard Rock Stadium', cap: '64.767', flag: '🇺🇸' },
+  { city: 'Atlanta', stadium: 'Mercedes-Benz Stadium', cap: '71.000', flag: '🇺🇸' },
+  { city: 'Seattle', stadium: 'Lumen Field', cap: '68.740', flag: '🇺🇸' },
+  { city: 'Kansas City', stadium: 'Arrowhead Stadium', cap: '76.416', flag: '🇺🇸' },
+  { city: 'Houston', stadium: 'NRG Stadium', cap: '72.220', flag: '🇺🇸' },
+  { city: 'Philadelphia', stadium: 'Lincoln Financial Field', cap: '67.594', flag: '🇺🇸' },
+  { city: 'Boston', stadium: 'Gillette Stadium', cap: '65.878', flag: '🇺🇸' },
+  { city: 'Guadalajara', stadium: 'Estadio Akron', cap: '49.850', flag: '🇲🇽' },
+  { city: 'Monterrey', stadium: 'Estadio BBVA', cap: '51.350', flag: '🇲🇽' },
+  { city: 'Cidade do México', stadium: 'Estadio Azteca', cap: '87.523', flag: '🇲🇽' },
+  { city: 'Toronto', stadium: 'BMO Field', cap: '30.000', flag: '🇨🇦' },
+  { city: 'Vancouver', stadium: 'BC Place', cap: '54.320', flag: '🇨🇦' },
+];
+
+// Dias até a Copa começar — fixo (Copa começa 11 Jun 2026, hoje é 20 Mai 2026 = 22 dias)
+const WC_DAYS_LEFT = 22;
+
+function formatMatchDate(isoString: string): string {
+  const date = new Date(isoString);
+  if (Number.isNaN(date.getTime())) return '--';
+  return new Intl.DateTimeFormat('pt-BR', {
+    timeZone: 'America/Sao_Paulo',
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric',
+  }).format(date);
 }
 
-function formatIncidentTime(value?: string) {
-  if (!value) return "não informado";
-  const parsed = Date.parse(value);
-  if (!Number.isFinite(parsed)) return value;
-
-  return new Intl.DateTimeFormat("pt-BR", {
-    timeZone: "America/Sao_Paulo",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-  }).format(parsed);
+function formatShortMatchDate(isoString: string): string {
+  const date = new Date(isoString);
+  if (Number.isNaN(date.getTime())) return '--';
+  return new Intl.DateTimeFormat('pt-BR', {
+    timeZone: 'America/Sao_Paulo',
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+  }).format(date);
 }
 
-function formatDurationMs(value: number) {
-  if (!Number.isFinite(value) || value <= 0) return "não informado";
-  const totalSeconds = Math.round(value / 1000);
-  const minutes = Math.floor(totalSeconds / 60);
-  const seconds = totalSeconds % 60;
-
-  if (minutes <= 0) return `${seconds}s`;
-  return `${minutes}min ${String(seconds).padStart(2, "0")}s`;
+function formatMatchTime(isoString: string): string {
+  const date = new Date(isoString);
+  if (Number.isNaN(date.getTime())) return '--:--';
+  return new Intl.DateTimeFormat('pt-BR', {
+    timeZone: 'America/Sao_Paulo',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).format(date);
 }
 
-function normalizeStatKey(value: string) {
+function formatSourceDate(value?: string | null): string {
+  if (!value) return 'data nao informada';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat('pt-BR', {
+    timeZone: 'America/Sao_Paulo',
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).format(date);
+}
+
+function normalizeTeamName(value: string): string {
   return value
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLowerCase();
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9\s-]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
-function stoppageReasonLabel(
-  reason: string,
-  eventType?: LiveStoppageIncident["eventType"],
-) {
-  if (eventType === "goal") return "Gol";
-  if (eventType === "substitution") return "Substituição";
-  if (eventType === "var") return "VAR";
-  if (eventType === "medical") return "Atendimento médico";
-  if (eventType === "yellow-card") return "Cartão amarelo";
-  if (eventType === "red-card") return "Cartão vermelho";
-
-  const normalized = normalizeStatKey(reason);
-  if (normalized.includes("var")) return "VAR";
-  if (
-    normalized.includes("injur") ||
-    normalized.includes("lesion") ||
-    normalized.includes("atendimento")
-  )
-    return "Atendimento médico";
-  if (
-    normalized.includes("substitution") ||
-    normalized.includes("substituicao")
-  )
-    return "Substituição";
-  if (normalized.includes("goal") || normalized.includes("gol")) return "Gol";
-  if (normalized.includes("yellow")) return "Cartão amarelo";
-  if (normalized.includes("red")) return "Cartão vermelho";
-  return "Evento relevante";
+function fifaTeamLookupName(value: string): string {
+  const normalized = normalizeTeamName(value);
+  return SQUAD_TEAM_ALIASES[normalized] ?? value;
 }
 
-function incidentStartLabel(incident: LiveStoppageIncident) {
-  const minute = parseTimelineMinute(incident.timeline);
-  if (minute !== null) return `aos ${formatMatchMinute(minute)}`;
-  return `às ${formatIncidentTime(incident.startAt)}`;
+function findSquadTeam(teams: FifaSquad[], query: string): FifaSquad | undefined {
+  const normalizedQuery = normalizeTeamName(fifaTeamLookupName(query));
+  const normalizedRaw = normalizeTeamName(query);
+  return teams.find((team) => {
+    const normalizedTeam = normalizeTeamName(`${team.team} ${team.code}`);
+    return normalizedTeam.includes(normalizedQuery) || normalizedTeam.includes(normalizedRaw);
+  });
 }
 
-function incidentEndLabel(incident: LiveStoppageIncident) {
-  const startMinute = parseTimelineMinute(incident.timeline);
-  if (startMinute !== null && incident.durationMs > 0) {
-    const durationMinutes = Math.max(
-      1,
-      Math.round(incident.durationMs / 60_000),
-    );
-    return `aos ${formatMatchMinute(startMinute + durationMinutes)}`;
-  }
-  return incident.endAt
-    ? `às ${formatIncidentTime(incident.endAt)}`
-    : "não informado";
+function playerKey(teamCode: string, player: FifaSquadPlayer): string {
+  return `${teamCode}-${player.number}-${player.playerName}`;
 }
 
-function detailedStoppageIncidents(match: LiveMatch) {
-  if (match.stoppage?.kind !== "calculated-stoppage") return [];
-  return match.stoppage.incidents.filter((incident) => incident.durationMs > 0);
+function parseFifaBirthDate(value: string): Date | null {
+  const [day, month, year] = value.split('/').map(Number);
+  if (!day || !month || !year) return null;
+  const date = new Date(Date.UTC(year, month - 1, day));
+  return Number.isNaN(date.getTime()) ? null : date;
 }
 
-function statValue(item: SofascoreStatItem, side: "home" | "away") {
-  const numeric = side === "home" ? item.homeValue : item.awayValue;
-  if (typeof numeric === "number" && Number.isFinite(numeric))
-    return String(numeric);
-  const value = side === "home" ? item.home : item.away;
-  return value === undefined || value === null || value === ""
-    ? "-"
-    : String(value);
+function playerAge(value: string): number | null {
+  const date = parseFifaBirthDate(value);
+  if (!date) return null;
+  const now = new Date();
+  let age = now.getUTCFullYear() - date.getUTCFullYear();
+  const monthDiff = now.getUTCMonth() - date.getUTCMonth();
+  if (monthDiff < 0 || (monthDiff === 0 && now.getUTCDate() < date.getUTCDate())) age -= 1;
+  return age;
 }
 
-function extractLiveStatRows(stats: SofascoreStatsResponse | null) {
-  const allPeriod = stats?.fullStatistics?.statistics?.find(
-    (period) => period.period === "ALL",
-  );
-  const items =
-    allPeriod?.groups?.flatMap((group) => group.statisticsItems ?? []) ?? [];
-  const priority = [
-    "ballPossession",
-    "expectedGoals",
-    "totalShotsOnGoal",
-    "shotsOnGoal",
-    "cornerKicks",
-    "yellowCards",
-    "redCards",
-    "fouls",
-    "offsides",
-    "goalkeeperSaves",
-    "bigChances",
-    "blockedScoringAttempt",
-  ];
-
-  const unique = new Map<string, SofascoreStatItem>();
-  for (const item of items) {
-    const key = item.key || normalizeStatKey(item.name);
-    if (!unique.has(key)) unique.set(key, item);
-  }
-
-  return priority
-    .map((key) => unique.get(key))
-    .filter((item): item is SofascoreStatItem => Boolean(item))
-    .map((item) => ({
-      key: item.key || item.name,
-      label: item.name,
-      home: statValue(item, "home"),
-      away: statValue(item, "away"),
-    }));
+function average(values: number[]): number | null {
+  const valid = values.filter((value) => Number.isFinite(value));
+  if (valid.length === 0) return null;
+  return Math.round((valid.reduce((sum, value) => sum + value, 0) / valid.length) * 10) / 10;
 }
 
-function matchKey(match: Pick<LiveMatch, "homeTeam" | "awayTeam">) {
-  const clean = (value: string) =>
-    normalizeStatKey(value)
-      .replace(
-        /\b(fc|cf|sc|ac|ec|club|clube|futebol|sport|sporting|real|atletico)\b/g,
-        "",
-      )
-      .replace(/[^a-z0-9]+/g, " ")
-      .replace(/\s+/g, " ")
-      .trim();
-  return `${clean(match.homeTeam.name)}-${clean(match.awayTeam.name)}`;
-}
-
-function betterCorners(
-  base?: LiveMatch["corners"],
-  incoming?: LiveMatch["corners"],
-) {
-  if (!base) return incoming;
-  if (!incoming) return base;
-  if (incoming.total > base.total) return incoming;
-  if (
-    incoming.total === base.total &&
-    (incoming.home !== base.home || incoming.away !== base.away)
-  )
-    return incoming;
-  return base;
-}
-
-function mergeLiveMatch(base: LiveMatch, incoming: LiveMatch): LiveMatch {
-  const incomingHasStats = Boolean(incoming.liveStats?.length);
-  const baseHasStats = Boolean(base.liveStats?.length);
+function selectedTeamSummary(team: FifaSquad) {
+  const heights = team.players
+    .map((player) => player.heightCm)
+    .filter((height): height is number => typeof height === 'number' && Number.isFinite(height));
+  const ages = team.players
+    .map((player) => playerAge(player.dateOfBirth))
+    .filter((age): age is number => typeof age === 'number' && Number.isFinite(age));
+  const clubs = new Set(team.players.map((player) => player.club).filter(Boolean));
+  const positions = (['GK', 'DF', 'MF', 'FW'] as FifaSquadPlayer['position'][]).map((position) => ({
+    position,
+    total: team.players.filter((player) => player.position === position).length,
+  }));
 
   return {
-    ...base,
-    competition: base.competition ?? incoming.competition,
-    competitionId: base.competitionId || incoming.competitionId,
-    corners: betterCorners(base.corners, incoming.corners),
-    liveStats: incomingHasStats ? incoming.liveStats : base.liveStats,
-    statsSource: incomingHasStats
-      ? incoming.statsSource
-      : baseHasStats
-        ? base.statsSource
-        : incoming.statsSource,
-    stoppage: base.stoppage ?? incoming.stoppage,
-    sourceIds: {
-      ...base.sourceIds,
-      ...incoming.sourceIds,
-    },
+    averageHeight: average(heights),
+    averageAge: average(ages),
+    clubs: clubs.size,
+    positions,
   };
 }
 
-function parseLiveStatNumber(
-  value: string | number | undefined | null,
-): number | null {
-  if (value === undefined || value === null || value === "") return null;
-  const parsed = Number(
-    String(value).replace("%", "").replace(",", ".").trim(),
-  );
-  return Number.isFinite(parsed) ? parsed : null;
+function flagForTeam(name: string): string {
+  const normalized = normalizeTeamName(name);
+  const known = Object.entries(TEAM_FLAGS).find(([team]) => normalizeTeamName(team) === normalized);
+  return known?.[1] ?? '';
 }
 
-function cornersFromRows(
-  rows: LiveStatRow[],
-): LiveMatch["corners"] | undefined {
-  const row = rows.find((item) => {
-    const label = normalizeStatKey(`${item.key} ${item.label}`);
-    return label.includes("corner") || label.includes("escanteio");
-  });
-
-  if (!row) return undefined;
-  const home = parseLiveStatNumber(row.home);
-  const away = parseLiveStatNumber(row.away);
-  if (home === null || away === null) return undefined;
-  return { home, away, total: home + away };
+function isBrazilTeamName(name: string): boolean {
+  return ['brasil', 'brazil'].includes(normalizeTeamName(name));
 }
 
-function liveCornersFor(
-  match: LiveMatch,
-  rows: LiveStatRow[],
-  stats: SofascoreStatsResponse | null,
-): LiveMatch["corners"] | undefined {
-  if (match.corners) return match.corners;
-  const fromRows = cornersFromRows(rows);
-  if (fromRows) return fromRows;
-  if (
-    stats &&
-    Number.isFinite(stats.homeCorners) &&
-    Number.isFinite(stats.awayCorners)
-  ) {
-    return {
-      home: stats.homeCorners,
-      away: stats.awayCorners,
-      total: stats.totalCorners,
-    };
+function displayWorldCupTeamName(name: string): string {
+  const normalized = normalizeTeamName(name);
+
+  const names: Record<string, string> = {
+    brazil: 'Brasil',
+    brasil: 'Brasil',
+    morocco: 'Marrocos',
+    marocco: 'Marrocos',
+    marrocos: 'Marrocos',
+    mexico: 'México',
+    'south africa': 'África do Sul',
+    'africa do sul': 'África do Sul',
+    canada: 'Canadá',
+    'bosnia herzegovina': 'Bósnia e Herzegovina',
+    'bosnia and herzegovina': 'Bósnia e Herzegovina',
+    usa: 'EUA',
+    'united states': 'EUA',
+    paraguay: 'Paraguai',
+    qatar: 'Catar',
+    switzerland: 'Suíça',
+    haiti: 'Haiti',
+    scotland: 'Escócia',
+    australia: 'Austrália',
+    turkiye: 'Turquia',
+    turkey: 'Turquia',
+    germany: 'Alemanha',
+    curacao: 'Curaçao',
+    netherlands: 'Holanda',
+    japan: 'Japão',
+  };
+
+  return names[normalized] ?? name;
+}
+
+function worldCupMatchDedupeKey(match: { startTime: string; homeTeam: string; awayTeam: string }): string {
+  const date = match.startTime.slice(0, 10);
+  const home = normalizeTeamName(displayWorldCupTeamName(match.homeTeam));
+  const away = normalizeTeamName(displayWorldCupTeamName(match.awayTeam));
+  const teams = [home, away].sort().join('-');
+  return `${date}-${teams}`;
+}
+
+export function WorldCupPage() {
+  const [activeGroup, setActiveGroup] = useState<string>('C');
+  const [activeTab, setActiveTab] = useState('grupos');
+  const [selectedTeamQuery, setSelectedTeamQuery] = useState('Brasil');
+
+  function openTeamDetails(teamName: string) {
+    setSelectedTeamQuery(teamName);
+    setActiveTab('elencos');
   }
-  return undefined;
-}
-
-function LiveMatchCard({
-  match,
-  selected,
-  onClick,
-}: {
-  match: LiveMatch;
-  selected?: boolean;
-  onClick?: () => void;
-}) {
-  const icon = COMPETITION_ICONS[match.competitionId] || "⚽";
-  const minuteDisplay =
-    typeof match.minute === "number"
-      ? `${match.minute}'`
-      : match.minute || match.statusText;
-  const addedTime = getOfficialAddedTimePrediction(match);
-  const corners = match.corners;
-  return (
-    <Card
-      role="button"
-      tabIndex={0}
-      onClick={onClick}
-      onKeyDown={(event) => {
-        if (event.key === "Enter" || event.key === " ") {
-          event.preventDefault();
-          onClick?.();
-        }
-      }}
-      className={`p-4 cursor-pointer border-emerald-500/30 bg-gradient-to-br from-emerald-500/5 to-green-500/5 hover:border-emerald-400/50 transition-all ${
-        selected ? "ring-2 ring-emerald-500/60 border-emerald-400" : ""
-      }`}
-    >
-      <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
-        <div className="min-w-0 flex items-center gap-2">
-          <span className="text-lg">{icon}</span>
-          <span className="text-xs text-muted-foreground break-words">
-            {match.competition || "Competição"}
-          </span>
-        </div>
-        <Badge className="bg-red-500/20 text-red-400 border-red-500/30 flex items-center gap-1">
-          <Radio
-            className="w-3 h-3"
-            style={{ animation: "livepulse 2s ease-in-out infinite" }}
-          />
-          AO VIVO
-        </Badge>
-      </div>
-
-      <div className="grid items-center gap-3 md:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]">
-        <div className="min-w-0 md:text-right">
-          <p
-            className="font-semibold leading-tight break-words"
-            title={match.homeTeam.name}
-          >
-            {match.homeTeam.name}
-          </p>
-        </div>
-        <div className="flex min-w-[132px] flex-col items-center px-2">
-          <div className="flex items-center gap-2 text-2xl font-bold tabular-nums">
-            <span
-              className={
-                match.homeTeam.score > match.awayTeam.score
-                  ? "text-emerald-400"
-                  : ""
-              }
-            >
-              {match.homeTeam.score}
-            </span>
-            <span className="text-muted-foreground">-</span>
-            <span
-              className={
-                match.awayTeam.score > match.homeTeam.score
-                  ? "text-emerald-400"
-                  : ""
-              }
-            >
-              {match.awayTeam.score}
-            </span>
-          </div>
-          <Badge
-            variant="outline"
-            className="mt-1 bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
-          >
-            <Clock className="w-3 h-3 mr-1" />
-            {minuteDisplay}
-          </Badge>
-          {addedTime && (
-            <div
-              className="mt-2 grid gap-1 text-[11px]"
-              title={
-                addedTime.announcedOnly
-                  ? `${addedTime.sourceLabel}. A fonte informou o acréscimo, mas não enviou o tempo total de bola parada.`
-                  : `${addedTime.sourceLabel}. A previsão de acréscimo usa 80% do tempo total de bola parada identificado.`
-              }
-            >
-              <Badge
-                variant="outline"
-                className="justify-center bg-cyan-500/10 text-cyan-300 border-cyan-500/20"
-              >
-                Bola parada {addedTime.totalLabel}
-              </Badge>
-              <Badge
-                variant="outline"
-                className="justify-center bg-amber-500/10 text-amber-300 border-amber-500/20"
-              >
-                Previsão de Acréscimo {addedTime.addedLabel}
-              </Badge>
-            </div>
-          )}
-          {!addedTime && (
-            <Badge
-              variant="outline"
-              className="mt-2 justify-center border-border/70 bg-background/40 text-[11px] text-muted-foreground"
-              title="A fonte ao vivo ainda não enviou paradas, retomadas ou acrescimo anunciado para este jogo."
-            >
-              Previsão de Acréscimo indisponível
-            </Badge>
-          )}
-        </div>
-        <div className="min-w-0">
-          <p
-            className="font-semibold leading-tight break-words"
-            title={match.awayTeam.name}
-          >
-            {match.awayTeam.name}
-          </p>
-        </div>
-      </div>
-
-      {corners && (
-        <div className="mt-3 pt-3 border-t border-border/50">
-          <div className="flex items-center justify-center gap-4 text-sm">
-            <div className="flex items-center gap-1 text-amber-400">
-              <CornerUpRight className="w-4 h-4" />
-              <span className="font-medium">{corners.home}</span>
-            </div>
-            <span className="text-muted-foreground">Escanteios</span>
-            <div className="flex items-center gap-1 text-amber-400">
-              <span className="font-medium">{corners.away}</span>
-              <CornerUpRight className="w-4 h-4 scale-x-[-1]" />
-            </div>
-          </div>
-          <p className="text-center text-xs text-muted-foreground mt-1">
-            Total: {corners.total}
-          </p>
-        </div>
-      )}
-    </Card>
-  );
-}
-
-function LiveMatchDetails({
-  match,
-  competition,
-  onClose,
-}: {
-  match: LiveMatch;
-  competition: string;
-  onClose: () => void;
-}) {
-  const [stats, setStats] = useState<SofascoreStatsResponse | null>(null);
-  const [statsLoading, setStatsLoading] = useState(false);
-  const [statsError, setStatsError] = useState<string | null>(null);
-  const sofascoreId =
-    match.sourceIds?.sofascore ??
-    (match.source === "sofascore" ? match.id : null);
-  const addedTime = getOfficialAddedTimePrediction(match);
-  const stoppageIncidents = useMemo(
-    () => detailedStoppageIncidents(match),
-    [match],
-  );
-  const hasEmbeddedStats = Boolean(match.liveStats?.length);
-  const statRows = useMemo(
-    () =>
-      match.liveStats?.length ? match.liveStats : extractLiveStatRows(stats),
-    [match.liveStats, stats],
-  );
-
-  useEffect(() => {
-    let cancelled = false;
-
-    if (hasEmbeddedStats || !sofascoreId) {
-      setStats(null);
-      setStatsError(null);
-      setStatsLoading(false);
-      return;
-    }
-
-    async function fetchStats() {
-      setStatsLoading(true);
-      setStatsError(null);
-      try {
-        const res = await fetch(
-          `/api/sofascore-direct/match/${sofascoreId}/statistics`,
-        );
-        const data = (await res.json()) as SofascoreStatsResponse & {
-          error?: string;
-        };
-        if (!res.ok)
-          throw new Error(data.error ?? "Estatísticas indisponíveis");
-        if (!cancelled) setStats(data);
-      } catch (error) {
-        if (!cancelled) {
-          setStats(null);
-          setStatsError(
-            error instanceof Error
-              ? error.message
-              : "Estatísticas indisponíveis",
-          );
-        }
-      } finally {
-        if (!cancelled) setStatsLoading(false);
-      }
-    }
-
-    void fetchStats();
-    return () => {
-      cancelled = true;
-    };
-  }, [hasEmbeddedStats, sofascoreId]);
-
-  const liveCorners = liveCornersFor(match, statRows, stats);
-
-  const statsSourceLabel =
-    match.statsSource === "365scores"
-      ? "365Scores"
-      : match.statsSource === "api-football"
-        ? "API-Football"
-        : match.sourceIds?.sofascore
-          ? "SofaScore"
-          : (match.source ?? "ao vivo");
 
   return (
-    <div className="rounded-xl border border-emerald-500/20 bg-card/80 p-4 space-y-4">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <p className="flex items-center gap-2 text-sm font-semibold text-emerald-400">
-            <BarChart3 className="w-4 h-4" />
-            Estatísticas ao vivo
-          </p>
-          <h4 className="mt-1 text-base font-bold">
-            {match.homeTeam.name}{" "}
-            <span className="text-muted-foreground">x</span>{" "}
-            {match.awayTeam.name}
-          </h4>
-          <p className="text-xs text-muted-foreground">
-            {competition} - estatísticas: {statsSourceLabel}
-          </p>
-        </div>
-        <Button
-          variant="ghost"
-          size="icon"
-          onClick={onClose}
-          className="h-8 w-8"
-        >
-          <X className="w-4 h-4" />
-        </Button>
-      </div>
-
-      <div className="grid gap-3 md:grid-cols-3">
-        <div className="rounded-lg border border-border bg-background/40 p-3 text-center">
-          <p className="text-xs text-muted-foreground">Placar atual</p>
-          <p className="text-2xl font-bold tabular-nums">
-            {match.homeTeam.score} - {match.awayTeam.score}
-          </p>
-        </div>
-        <div className="rounded-lg border border-border bg-background/40 p-3 text-center">
-          <p className="text-xs text-muted-foreground">Tempo</p>
-          <p className="text-2xl font-bold text-emerald-400">
-            {typeof match.minute === "number"
-              ? `${match.minute}'`
-              : match.minute}
-          </p>
-        </div>
-        <div className="rounded-lg border border-border bg-background/40 p-3 text-center">
-          <p className="text-xs text-muted-foreground">Escanteios ao vivo</p>
-          <p className="text-2xl font-bold text-amber-400">
-            {liveCorners ? `${liveCorners.home} - ${liveCorners.away}` : "-"}
-          </p>
-        </div>
-      </div>
-
-      {addedTime ? (
-        <>
-          <div className="grid gap-3 md:grid-cols-2">
-            <div className="rounded-lg border border-cyan-500/20 bg-cyan-500/10 p-3">
-              <p className="flex items-center gap-2 text-sm font-semibold text-cyan-300">
-                <Timer className="w-4 h-4" />
-                Tempo estimado de paradas
-              </p>
-              <p className="mt-1 text-2xl font-bold">
-                {addedTime.totalLabel ?? "não informado"}
-              </p>
-              <p className="text-xs text-muted-foreground">
-                {addedTime.announcedOnly
-                  ? "A fonte não enviou início e fim das paradas."
-                  : addedTime.sourceLabel}
-              </p>
-            </div>
-            <div className="rounded-lg border border-amber-500/20 bg-amber-500/10 p-3">
-              <p className="flex items-center gap-2 text-sm font-semibold text-amber-300">
-                <Clock className="w-4 h-4" />
-                Previsão de Acréscimo
-              </p>
-              <p className="mt-1 text-2xl font-bold">{addedTime.addedLabel}</p>
-              <p className="text-xs text-muted-foreground">
-                {addedTime.announcedOnly
-                  ? `${addedTime.sourceLabel}. A fonte não enviou o tempo total de bola parada.`
-                  : match.stoppage?.kind === "estimated-from-events"
-                    ? "Estimativa por eventos reais do jogo."
-                    : "80% do tempo total parado identificado."}
-              </p>
-            </div>
-          </div>
-          <div className="rounded-lg border border-border bg-background/40 p-3 text-sm text-muted-foreground">
-            <span className="font-semibold text-foreground">
-              Como chegamos nesse número:{" "}
-            </span>
-            {addedTime.announcedOnly
-              ? "a fonte ao vivo informou apenas o acréscimo anunciado no relógio/status do jogo. Como ela não enviou paradas e retomadas, a aplicação mostra o acréscimo, mas não calcula tempo de bola parada."
-              : stoppageIncidents.length > 0
-                ? match.stoppage?.kind === "estimated-from-events"
-                  ? "estimamos o acréscimo pelos eventos reais do jogo: gol, substituição, VAR, atendimento médico e cartões. Cada tipo tem um peso conservador."
-                  : "somamos as paradas com início e retomada recebidas no play-by-play e usamos 80% desse total como Previsão de Acréscimo."
-                : "a fonte informou tempo total e tempo de bola rolando. A diferença vira tempo total de bola parada, e a Previsão de Acréscimo usa 80% desse total."}
-          </div>
-        </>
-      ) : (
-        <div className="rounded-lg border border-border bg-background/40 p-3 text-sm text-muted-foreground">
-          A fonte ao vivo ainda não enviou eventos reais suficientes para
-          estimar o acréscimo deste jogo.
-        </div>
-      )}
-
-      {stoppageIncidents.length > 0 ? (
-        <div className="rounded-lg border border-cyan-500/20 bg-cyan-500/5 p-3">
-          <p className="mb-3 flex items-center gap-2 text-sm font-semibold text-cyan-300">
-            <Timer className="w-4 h-4" />
-            Eventos usados na estimativa
-          </p>
-          <div className="space-y-2">
-            {stoppageIncidents.map((incident, index) => (
-              <div
-                key={`${incident.startAt}-${index}`}
-                className="rounded-md border border-border/70 bg-background/50 p-3 text-sm"
-              >
-                <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-                  <div className="font-medium">
-                    {stoppageReasonLabel(incident.reason, incident.eventType)}:
-                    parou {incidentStartLabel(incident)} - jogo reiniciado{" "}
-                    {incidentEndLabel(incident)}
-                  </div>
-                  <Badge variant="outline" className="text-xs">
-                    {match.stoppage?.kind === "estimated-from-events"
-                      ? `impacto ${formatDurationMs(incident.durationMs)}`
-                      : formatDurationMs(incident.durationMs)}
-                  </Badge>
+    <div className="space-y-6">
+      {/* Header Banner */}
+      <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-green-900 via-emerald-800 to-teal-900 p-6 border border-emerald-500/30">
+        <div className="relative z-10">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+            <div>
+              <div className="flex items-center gap-3 mb-2">
+                <span className="text-4xl">🏆</span>
+                <div>
+                  <h2 className="text-2xl font-bold text-white">Copa do Mundo 2026</h2>
+                  <p className="text-emerald-300 text-sm">EUA 🇺🇸 | México 🇲🇽 | Canadá 🇨🇦</p>
                 </div>
               </div>
-            ))}
-          </div>
-        </div>
-      ) : null}
-
-      <div className="rounded-lg border border-border bg-background/40 p-3">
-        <div className="mb-3 flex items-center justify-between gap-2">
-          <p className="text-sm font-semibold">Números do jogo</p>
-          {statsLoading && (
-            <span className="flex items-center gap-1 text-xs text-muted-foreground">
-              <RefreshCw className="w-3 h-3 animate-spin" />
-              buscando
-            </span>
-          )}
-        </div>
-
-        {statRows.length > 0 ? (
-          <div className="space-y-2">
-            {statRows.map((row) => (
-              <div
-                key={row.key}
-                className="grid grid-cols-[minmax(42px,80px)_minmax(0,1fr)_minmax(42px,80px)] items-center gap-3 rounded-md bg-muted/30 px-3 py-2 text-sm"
-              >
-                <span className="font-semibold tabular-nums">{row.home}</span>
-                <span className="text-center text-muted-foreground">
-                  {row.label}
-                </span>
-                <span className="text-right font-semibold tabular-nums">
-                  {row.away}
-                </span>
+              <div className="flex flex-wrap gap-3 mt-3">
+                <Badge className="bg-emerald-500/20 text-emerald-300 border-emerald-500/30">
+                  <Calendar className="w-3 h-3 mr-1" />
+                  11 Jun – 19 Jul 2026
+                </Badge>
+                <Badge className="bg-blue-500/20 text-blue-300 border-blue-500/30">
+                  <Users className="w-3 h-3 mr-1" />
+                  48 Seleções
+                </Badge>
+                <Badge className="bg-amber-500/20 text-amber-300 border-amber-500/30">
+                  <MapPin className="w-3 h-3 mr-1" />
+                  16 Estádios
+                </Badge>
               </div>
-            ))}
+            </div>
+            <div className="flex flex-col items-center bg-black/30 rounded-xl px-6 py-4 border border-emerald-500/30 min-w-[120px]">
+              <span className="text-4xl font-black text-emerald-400">{WC_DAYS_LEFT}</span>
+              <span className="text-emerald-300 text-sm text-center">dias para o início</span>
+            </div>
           </div>
-        ) : statsError ? (
-          <p className="text-sm text-muted-foreground">
-            Não consegui carregar estatísticas ao vivo do SofaScore para este
-            jogo agora.
-          </p>
-        ) : (
-          <p className="text-sm text-muted-foreground">
-            A 365Scores trouxe placar e tempo, mas ainda não enviou estatísticas
-            detalhadas deste evento.
-          </p>
-        )}
+        </div>
+        <div className="absolute inset-0 opacity-5">
+          <div className="absolute top-4 right-4 text-[120px]">⚽</div>
+        </div>
       </div>
 
-      <FutureMatchPrediction
-        homeTeam={match.homeTeam.name}
-        awayTeam={match.awayTeam.name}
-        league={match.competition || competition}
-        kickoffLabel="Ao vivo"
-      />
+      {/* Main Tabs */}
+      <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
+        <TabsList className="grid w-full grid-cols-7">
+          <TabsTrigger value="grupos" className="gap-2">
+            <Users className="w-4 h-4" />
+            <span className="hidden sm:inline">Grupos</span>
+          </TabsTrigger>
+          <TabsTrigger value="brasil" className="gap-2">
+            <span>🇧🇷</span>
+            <span className="hidden sm:inline">Brasil</span>
+          </TabsTrigger>
+          <TabsTrigger value="agenda" className="gap-2">
+            <Calendar className="w-4 h-4" />
+            <span className="hidden sm:inline">Agenda</span>
+          </TabsTrigger>
+          <TabsTrigger value="resultados" className="gap-2">
+            <Trophy className="w-4 h-4" />
+            <span className="hidden sm:inline">Resultados</span>
+          </TabsTrigger>
+          <TabsTrigger value="elencos" className="gap-2">
+            <Users className="w-4 h-4" />
+            <span className="hidden sm:inline">Selecoes</span>
+          </TabsTrigger>
+          <TabsTrigger value="odds" className="gap-2">
+            <BadgeDollarSign className="w-4 h-4" />
+            <span className="hidden sm:inline">Odds</span>
+          </TabsTrigger>
+          <TabsTrigger value="sedes" className="gap-2">
+            <MapPin className="w-4 h-4" />
+            <span className="hidden sm:inline">Sedes</span>
+          </TabsTrigger>
+        </TabsList>
+
+        {/* Grupos Tab */}
+        <TabsContent value="grupos" className="space-y-4">
+          <div className="flex flex-wrap gap-2">
+            {Object.keys(WC_GROUPS).map((group) => (
+              <Button
+                key={group}
+                size="sm"
+                variant={activeGroup === group ? 'default' : 'outline'}
+                onClick={() => setActiveGroup(group)}
+                className={
+                  activeGroup === group ? 'bg-emerald-600 hover:bg-emerald-700 border-0' : ''
+                }
+              >
+                Grupo {group}
+                {group === 'C' && <span className="ml-1 text-xs">🇧🇷</span>}
+              </Button>
+            ))}
+          </div>
+
+          {activeGroup && (
+            <Card className="overflow-hidden border-emerald-500/20">
+              <div className="px-4 py-3 bg-emerald-500/10 border-b border-emerald-500/20 flex items-center justify-between">
+                <h3 className="font-bold text-lg flex items-center gap-2">
+                  <Trophy className="w-5 h-5 text-amber-400" />
+                  Grupo {activeGroup}
+                  {activeGroup === 'C' && (
+                    <Badge className="bg-green-500/20 text-green-400 border-green-500/30 text-xs">
+                      🇧🇷 Brasil
+                    </Badge>
+                  )}
+                </h3>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead className="bg-muted/50 text-muted-foreground text-xs uppercase">
+                    <tr>
+                      <th className="px-4 py-2 text-left">#</th>
+                      <th className="px-4 py-2 text-left">Seleção</th>
+                      <th className="px-4 py-2 text-center">J</th>
+                      <th className="px-4 py-2 text-center">V</th>
+                      <th className="px-4 py-2 text-center">E</th>
+                      <th className="px-4 py-2 text-center">D</th>
+                      <th className="px-4 py-2 text-center">SG</th>
+                      <th className="px-4 py-2 text-center font-bold">Pts</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border">
+                    {WC_GROUPS[activeGroup].map((team, idx) => (
+                      <tr
+                        key={team.country}
+                        className={`hover:bg-muted/50 transition-colors ${idx < 2 ? 'border-l-2 border-l-emerald-500' : ''}`}
+                      >
+                        <td className="px-4 py-3 text-muted-foreground font-mono">{idx + 1}</td>
+                        <td className="px-4 py-3">
+                          <button
+                            type="button"
+                            onClick={() => openTeamDetails(team.country)}
+                            className="flex items-center gap-3 rounded-lg px-2 py-1 -ml-2 text-left transition-colors hover:bg-emerald-500/10 focus:outline-none focus:ring-2 focus:ring-emerald-500/60"
+                          >
+                            <span className="text-xl">{team.flag}</span>
+                            <span className="font-medium">{team.country}</span>
+                            <ChevronRight className="w-4 h-4 text-muted-foreground" />
+                          </button>
+                        </td>
+                        <td className="px-4 py-3 text-center text-muted-foreground">0</td>
+                        <td className="px-4 py-3 text-center text-green-400">0</td>
+                        <td className="px-4 py-3 text-center text-yellow-400">0</td>
+                        <td className="px-4 py-3 text-center text-red-400">0</td>
+                        <td className="px-4 py-3 text-center text-muted-foreground">0</td>
+                        <td className="px-4 py-3 text-center font-bold text-emerald-400">0</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <div className="px-4 py-2 bg-muted/30 text-xs text-muted-foreground flex items-center gap-2">
+                <span className="inline-flex w-3 h-3 bg-emerald-500 rounded-sm"></span>
+                <span>Os 2 primeiros de cada grupo avançam às oitavas</span>
+              </div>
+            </Card>
+          )}
+
+          <div>
+            <h3 className="text-lg font-semibold mb-3 flex items-center gap-2">
+              <Users className="w-5 h-5 text-primary" />
+              Todos os Grupos
+            </h3>
+            <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-3">
+              {Object.entries(WC_GROUPS).map(([group, teams]) => (
+                <Card
+                  key={group}
+                  className={`p-3 cursor-pointer hover:border-emerald-500/50 transition-colors ${activeGroup === group ? 'border-emerald-500/50 bg-emerald-500/5' : ''}`}
+                  onClick={() => setActiveGroup(group)}
+                >
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="font-bold text-sm text-muted-foreground uppercase">
+                      Grupo {group}
+                    </span>
+                    {group === 'C' && <span className="text-xs">🇧🇷</span>}
+                  </div>
+                  <div className="space-y-1">
+                    {teams.map((t) => (
+                      <button
+                        key={t.country}
+                        type="button"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          openTeamDetails(t.country);
+                        }}
+                        className="flex w-full items-center gap-2 rounded-md px-1 py-0.5 text-left text-sm transition-colors hover:bg-emerald-500/10 focus:outline-none focus:ring-2 focus:ring-emerald-500/50"
+                      >
+                        <span>{t.flag}</span>
+                        <span className="truncate">{t.country}</span>
+                      </button>
+                    ))}
+                  </div>
+                </Card>
+              ))}
+            </div>
+          </div>
+        </TabsContent>
+
+        {/* Brasil Tab */}
+        <TabsContent value="brasil" className="space-y-4">
+          <Card className="overflow-hidden border-green-500/20 bg-gradient-to-br from-green-500/5 to-emerald-500/5">
+            <div className="px-4 py-3 bg-green-500/10 border-b border-green-500/20">
+              <h3 className="font-bold flex items-center gap-2">
+                <span className="text-2xl">🇧🇷</span>
+                Brasil — Grupo C
+              </h3>
+            </div>
+            <div className="p-4 space-y-4">
+              <div className="grid grid-cols-2 gap-3">
+                {WC_GROUPS.C.map((team, idx) => (
+                  <div
+                    key={team.country}
+                    className={`flex items-center gap-3 p-3 rounded-lg ${team.country === 'Brasil' ? 'bg-green-500/20 border border-green-500/30' : 'bg-muted/30'}`}
+                  >
+                    <span className="text-2xl">{team.flag}</span>
+                    <div>
+                      <div className="font-medium text-sm">{team.country}</div>
+                      <div className="text-xs text-muted-foreground">Pos. {idx + 1}</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <div>
+                <h4 className="font-semibold mb-3 flex items-center gap-2">
+                  <Calendar className="w-4 h-4 text-primary" />
+                  Jogos do Brasil — Fase de Grupos
+                </h4>
+                <div className="space-y-3">
+                  <BrazilMatches />
+                </div>
+              </div>
+            </div>
+          </Card>
+
+          <Card className="p-4">
+            <h4 className="font-semibold mb-3 flex items-center gap-2">
+              <Radio className="w-4 h-4 text-emerald-500" />
+              Próximos Jogos — Copa do Mundo 2026 (ao vivo via API)
+            </h4>
+            <WorldCupMatches autoLoad />
+          </Card>
+        </TabsContent>
+
+        {/* Agenda Tab — auto-loaded from 365Scores */}
+        <TabsContent value="agenda" className="space-y-4">
+          <Card className="p-4">
+            <div className="flex items-center gap-2 mb-4">
+              <Calendar className="w-5 h-5 text-primary" />
+              <h3 className="font-semibold">Agenda Completa — Copa do Mundo 2026</h3>
+              <Badge className="bg-emerald-500/20 text-emerald-400 border-emerald-500/30 text-xs">
+                Auto-atualizado
+              </Badge>
+            </div>
+            <WorldCupMatches autoLoad />
+          </Card>
+        </TabsContent>
+
+        {/* Resultados Tab */}
+        <TabsContent value="resultados" className="space-y-4">
+          <Card className="p-4">
+            <div className="flex items-center gap-2 mb-4">
+              <Trophy className="w-5 h-5 text-amber-400" />
+              <h3 className="font-semibold">Resultados — Copa do Mundo 2026</h3>
+            </div>
+            <WorldCupMatches autoLoad showResults />
+          </Card>
+        </TabsContent>
+
+        {/* Elencos Tab */}
+        <TabsContent value="elencos" className="space-y-4">
+          <WorldCupSquads selectedTeamQuery={selectedTeamQuery} />
+        </TabsContent>
+
+        {/* Odds Tab */}
+        <TabsContent value="odds" className="space-y-4">
+          <ValueAlerts scope="world_cup" />
+        </TabsContent>
+
+        {/* Sedes Tab */}
+        <TabsContent value="sedes" className="space-y-4">
+          <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-3">
+            {VENUES.map((v) => (
+              <Card key={v.city} className="p-4 hover:border-primary/30 transition-colors">
+                <div className="flex items-start gap-3">
+                  <span className="text-2xl">{v.flag}</span>
+                  <div>
+                    <div className="font-semibold">{v.city}</div>
+                    <div className="text-sm text-muted-foreground">{v.stadium}</div>
+                    <div className="text-xs text-muted-foreground mt-1 flex items-center gap-1">
+                      <Users className="w-3 h-3" />
+                      {v.cap} lugares
+                    </div>
+                  </div>
+                </div>
+              </Card>
+            ))}
+          </div>
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }
 
-export function LiveMatches() {
-  const [matches, setMatches] = useState<LiveMatch[]>([]);
+function BrazilMatches() {
+  const [matches, setMatches] = useState<DisplayMatch[]>(BRAZIL_MATCHES);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function load() {
+      try {
+        const res = await fetch('/api/365scores/upcoming/copa_do_mundo');
+        if (!res.ok) return;
+        const data = await res.json();
+        const rawMatches: Array<{
+          id: number;
+          startTime: string;
+          venue?: string;
+          homeTeam: { name: string };
+          awayTeam: { name: string };
+        }> = data.matches || [];
+
+        const apiMatches = rawMatches
+          .filter((match) =>
+            [match.homeTeam.name, match.awayTeam.name].some((team) => isBrazilTeamName(team))
+          )
+          .map<DisplayMatch>((match) => ({
+            id: match.id,
+            startTime: match.startTime,
+            venue: match.venue,
+            homeTeam: {
+              country: match.homeTeam.name,
+              flag: flagForTeam(match.homeTeam.name),
+            },
+            awayTeam: {
+              country: match.awayTeam.name,
+              flag: flagForTeam(match.awayTeam.name),
+            },
+          }));
+
+        if (!cancelled && apiMatches.length > 0) {
+          setMatches(apiMatches);
+        }
+      } catch {
+        if (!cancelled) setMatches(BRAZIL_MATCHES);
+      }
+    }
+
+    load();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  return (
+    <>
+      {matches.map((match, i) => (
+        <div
+          key={match.id ?? `${match.startTime}-${i}`}
+          className="bg-muted/40 rounded-lg p-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3"
+        >
+          <div className="flex items-center gap-4">
+            <div className="text-center">
+              <div className="text-xs text-muted-foreground">
+                {formatShortMatchDate(match.startTime)}
+              </div>
+              <div className="font-bold text-sm text-primary">
+                {formatMatchTime(match.startTime)} BRT
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-2xl">{match.homeTeam.flag}</span>
+              <span className="font-semibold">{match.homeTeam.country}</span>
+              <span className="text-muted-foreground mx-2 font-bold">vs</span>
+              <span className="font-semibold">{match.awayTeam.country}</span>
+              <span className="text-2xl">{match.awayTeam.flag}</span>
+            </div>
+          </div>
+          {match.venue && (
+            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+              <MapPin className="w-3 h-3" />
+              {match.venue}
+            </div>
+          )}
+        </div>
+      ))}
+    </>
+  );
+}
+
+function WorldCupSquads({ selectedTeamQuery }: { selectedTeamQuery?: string }) {
+  const [data, setData] = useState<FifaSquadsResponse | null>(null);
+  const [selectedCode, setSelectedCode] = useState('BRA');
+  const [selectedPlayerKey, setSelectedPlayerKey] = useState<string | null>(null);
+  const [positionFilter, setPositionFilter] = useState<PositionFilter>('ALL');
+  const [query, setQuery] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [lastUpdatedDisplay, setLastUpdatedDisplay] = useState("");
-  const [autoRefresh, setAutoRefresh] = useState(true);
-  const [selectedCompetition, setSelectedCompetition] = useState("all");
-  const [selectedMatchId, setSelectedMatchId] = useState<number | null>(null);
-  // fetchTick increments each time a fetch completes — triggers the time update effect
-  const [fetchTick, setFetchTick] = useState(0);
 
-  // Update display time client-side only, triggered by fetchTick
-  useEffect(() => {
-    if (fetchTick === 0) return;
-    setLastUpdatedDisplay(
-      new Intl.DateTimeFormat("pt-BR", {
-        timeZone: "America/Sao_Paulo",
-        hour: "2-digit",
-        minute: "2-digit",
-        second: "2-digit",
-      }).format(Date.now()),
-    );
-  }, [fetchTick]);
-
-  const fetchLiveMatches = useCallback(async () => {
+  async function load(forceRefresh = false) {
+    setLoading(true);
+    setError(null);
     try {
-      setError(null);
-      const [scores365Res, sofascoreRes] = await Promise.allSettled([
-        fetch("/api/365scores/live"),
-        fetch("/api/sofascore-direct/live"),
-      ]);
-
-      const allMatches: LiveMatch[] = [];
-      const indexByKey = new Map<string, number>();
-      const addOrMerge = (match: LiveMatch, fallbackSource: string) => {
-        const key = matchKey(match);
-        const incoming = { ...match, source: match.source ?? fallbackSource };
-        const existingIndex = indexByKey.get(key);
-        if (existingIndex === undefined) {
-          indexByKey.set(key, allMatches.length);
-          allMatches.push(incoming);
-        } else {
-          allMatches[existingIndex] = mergeLiveMatch(
-            allMatches[existingIndex],
-            incoming,
-          );
-        }
-      };
-
-      if (scores365Res.status === "fulfilled" && scores365Res.value.ok) {
-        const data = (await scores365Res.value.json()) as {
-          matches?: LiveMatch[];
-        };
-        for (const match of data.matches ?? []) {
-          addOrMerge(match, "365scores");
-        }
+      const res = await fetch(`/api/fifa/world-cup/squads${forceRefresh ? '?refresh=1' : ''}`);
+      if (!res.ok) throw new Error('Nao foi possivel carregar os elencos oficiais agora.');
+      const response = (await res.json()) as FifaSquadsResponse;
+      setData(response);
+      if (!response.teams.some((team) => team.code === selectedCode)) {
+        setSelectedCode(response.teams[0]?.code ?? 'BRA');
       }
-
-      if (sofascoreRes.status === "fulfilled" && sofascoreRes.value.ok) {
-        const data = (await sofascoreRes.value.json()) as {
-          matches?: LiveMatch[];
-        };
-        for (const match of data.matches ?? []) {
-          addOrMerge(match, "sofascore");
-        }
-      }
-
-      setMatches(allMatches);
-      setFetchTick((t) => t + 1);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Erro desconhecido");
+      setError(err instanceof Error ? err.message : 'Erro desconhecido');
     } finally {
       setLoading(false);
     }
+  }
+
+  useEffect(() => {
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
-    fetchLiveMatches();
-  }, [fetchLiveMatches]);
+    if (!data || !selectedTeamQuery) return;
+    const team = findSquadTeam(data.teams, selectedTeamQuery);
+    if (team) setSelectedCode(team.code);
+  }, [data, selectedTeamQuery]);
 
   useEffect(() => {
-    if (!autoRefresh) return;
-    const interval = setInterval(fetchLiveMatches, 30000);
-    return () => clearInterval(interval);
-  }, [autoRefresh, fetchLiveMatches]);
+    setPositionFilter('ALL');
+    setSelectedPlayerKey(null);
+  }, [selectedCode]);
 
-  const matchesByCompetition = matches.reduce(
-    (acc, match) => {
-      const key = match.competition || "Outras Competições";
-      if (!acc[key]) acc[key] = [];
-      acc[key].push(match);
-      return acc;
-    },
-    {} as Record<string, LiveMatch[]>,
+  const selectedTeam = data?.teams.find((team) => team.code === selectedCode) ?? data?.teams[0];
+  const selectedTeamStats = selectedTeam ? selectedTeamSummary(selectedTeam) : null;
+  const visiblePlayers =
+    selectedTeam?.players.filter((player) => positionFilter === 'ALL' || player.position === positionFilter) ?? [];
+  const selectedPlayer =
+    selectedTeam?.players.find((player) => playerKey(selectedTeam.code, player) === selectedPlayerKey) ??
+    visiblePlayers[0] ??
+    selectedTeam?.players[0] ??
+    null;
+  const filteredTeams =
+    data?.teams.filter((team) => {
+      const term = normalizeTeamName(query);
+      if (!term) return true;
+      return normalizeTeamName(`${team.team} ${team.code}`).includes(term);
+    }) ?? [];
+
+  return (
+    <Card className="overflow-hidden border-emerald-500/20">
+      <div className="p-4 border-b border-border bg-emerald-500/5">
+        <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4">
+          <div>
+            <h3 className="font-bold text-lg flex items-center gap-2">
+              <Users className="w-5 h-5 text-emerald-400" />
+              Selecoes e jogadores oficiais FIFA
+            </h3>
+            <p className="text-sm text-muted-foreground mt-1">
+              Lista oficial de convocados extraida do Football Data Platform.
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Button variant="outline" size="sm" onClick={() => load(true)} disabled={loading}>
+              {loading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <RefreshCw className="w-4 h-4 mr-2" />}
+              Atualizar
+            </Button>
+            {data && (
+              <Button variant="outline" size="sm" asChild>
+                <a href={data.source.url} target="_blank" rel="noreferrer">
+                  <ExternalLink className="w-4 h-4 mr-2" />
+                  PDF oficial
+                </a>
+              </Button>
+            )}
+          </div>
+        </div>
+
+        {data && (
+          <div className="grid sm:grid-cols-3 gap-3 mt-4">
+            <div className="rounded-lg bg-muted/40 p-3">
+              <div className="text-xs text-muted-foreground">Selecoes</div>
+              <div className="text-xl font-bold text-emerald-400">{data.totalTeams}</div>
+            </div>
+            <div className="rounded-lg bg-muted/40 p-3">
+              <div className="text-xs text-muted-foreground">Jogadores</div>
+              <div className="text-xl font-bold text-emerald-400">{data.totalPlayers}</div>
+            </div>
+            <div className="rounded-lg bg-muted/40 p-3">
+              <div className="text-xs text-muted-foreground">Fonte atualizada</div>
+              <div className="text-sm font-semibold">
+                {formatSourceDate(data.source.lastModified)}
+              </div>
+              {data.source.version && (
+                <div className="text-xs text-muted-foreground">Versao {data.source.version}</div>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {loading && !data ? (
+        <div className="flex items-center justify-center py-10">
+          <Loader2 className="w-6 h-6 animate-spin text-emerald-500" />
+          <span className="ml-2 text-muted-foreground">Carregando elencos oficiais...</span>
+        </div>
+      ) : error ? (
+        <div className="text-center py-10 space-y-3">
+          <p className="text-red-400">{error}</p>
+          <Button variant="outline" onClick={() => load()}>
+            <RefreshCw className="w-4 h-4 mr-2" />
+            Tentar novamente
+          </Button>
+        </div>
+      ) : data && selectedTeam ? (
+        <div className="grid lg:grid-cols-[280px_1fr]">
+          <aside className="border-r border-border p-4 space-y-3">
+            <label className="text-xs font-medium text-muted-foreground">Buscar selecao</label>
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+              <input
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder="Brasil, Argentina..."
+                className="w-full rounded-lg border border-border bg-muted/40 pl-9 pr-3 py-2 text-sm outline-none focus:border-emerald-500"
+              />
+            </div>
+            <div className="max-h-[560px] overflow-auto pr-1 space-y-1">
+              {filteredTeams.map((team) => (
+                <button
+                  key={team.code}
+                  type="button"
+                  onClick={() => setSelectedCode(team.code)}
+                  className={`w-full text-left rounded-lg px-3 py-2 text-sm transition-colors ${
+                    selectedTeam.code === team.code
+                      ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                      : 'bg-muted/20 hover:bg-muted/50 border border-transparent'
+                  }`}
+                >
+                  <span className="font-semibold">{team.team}</span>
+                  <span className="text-muted-foreground ml-2">{team.code}</span>
+                </button>
+              ))}
+            </div>
+          </aside>
+
+          <section className="p-4 space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
+              <div>
+                <h4 className="text-xl font-bold flex items-center gap-2">
+                  <span>{flagForTeam(selectedTeam.team)}</span>
+                  {selectedTeam.team}
+                </h4>
+                <p className="text-sm text-muted-foreground">
+                  {selectedTeam.players.length} convocados oficiais
+                  {selectedTeam.coach?.name ? ` • Tecnico: ${selectedTeam.coach.name}` : ''}
+                </p>
+              </div>
+              <Badge className="bg-emerald-500/20 text-emerald-300 border-emerald-500/30">
+                FIFA {data.source.version ? `v${data.source.version}` : ''}
+              </Badge>
+            </div>
+
+            {selectedTeamStats && (
+              <div className="grid sm:grid-cols-4 gap-3">
+                <div className="rounded-lg bg-muted/30 p-3">
+                  <div className="text-xs text-muted-foreground">Jogadores</div>
+                  <div className="text-lg font-bold text-emerald-400">{selectedTeam.players.length}</div>
+                </div>
+                <div className="rounded-lg bg-muted/30 p-3">
+                  <div className="text-xs text-muted-foreground">Clubes</div>
+                  <div className="text-lg font-bold text-emerald-400">{selectedTeamStats.clubs}</div>
+                </div>
+                <div className="rounded-lg bg-muted/30 p-3">
+                  <div className="text-xs text-muted-foreground">Altura media</div>
+                  <div className="text-lg font-bold text-emerald-400">
+                    {selectedTeamStats.averageHeight ? `${selectedTeamStats.averageHeight} cm` : '-'}
+                  </div>
+                </div>
+                <div className="rounded-lg bg-muted/30 p-3">
+                  <div className="text-xs text-muted-foreground">Idade media</div>
+                  <div className="text-lg font-bold text-emerald-400">
+                    {selectedTeamStats.averageAge ? `${selectedTeamStats.averageAge} anos` : '-'}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {selectedTeamStats && (
+              <div className="flex flex-wrap gap-2">
+                {selectedTeamStats.positions.map((item) => (
+                  <Badge key={item.position} variant="outline" className="bg-muted/30">
+                    {POSITION_LABELS[item.position]}: {item.total}
+                  </Badge>
+                ))}
+              </div>
+            )}
+
+            <div className="grid xl:grid-cols-[1fr_360px] gap-4">
+              <div className="rounded-xl border border-border overflow-hidden">
+                <div className="border-b border-border bg-muted/30 p-3 space-y-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <div className="font-semibold flex items-center gap-2">
+                        <Users className="w-4 h-4 text-emerald-400" />
+                        Lista de jogadores
+                      </div>
+                      <div className="text-xs text-muted-foreground">
+                        {visiblePlayers.length} jogadores exibidos
+                      </div>
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {POSITION_FILTERS.map((filter) => (
+                      <button
+                        key={filter.value}
+                        type="button"
+                        onClick={() => setPositionFilter(filter.value)}
+                        className={`rounded-full border px-3 py-1 text-xs font-semibold transition-colors ${
+                          positionFilter === filter.value
+                            ? 'border-emerald-500 bg-emerald-500/20 text-emerald-300'
+                            : 'border-border bg-muted/20 text-muted-foreground hover:bg-muted/50'
+                        }`}
+                      >
+                        {filter.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="divide-y divide-border">
+                  {visiblePlayers.map((player) => {
+                    const key = playerKey(selectedTeam.code, player);
+                    const isSelected = selectedPlayer ? key === playerKey(selectedTeam.code, selectedPlayer) : false;
+                    return (
+                      <button
+                        key={key}
+                        type="button"
+                        onClick={() => setSelectedPlayerKey(key)}
+                        className={`grid w-full grid-cols-[48px_1fr_auto] items-center gap-3 px-4 py-3 text-left transition-colors ${
+                          isSelected ? 'bg-emerald-500/10' : 'hover:bg-muted/30'
+                        }`}
+                      >
+                        <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-muted/50 font-bold text-emerald-300">
+                          {player.number}
+                        </span>
+                        <span className="min-w-0">
+                          <span className="block truncate font-semibold">{player.playerName}</span>
+                          <span className="block truncate text-xs text-muted-foreground">
+                            {POSITION_SHORT_LABELS[player.position]} • {player.club}
+                          </span>
+                        </span>
+                        <ChevronRight className="w-4 h-4 text-muted-foreground" />
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <PlayerPersonalStats team={selectedTeam} player={selectedPlayer} />
+            </div>
+          </section>
+        </div>
+      ) : null}
+    </Card>
   );
+}
 
-  const competitionOptions = Object.entries(matchesByCompetition)
-    .map(([competition, compMatches]) => ({
-      competition,
-      count: compMatches.length,
-    }))
-    .sort(
-      (a, b) => b.count - a.count || a.competition.localeCompare(b.competition),
+// Sub-component: fetches Copa do Mundo upcoming/results from 365Scores API — auto-loads
+function PlayerPersonalStats({ team, player }: { team: FifaSquad; player: FifaSquadPlayer | null }) {
+  if (!player) {
+    return (
+      <aside className="rounded-xl border border-border bg-muted/20 p-4">
+        <div className="text-sm text-muted-foreground">Nenhum jogador selecionado.</div>
+      </aside>
     );
+  }
 
-  useEffect(() => {
-    if (
-      selectedCompetition !== "all" &&
-      !matchesByCompetition[selectedCompetition]
-    ) {
-      setSelectedCompetition("all");
-    }
-  }, [matchesByCompetition, selectedCompetition]);
+  const age = playerAge(player.dateOfBirth);
+  const teamStats = selectedTeamSummary(team);
+  const heightDiff =
+    player.heightCm && teamStats.averageHeight
+      ? Math.round((player.heightCm - teamStats.averageHeight) * 10) / 10
+      : null;
 
-  useEffect(() => {
-    if (
-      selectedMatchId !== null &&
-      !matches.some((match) => match.id === selectedMatchId)
-    ) {
-      setSelectedMatchId(null);
-    }
-  }, [matches, selectedMatchId]);
+  const detailRows = [
+    { icon: Shirt, label: 'Camisa', value: String(player.number) },
+    { icon: UserRound, label: 'Posicao', value: POSITION_SHORT_LABELS[player.position] },
+    { icon: Building2, label: 'Clube', value: player.club || '-' },
+    { icon: Cake, label: 'Idade', value: age ? `${age} anos` : '-' },
+    { icon: Calendar, label: 'Nascimento', value: player.dateOfBirth || '-' },
+    { icon: Ruler, label: 'Altura', value: player.heightCm ? `${player.heightCm} cm` : '-' },
+  ];
 
-  const visibleMatches =
-    selectedCompetition === "all"
-      ? matches
-      : matches.filter(
-          (match) =>
-            (match.competition || "Outras Competições") === selectedCompetition,
+  return (
+    <aside className="rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-4 space-y-4">
+      <div className="space-y-1">
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-emerald-500/20 text-lg font-black text-emerald-300">
+            {player.number}
+          </div>
+          <Badge className="bg-emerald-500/20 text-emerald-300 border-emerald-500/30">
+            {team.code}
+          </Badge>
+        </div>
+        <h5 className="text-lg font-bold leading-tight">{player.playerName}</h5>
+        <p className="text-sm text-muted-foreground">
+          {POSITION_SHORT_LABELS[player.position]} de {team.team}
+        </p>
+      </div>
+
+      <div className="grid grid-cols-2 gap-2">
+        {detailRows.map((row) => {
+          const Icon = row.icon;
+          return (
+            <div key={row.label} className="rounded-lg bg-muted/30 p-3">
+              <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                <Icon className="w-3.5 h-3.5" />
+                {row.label}
+              </div>
+              <div className="mt-1 text-sm font-semibold">{row.value}</div>
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="rounded-lg border border-border bg-background/30 p-3 space-y-2">
+        <div className="flex items-center gap-2 text-sm font-semibold">
+          <BarChart3 className="w-4 h-4 text-emerald-400" />
+          Estatisticas pessoais
+        </div>
+        <div className="space-y-2 text-sm">
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-muted-foreground">Altura vs. media da selecao</span>
+            <span className="font-semibold">
+              {heightDiff === null ? '-' : `${heightDiff > 0 ? '+' : ''}${heightDiff} cm`}
+            </span>
+          </div>
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-muted-foreground">Jogadores da posicao</span>
+            <span className="font-semibold">
+              {team.players.filter((item) => item.position === player.position).length}
+            </span>
+          </div>
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-muted-foreground">Fonte</span>
+            <span className="font-semibold">FIFA</span>
+          </div>
+        </div>
+      </div>
+    </aside>
+  );
+}
+
+function WorldCupMatches({
+  showResults = false,
+  autoLoad = false,
+}: {
+  showResults?: boolean;
+  autoLoad?: boolean;
+}) {
+  const [loading, setLoading] = useState(false);
+  const [matchGroups, setMatchGroups] = useState<
+    Array<{
+      dateLabel: string;
+      matches: Array<{
+        id: number;
+        homeTeam: string;
+        awayTeam: string;
+        timeLabel: string;
+        homeScore?: number;
+        awayScore?: number;
+      }>;
+    }>
+  >([]);
+  const [error, setError] = useState<string | null>(null);
+  const [loaded, setLoaded] = useState(false);
+
+  const load = async () => {
+    setLoading(true);
+    setError(null);
+
+    try {
+      const endpoint = showResults
+        ? '/api/365scores/results/copa_do_mundo'
+        : '/api/365scores/upcoming/copa_do_mundo';
+
+      const res = await fetch(endpoint, { cache: 'no-store' });
+      if (!res.ok) throw new Error('Erro ao buscar dados');
+
+      const data = await res.json();
+      const rawMatches: Array<{
+        id: number;
+        startTime: string;
+        homeTeam: { id: number; name: string; score?: number };
+        awayTeam: { id: number; name: string; score?: number };
+      }> = data.matches || [];
+
+      const deduped = new Map<
+        string,
+        {
+          id: number;
+          startTime: string;
+          homeTeam: string;
+          awayTeam: string;
+          homeScore?: number;
+          awayScore?: number;
+        }
+      >();
+
+      for (const m of rawMatches) {
+        const normalizedMatch = {
+          id: m.id,
+          startTime: m.startTime,
+          homeTeam: displayWorldCupTeamName(m.homeTeam.name),
+          awayTeam: displayWorldCupTeamName(m.awayTeam.name),
+          homeScore: m.homeTeam.score,
+          awayScore: m.awayTeam.score,
+        };
+
+        const key = worldCupMatchDedupeKey(normalizedMatch);
+        const previous = deduped.get(key);
+
+        if (!previous) {
+          deduped.set(key, normalizedMatch);
+          continue;
+        }
+
+        const previousHasPortuguese = /[ÁÉÍÓÚÂÊÔÃÕÇáéíóúâêôãõç]/.test(
+          `${previous.homeTeam} ${previous.awayTeam}`
+        );
+        const currentHasPortuguese = /[ÁÉÍÓÚÂÊÔÃÕÇáéíóúâêôãõç]/.test(
+          `${normalizedMatch.homeTeam} ${normalizedMatch.awayTeam}`
         );
 
-  const visibleMatchesByCompetition = visibleMatches.reduce(
-    (acc, match) => {
-      const key = match.competition || "Outras Competições";
-      if (!acc[key]) acc[key] = [];
-      acc[key].push(match);
-      return acc;
-    },
-    {} as Record<string, LiveMatch[]>,
-  );
+        if (!previousHasPortuguese && currentHasPortuguese) {
+          deduped.set(key, normalizedMatch);
+        }
+      }
 
-  if (loading && matches.length === 0) {
+      const matches = [...deduped.values()].sort((a, b) => {
+        const aMs = Date.parse(a.startTime);
+        const bMs = Date.parse(b.startTime);
+        return (Number.isFinite(aMs) ? aMs : 0) - (Number.isFinite(bMs) ? bMs : 0);
+      });
+
+      const byDate: Record<string, (typeof matchGroups)[0]> = {};
+
+      for (const m of matches) {
+        const dateLabel = formatMatchDate(m.startTime);
+        const timeLabel = formatMatchTime(m.startTime);
+
+        if (!byDate[dateLabel]) byDate[dateLabel] = { dateLabel, matches: [] };
+
+        byDate[dateLabel].matches.push({
+          id: m.id,
+          homeTeam: m.homeTeam,
+          awayTeam: m.awayTeam,
+          timeLabel,
+          homeScore: m.homeScore,
+          awayScore: m.awayScore,
+        });
+      }
+
+      setMatchGroups(Object.values(byDate));
+      setLoaded(true);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Erro desconhecido');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (autoLoad) {
+      load();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoLoad, showResults]);
+
+  if (loading) {
     return (
-      <div className="flex items-center justify-center py-12">
-        <div className="flex flex-col items-center gap-3">
-          <RefreshCw
-            className="w-8 h-8 text-emerald-500"
-            style={{ animation: "livespin 1s linear infinite" }}
-          />
-          <p className="text-muted-foreground">Buscando jogos ao vivo...</p>
-        </div>
+      <div className="flex items-center justify-center py-8">
+        <Loader2 className="w-6 h-6 animate-spin text-emerald-500" />
+        <span className="ml-2 text-muted-foreground">Carregando jogos...</span>
+      </div>
+    );
+  }
+
+  if (!loaded && !autoLoad) {
+    return (
+      <div className="text-center py-8 space-y-3">
+        <p className="text-muted-foreground text-sm">
+          {showResults
+            ? 'Clique para carregar os resultados'
+            : 'Clique para carregar os próximos jogos'}{' '}
+          da Copa do Mundo 2026
+        </p>
+        <Button onClick={load} className="bg-emerald-600 hover:bg-emerald-700">
+          <Trophy className="w-4 h-4 mr-2" />
+          Carregar Jogos
+        </Button>
       </div>
     );
   }
 
   if (error) {
     return (
-      <div className="rounded-xl border border-red-500/20 bg-red-500/10 p-6">
-        <div className="flex items-start gap-3">
-          <AlertCircle className="w-5 h-5 text-red-500 flex-shrink-0 mt-0.5" />
-          <div>
-            <h4 className="font-medium text-red-500">Erro ao carregar jogos</h4>
-            <p className="text-sm text-red-400/80 mt-1">{error}</p>
-            <Button
-              onClick={() => {
-                setLoading(true);
-                fetchLiveMatches();
-              }}
-              variant="outline"
-              size="sm"
-              className="mt-3"
-            >
-              <RefreshCw className="w-4 h-4 mr-2" />
-              Tentar novamente
-            </Button>
-          </div>
-        </div>
+      <div className="text-center py-6 space-y-3">
+        <p className="text-red-400 text-sm">{error}</p>
+        <Button variant="outline" onClick={load} size="sm">
+          <RefreshCw className="w-4 h-4 mr-2" />
+          Tentar novamente
+        </Button>
       </div>
     );
   }
 
+  if (loaded && matchGroups.length === 0) {
+    return (
+      <div className="text-center py-6">
+        <p className="text-muted-foreground text-sm">
+          {showResults ? 'Nenhum resultado disponível ainda' : 'Nenhum jogo agendado disponível'}
+        </p>
+        <p className="text-xs text-muted-foreground mt-1">
+          A Copa do Mundo começa em 11 de junho de 2026
+        </p>
+        <Button variant="outline" onClick={load} size="sm" className="mt-3">
+          <RefreshCw className="w-4 h-4 mr-2" />
+          Atualizar
+        </Button>
+      </div>
+    );
+  }
+
+  if (!loaded) return null;
+
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <div className="flex items-center gap-2">
-            <Radio
-              className="w-5 h-5 text-red-500"
-              style={{ animation: "livepulse 2s ease-in-out infinite" }}
-            />
-            <h3 className="text-lg font-semibold">Jogos Ao Vivo</h3>
-          </div>
-          <Badge
-            variant="secondary"
-            className="bg-emerald-500/10 text-emerald-400"
-          >
-            {visibleMatches.length}{" "}
-            {visibleMatches.length === 1 ? "jogo" : "jogos"}
-          </Badge>
-        </div>
-        <div className="flex items-center gap-2">
-          <Button
-            variant={autoRefresh ? "default" : "outline"}
-            size="sm"
-            onClick={() => setAutoRefresh(!autoRefresh)}
-            className={autoRefresh ? "bg-emerald-600 hover:bg-emerald-500" : ""}
-          >
-            {autoRefresh ? "Auto ✓" : "Auto"}
-          </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => {
-              setLoading(true);
-              fetchLiveMatches();
-            }}
-            disabled={loading}
-          >
-            <RefreshCw
-              className="w-4 h-4 mr-2"
-              style={
-                loading
-                  ? { animation: "livespin 1s linear infinite" }
-                  : undefined
-              }
-            />
-            Atualizar
-          </Button>
-        </div>
+      <div className="flex justify-end">
+        <Button variant="outline" size="sm" onClick={load}>
+          <RefreshCw className="w-3 h-3 mr-1" />
+          Atualizar
+        </Button>
       </div>
 
-      {lastUpdatedDisplay && (
-        <p className="text-xs text-muted-foreground" suppressHydrationWarning>
-          Última atualização: {lastUpdatedDisplay}
-          {autoRefresh && " (atualiza a cada 30s)"}
-        </p>
-      )}
+      {matchGroups.map((group) => (
+        <div key={group.dateLabel} className="space-y-2">
+          <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wide border-b border-border pb-1">
+            {group.dateLabel}
+          </div>
 
-      {matches.length > 0 && (
-        <div className="rounded-xl border border-border bg-card p-3">
-          <label className="mb-2 block text-xs font-medium text-muted-foreground">
-            Filtrar por liga
-          </label>
-          <select
-            value={selectedCompetition}
-            onChange={(event) => setSelectedCompetition(event.target.value)}
-            className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground outline-none transition-colors focus:border-emerald-500"
-          >
-            <option value="all">Todas as ligas ({matches.length})</option>
-            {competitionOptions.map((option) => (
-              <option key={option.competition} value={option.competition}>
-                {option.competition} ({option.count})
-              </option>
-            ))}
-          </select>
-        </div>
-      )}
+          <div className="space-y-2">
+            {group.matches.map((match) => {
+              const hasScore = showResults && match.homeScore !== undefined;
 
-      {matches.length === 0 ? (
-        <Card className="p-8 text-center border-dashed">
-          <Trophy className="w-12 h-12 mx-auto text-muted-foreground/50 mb-4" />
-          <h4 className="font-medium text-lg mb-2">
-            Nenhum jogo ao vivo no momento
-          </h4>
-          <p className="text-sm text-muted-foreground">
-            Não há partidas em andamento nas ligas monitoradas.
-            <br />
-            Os jogos aparecerão aqui automaticamente quando começarem.
-          </p>
-        </Card>
-      ) : visibleMatches.length === 0 ? (
-        <Card className="p-8 text-center border-dashed">
-          <Trophy className="w-12 h-12 mx-auto text-muted-foreground/50 mb-4" />
-          <h4 className="font-medium text-lg mb-2">
-            Nenhum jogo nesta liga agora
-          </h4>
-          <p className="text-sm text-muted-foreground">
-            Escolha outra liga no filtro ou volte para todas as ligas.
-          </p>
-        </Card>
-      ) : (
-        <div className="space-y-6">
-          {Object.entries(visibleMatchesByCompetition).map(
-            ([competition, compMatches]) => (
-              <div key={competition} className="space-y-3">
-                <h4 className="font-medium text-sm text-muted-foreground flex items-center gap-2">
-                  <Trophy className="w-4 h-4" />
-                  {competition}
-                  <Badge variant="outline" className="ml-auto">
-                    {compMatches.length}
-                  </Badge>
-                </h4>
-                <div className="space-y-3">
-                  {compMatches.map((match) => {
-                    const selected = selectedMatchId === match.id;
-                    return (
-                      <div key={match.id} className="space-y-3">
-                        <LiveMatchCard
-                          match={match}
-                          selected={selected}
-                          onClick={() =>
-                            setSelectedMatchId((current) =>
-                              current === match.id ? null : match.id,
-                            )
-                          }
-                        />
-                        {selected && (
-                          <LiveMatchDetails
-                            match={match}
-                            competition={competition}
-                            onClose={() => setSelectedMatchId(null)}
-                          />
-                        )}
-                      </div>
-                    );
-                  })}
+              return (
+                <div
+                  key={match.id}
+                  className="bg-muted/40 rounded-lg px-4 py-3 flex items-center justify-between"
+                >
+                  <div className="flex-1 text-right pr-3">
+                    <span className="font-semibold text-sm">{match.homeTeam}</span>
+                  </div>
+
+                  <div className="flex flex-col items-center min-w-[80px]">
+                    <span className="text-xs text-muted-foreground">{match.timeLabel}</span>
+                    {hasScore ? (
+                      <span className="font-bold text-lg">
+                        {match.homeScore} – {match.awayScore}
+                      </span>
+                    ) : (
+                      <span className="text-emerald-500 font-bold text-sm">vs</span>
+                    )}
+                  </div>
+
+                  <div className="flex-1 text-left pl-3">
+                    <span className="font-semibold text-sm">{match.awayTeam}</span>
+                  </div>
                 </div>
-              </div>
-            ),
-          )}
+              );
+            })}
+          </div>
         </div>
-      )}
-
-      <style jsx global>{`
-        @keyframes livepulse {
-          0%,
-          100% {
-            opacity: 1;
-          }
-          50% {
-            opacity: 0.4;
-          }
-        }
-        @keyframes livespin {
-          from {
-            transform: rotate(0deg);
-          }
-          to {
-            transform: rotate(360deg);
-          }
-        }
-      `}</style>
+      ))}
     </div>
   );
 }
 
-export default LiveMatches;
