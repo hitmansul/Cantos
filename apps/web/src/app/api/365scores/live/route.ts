@@ -44,10 +44,10 @@ interface StoppageInfo {
   source:
     | '365scores-actual-play-time'
     | '365scores-sportradar'
+    | '365scores-event-estimate'
     | '365scores-announced-added-time'
     | 'sofascore-announced-added-time'
-    | 'api-football-announced-added-time'
-    | 'event-based-estimate';
+    | 'api-football-announced-added-time';
   kind?: 'calculated-stoppage' | 'announced-added-time';
   incidents: StoppageIncident[];
 }
@@ -194,47 +194,50 @@ const STOPPAGE_END_TERMS = [
   'de volta ao campo',
 ];
 
-const EVENT_BASED_ADDED_TIME_RULES: Array<{
-  key: string;
+
+type EventStoppageRule = {
+  key: 'goal' | 'substitution' | 'var' | 'medical' | 'yellow-card' | 'red-card';
+  label: string;
   terms: string[];
-  minutes: number;
-  reason: string;
-}> = [
+  seconds: number;
+};
+
+const EVENT_STOPPAGE_RULES: EventStoppageRule[] = [
   {
     key: 'var',
-    terms: ['var', 'video assistant referee', 'revisao do var', 'cheque do var'],
-    minutes: 1.5,
-    reason: 'Revisao VAR detectada no tempo real.',
+    label: 'VAR/revisao',
+    seconds: 120,
+    terms: ['var', 'video assistant referee', 'review', 'revisao', 'cheque do var'],
   },
   {
     key: 'medical',
-    terms: ['injury', 'injured', 'receiving treatment', 'medical', 'down injured', 'atendimento', 'lesionado', 'maca'],
-    minutes: 1.25,
-    reason: 'Atendimento medico ou lesao detectado no tempo real.',
-  },
-  {
-    key: 'goal',
-    terms: ['goal', 'scores', 'gol'],
-    minutes: 0.75,
-    reason: 'Gol detectado no tempo real.',
+    label: 'atendimento medico/lesao',
+    seconds: 90,
+    terms: ['injury', 'injured', 'medical', 'treatment', 'down injured', 'atendimento', 'lesionado', 'maca'],
   },
   {
     key: 'substitution',
-    terms: ['substitution', 'substituicao', 'substituição', 'is replaced by', 'comes on', 'entra no lugar'],
-    minutes: 0.5,
-    reason: 'Substituicao detectada no tempo real.',
+    label: 'substituicao',
+    seconds: 30,
+    terms: ['substitution', 'substitute', 'substituicao', 'substitui'],
   },
   {
     key: 'red-card',
-    terms: ['red card', 'cartao vermelho', 'cartão vermelho', 'sent off'],
-    minutes: 0.5,
-    reason: 'Cartao vermelho detectado no tempo real.',
+    label: 'cartao vermelho',
+    seconds: 45,
+    terms: ['red card', 'cartao vermelho', 'vermelho'],
   },
   {
     key: 'yellow-card',
-    terms: ['yellow card', 'cartao amarelo', 'cartão amarelo', 'booked'],
-    minutes: 0.2,
-    reason: 'Cartao amarelo detectado no tempo real.',
+    label: 'cartao amarelo',
+    seconds: 15,
+    terms: ['yellow card', 'cartao amarelo', 'amarelo'],
+  },
+  {
+    key: 'goal',
+    label: 'gol',
+    seconds: 45,
+    terms: ['goal', 'gol', 'scores', 'placar'],
   },
 ];
 
@@ -333,14 +336,7 @@ function calculateStoppageFromActualPlayTime(
     predictedAddedMinutes: toRoundedMinutes(predictedAddedMs),
     source: '365scores-actual-play-time',
     kind: 'calculated-stoppage',
-    incidents: [
-      {
-        startAt: new Date().toISOString(),
-        durationMs: totalStoppedMs,
-        reason: 'Tempo total menos tempo de bola rolando informado pela 365Scores.',
-        timeline: actualPlayTime?.totalTime?.name,
-      },
-    ],
+    incidents: [],
   };
 }
 
@@ -368,14 +364,7 @@ function calculateAnnouncedAddedTime(
     predictedAddedMinutes: addedMinutes,
     source,
     kind: 'announced-added-time',
-    incidents: [
-      {
-        startAt: new Date().toISOString(),
-        durationMs: 0,
-        reason,
-        timeline,
-      },
-    ],
+    incidents: [],
   };
 }
 
@@ -588,6 +577,55 @@ async function fetchWithTimeout(
   }
 }
 
+
+function ruleForEventComment(comment: string): EventStoppageRule | null {
+  const normalized = normalizeText(comment);
+  return EVENT_STOPPAGE_RULES.find((rule) => rule.terms.some((term) => normalized.includes(term))) ?? null;
+}
+
+function calculateEventBasedStoppageInfo(messages: PlayByPlayMessage[]): StoppageInfo | undefined {
+  const incidents: StoppageIncident[] = [];
+  const seen = new Set<string>();
+
+  for (const message of messages) {
+    const comment = message.Comment ?? '';
+    if (!comment) continue;
+
+    const rule = ruleForEventComment(comment);
+    if (!rule) continue;
+
+    const timeline = message.Timeline ?? '';
+    const key = `${rule.key}:${timeline}:${normalizeText(comment).slice(0, 120)}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+
+    incidents.push({
+      startAt: message.LastModified
+        ? new Date(Date.parse(message.LastModified)).toISOString()
+        : new Date().toISOString(),
+      durationMs: rule.seconds * 1000,
+      reason: `${rule.label}: ${comment}`,
+      period: message.Period,
+      timeline: message.Timeline,
+    });
+  }
+
+  if (incidents.length === 0) return undefined;
+
+  const totalStoppedMs = incidents.reduce((sum, incident) => sum + incident.durationMs, 0);
+  const predictedAddedMs = Math.min(totalStoppedMs, 8 * 60_000);
+
+  return {
+    totalStoppedMs,
+    totalStoppedMinutes: toRoundedMinutes(totalStoppedMs),
+    predictedAddedMs,
+    predictedAddedMinutes: toRoundedMinutes(predictedAddedMs),
+    source: '365scores-event-estimate',
+    kind: 'calculated-stoppage',
+    incidents,
+  };
+}
+
 function calculateStoppageInfo(messages: PlayByPlayMessage[]): StoppageInfo | undefined {
   const sortedMessages = messages
     .map((message) => ({ message, timestamp: messageTime(message) }))
@@ -666,57 +704,6 @@ function calculateStoppageInfo(messages: PlayByPlayMessage[]): StoppageInfo | un
   };
 }
 
-
-function calculateEventBasedAddedTime(messages: PlayByPlayMessage[]): StoppageInfo | undefined {
-  const sortedMessages = messages
-    .map((message) => ({ message, timestamp: messageTime(message) }))
-    .filter(
-      (entry): entry is { message: PlayByPlayMessage; timestamp: number } =>
-        typeof entry.timestamp === 'number' && Boolean(entry.message.Comment)
-    )
-    .sort((a, b) => a.timestamp - b.timestamp);
-
-  const incidents: StoppageIncident[] = [];
-  const seen = new Set<string>();
-
-  for (const entry of sortedMessages) {
-    const comment = entry.message.Comment ?? '';
-    const normalized = normalizeText(comment);
-    const rule = EVENT_BASED_ADDED_TIME_RULES.find((item) =>
-      item.terms.some((term) => normalized.includes(normalizeText(term)))
-    );
-
-    if (!rule) continue;
-
-    const timeline = entry.message.Timeline ?? '';
-    const key = `${rule.key}:${timeline}:${normalized.slice(0, 80)}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-
-    incidents.push({
-      startAt: new Date(entry.timestamp).toISOString(),
-      durationMs: Math.round(rule.minutes * 60_000),
-      reason: rule.reason,
-      period: entry.message.Period,
-      timeline: entry.message.Timeline,
-    });
-  }
-
-  const totalEstimatedMs = incidents.reduce((sum, incident) => sum + incident.durationMs, 0);
-  if (totalEstimatedMs <= 0) return undefined;
-
-  const cappedMs = Math.min(totalEstimatedMs, 8 * 60_000);
-  return {
-    totalStoppedMs: cappedMs,
-    totalStoppedMinutes: toRoundedMinutes(cappedMs),
-    predictedAddedMs: cappedMs,
-    predictedAddedMinutes: toRoundedMinutes(cappedMs),
-    source: 'event-based-estimate',
-    kind: 'calculated-stoppage',
-    incidents,
-  };
-}
-
 async function fetchStoppageInfo(gameId: number): Promise<StoppageInfo | undefined> {
   try {
     const detailRes = await fetchWithTimeout(
@@ -750,7 +737,8 @@ async function fetchStoppageInfo(gameId: number): Promise<StoppageInfo | undefin
 
     const playByPlay = (await playByPlayRes.json()) as { Messages?: PlayByPlayMessage[] };
     const messages = playByPlay.Messages ?? [];
-    return calculateEventBasedAddedTime(messages) ?? calculateStoppageInfo(messages);
+
+    return calculateEventBasedStoppageInfo(messages) ?? calculateStoppageInfo(messages);
   } catch (err) {
     console.warn('[live/365scores/stoppage] error:', err);
     return undefined;
