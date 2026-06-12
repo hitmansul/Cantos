@@ -44,7 +44,8 @@ interface LiveMatch {
       | '365scores-sportradar'
       | '365scores-announced-added-time'
       | 'sofascore-announced-added-time'
-      | 'api-football-announced-added-time';
+      | 'api-football-announced-added-time'
+      | 'event-based-estimate';
     kind?: 'calculated-stoppage' | 'announced-added-time';
     incidents: Array<{
       startAt: string;
@@ -133,87 +134,21 @@ function formatMinuteValue(value: number) {
   return `${value.toFixed(1).replace('.0', '')} min`;
 }
 
-type LiveStoppageIncident = NonNullable<LiveMatch['stoppage']>['incidents'][number];
-
-function parseTimelineMinute(value?: string) {
-  if (!value) return null;
-  const match = value.match(/(\d{1,3})(?:\s*\+\s*(\d{1,2}))?/);
-  if (!match) return null;
-
-  const base = Number(match[1]);
-  const extra = match[2] ? Number(match[2]) : 0;
-  if (!Number.isFinite(base) || !Number.isFinite(extra)) return null;
-  return base + extra;
-}
-
-function formatMatchMinute(value: number) {
-  return `${Math.round(value)} min`;
-}
-
-function formatIncidentTime(value?: string) {
-  if (!value) return 'não informado';
-  const parsed = Date.parse(value);
-  if (!Number.isFinite(parsed)) return value;
+function formatIncidentClock(value?: string) {
+  if (!value) return 'em andamento';
+  const timestamp = Date.parse(value);
+  if (!Number.isFinite(timestamp)) return value;
 
   return new Intl.DateTimeFormat('pt-BR', {
     timeZone: 'America/Sao_Paulo',
     hour: '2-digit',
     minute: '2-digit',
     second: '2-digit',
-  }).format(parsed);
+  }).format(timestamp);
 }
 
-function incidentStartLabel(incident: LiveStoppageIncident) {
-  const minute = parseTimelineMinute(incident.timeline);
-  if (minute !== null) return `aos ${formatMatchMinute(minute)}`;
-  return `às ${formatIncidentTime(incident.startAt)}`;
-}
-
-function incidentEndLabel(incident: LiveStoppageIncident) {
-  const startMinute = parseTimelineMinute(incident.timeline);
-  if (startMinute !== null && incident.durationMs > 0) {
-    const durationMinutes = Math.max(1, Math.round(incident.durationMs / 60_000));
-    return `aos ${formatMatchMinute(startMinute + durationMinutes)}`;
-  }
-  return incident.endAt ? `às ${formatIncidentTime(incident.endAt)}` : 'não informado';
-}
-
-function formatDurationMs(value: number) {
-  if (!Number.isFinite(value) || value <= 0) return 'não informado';
-  const totalSeconds = Math.round(value / 1000);
-  const minutes = Math.floor(totalSeconds / 60);
-  const seconds = totalSeconds % 60;
-
-  if (minutes <= 0) return `${seconds}s`;
-  return `${minutes}min ${String(seconds).padStart(2, '0')}s`;
-}
-
-function stoppageReasonLabel(reason: string) {
-  const normalized = normalizeStatKey(reason);
-  if (normalized.includes('var') || normalized.includes('video assistant')) return 'Parada para revisão do VAR';
-  if (
-    normalized.includes('medical') ||
-    normalized.includes('treatment') ||
-    normalized.includes('injur') ||
-    normalized.includes('lesion') ||
-    normalized.includes('atendimento')
-  ) {
-    return 'Parada para atendimento médico';
-  }
-  if (normalized.includes('interrupted') || normalized.includes('stopped') || normalized.includes('paralis')) {
-    return 'Paralisação do jogo';
-  }
-  return reason
-    ? reason
-        .replace(/_/g, ' ')
-        .replace(/\s+/g, ' ')
-        .trim()
-    : 'Paralisação do jogo';
-}
-
-function detailedStoppageIncidents(match: LiveMatch) {
-  if (match.stoppage?.kind !== 'calculated-stoppage') return [];
-  return match.stoppage.incidents.filter((incident) => incident.durationMs > 0);
+function formatIncidentDuration(durationMs: number) {
+  return formatMinuteValue(Math.max(0, durationMs) / 60_000);
 }
 
 function getOfficialAddedTimePrediction(
@@ -229,6 +164,7 @@ function getOfficialAddedTimePrediction(
     '365scores-announced-added-time': 'acréscimo anunciado pela 365Scores',
     'sofascore-announced-added-time': 'acréscimo anunciado pelo SofaScore',
     'api-football-announced-added-time': 'acréscimo anunciado pela API-Football',
+    'event-based-estimate': 'estimativa por eventos reais',
   };
   const sourceLabel = sourceLabels[match.stoppage.source] ?? 'fonte ao vivo';
 
@@ -398,7 +334,7 @@ function LiveMatchCard({
               title={
                 addedTime.announcedOnly
                   ? `${addedTime.sourceLabel}. A fonte informou o acréscimo, mas não enviou o tempo total de bola parada.`
-                  : `${addedTime.sourceLabel}. A previsão de acréscimo usa 80% do tempo total de bola parada identificado.`
+                  : `${addedTime.sourceLabel}. A previsão de acréscimo usa eventos reais: gol, substituição, VAR, atendimento médico e cartões.`
               }
             >
               <Badge
@@ -419,7 +355,7 @@ function LiveMatchCard({
             <Badge
               variant="outline"
               className="mt-2 justify-center border-border/70 bg-background/40 text-[11px] text-muted-foreground"
-              title="A fonte ao vivo ainda não enviou paradas, retomadas ou acréscimo anunciado para este jogo."
+              title="A fonte ao vivo ainda não enviou paradas, retomadas ou acrescimo anunciado para este jogo."
             >
               Previsão de Acréscimo indisponível
             </Badge>
@@ -468,7 +404,6 @@ function LiveMatchDetails({
   const [statsError, setStatsError] = useState<string | null>(null);
   const sofascoreId = match.sourceIds?.sofascore ?? (match.source === 'sofascore' ? match.id : null);
   const addedTime = getOfficialAddedTimePrediction(match);
-  const stoppageIncidents = useMemo(() => detailedStoppageIncidents(match), [match]);
   const hasEmbeddedStats = Boolean(match.liveStats?.length);
   const statRows = useMemo(
     () => (match.liveStats?.length ? match.liveStats : extractLiveStatRows(stats)),
@@ -491,12 +426,12 @@ function LiveMatchDetails({
       try {
         const res = await fetch(`/api/sofascore-direct/match/${sofascoreId}/statistics`);
         const data = (await res.json()) as SofascoreStatsResponse & { error?: string };
-        if (!res.ok) throw new Error(data.error ?? 'Estatísticas indisponíveis');
+        if (!res.ok) throw new Error(data.error ?? 'Estatísticas indisponiveis');
         if (!cancelled) setStats(data);
       } catch (error) {
         if (!cancelled) {
           setStats(null);
-          setStatsError(error instanceof Error ? error.message : 'Estatísticas indisponíveis');
+          setStatsError(error instanceof Error ? error.message : 'Estatísticas indisponiveis');
         }
       } finally {
         if (!cancelled) setStatsLoading(false);
@@ -565,20 +500,17 @@ function LiveMatchDetails({
       </div>
 
       {addedTime ? (
-        <>
-        <div className="grid gap-3 md:grid-cols-2">
-          <div className="rounded-lg border border-cyan-500/20 bg-cyan-500/10 p-3">
-            <p className="flex items-center gap-2 text-sm font-semibold text-cyan-300">
-              <Timer className="w-4 h-4" />
-              Tempo total de bola parada
-            </p>
-            <p className="mt-1 text-2xl font-bold">{addedTime.totalLabel ?? 'não informado'}</p>
-            <p className="text-xs text-muted-foreground">
-              {addedTime.announcedOnly
-                ? 'A fonte não enviou início e fim das paradas.'
-                : addedTime.sourceLabel}
-            </p>
-          </div>
+        <div className={`grid gap-3 ${addedTime.announcedOnly ? 'md:grid-cols-1' : 'md:grid-cols-2'}`}>
+          {!addedTime.announcedOnly && (
+            <div className="rounded-lg border border-cyan-500/20 bg-cyan-500/10 p-3">
+              <p className="flex items-center gap-2 text-sm font-semibold text-cyan-300">
+                <Timer className="w-4 h-4" />
+                Tempo total de bola parada
+              </p>
+              <p className="mt-1 text-2xl font-bold">{addedTime.totalLabel}</p>
+              <p className="text-xs text-muted-foreground">{addedTime.sourceLabel}</p>
+            </div>
+          )}
           <div className="rounded-lg border border-amber-500/20 bg-amber-500/10 p-3">
             <p className="flex items-center gap-2 text-sm font-semibold text-amber-300">
               <Clock className="w-4 h-4" />
@@ -588,19 +520,10 @@ function LiveMatchDetails({
             <p className="text-xs text-muted-foreground">
               {addedTime.announcedOnly
                 ? `${addedTime.sourceLabel}. A fonte não enviou o tempo total de bola parada.`
-                : '80% do tempo total parado identificado.'}
+                : 'Estimativa baseada em eventos reais: gol, substituição, VAR, atendimento médico e cartões.'}
             </p>
           </div>
         </div>
-        <div className="rounded-lg border border-border bg-background/40 p-3 text-sm text-muted-foreground">
-          <span className="font-semibold text-foreground">Como chegamos nesse número: </span>
-          {addedTime.announcedOnly
-            ? 'a fonte ao vivo informou apenas o acréscimo anunciado no relógio/status do jogo. Como ela não enviou paradas e retomadas, a aplicação mostra o acréscimo, mas não calcula tempo de bola parada.'
-            : stoppageIncidents.length > 0
-              ? 'somamos as paradas com início e retomada recebidas no play-by-play e usamos 80% desse total como Previsão de Acréscimo.'
-              : 'a fonte informou tempo total e tempo de bola rolando. A diferença vira tempo total de bola parada, e a Previsão de Acréscimo usa 80% desse total.'}
-        </div>
-        </>
       ) : (
         <div className="rounded-lg border border-border bg-background/40 p-3 text-sm text-muted-foreground">
           A fonte ao vivo ainda não enviou paradas e retomadas suficientes para calcular tempo de
@@ -608,31 +531,44 @@ function LiveMatchDetails({
         </div>
       )}
 
-      {stoppageIncidents.length > 0 && (
+      {match.stoppage?.incidents?.length ? (
         <div className="rounded-lg border border-cyan-500/20 bg-cyan-500/5 p-3">
-          <p className="mb-3 flex items-center gap-2 text-sm font-semibold text-cyan-300">
-            <Timer className="w-4 h-4" />
-            Paradas detectadas
-          </p>
+          <div className="mb-3 flex items-center gap-2">
+            <Timer className="w-4 h-4 text-cyan-300" />
+            <p className="text-sm font-semibold text-cyan-200">Paradas detectadas</p>
+          </div>
           <div className="space-y-2">
-            {stoppageIncidents.map((incident, index) => (
+            {match.stoppage.incidents.map((incident, index) => (
               <div
                 key={`${incident.startAt}-${index}`}
-                className="rounded-md border border-border/70 bg-background/50 p-3 text-sm"
+                className="grid gap-2 rounded-md bg-background/50 p-3 text-xs md:grid-cols-[90px_90px_80px_minmax(0,1fr)]"
               >
-                <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-                  <div className="font-medium">
-                    {stoppageReasonLabel(incident.reason)}: parou {incidentStartLabel(incident)} - jogo reiniciado {incidentEndLabel(incident)}
-                  </div>
-                  <Badge variant="outline" className="w-fit text-xs">
-                    {formatDurationMs(incident.durationMs)}
-                  </Badge>
+                <div>
+                  <p className="text-muted-foreground">Parou</p>
+                  <p className="font-semibold tabular-nums">{formatIncidentClock(incident.startAt)}</p>
+                </div>
+                <div>
+                  <p className="text-muted-foreground">Voltou</p>
+                  <p className="font-semibold tabular-nums">{formatIncidentClock(incident.endAt)}</p>
+                </div>
+                <div>
+                  <p className="text-muted-foreground">Duração</p>
+                  <p className="font-semibold tabular-nums">
+                    {formatIncidentDuration(incident.durationMs)}
+                  </p>
+                </div>
+                <div className="min-w-0">
+                  <p className="text-muted-foreground">Momento / motivo</p>
+                  <p className="break-words font-medium">
+                    {incident.timeline ? `${incident.timeline} - ` : ''}
+                    {incident.reason}
+                  </p>
                 </div>
               </div>
             ))}
           </div>
         </div>
-      )}
+      ) : null}
 
       <div className="rounded-lg border border-border bg-background/40 p-3">
         <div className="mb-3 flex items-center justify-between gap-2">
@@ -886,6 +822,21 @@ export function LiveMatches() {
           </Button>
         </div>
       </div>
+
+      {matches.length > 0 && (
+        <div className="rounded-xl border border-red-500/20 bg-red-500/10 p-3 text-sm">
+          <div className="flex flex-wrap items-center gap-2">
+            <Radio className="h-4 w-4 text-red-400" />
+            <span className="font-semibold text-red-200">Alerta ao vivo:</span>
+            <span className="text-muted-foreground">
+              {matches.length} {matches.length === 1 ? 'jogo em andamento' : 'jogos em andamento'}
+              {matches.some((match) => match.stoppage)
+                ? `; ${matches.filter((match) => match.stoppage).length} com acréscimo/parada detectado.`
+                : '; aguardando paradas e acréscimos das fontes.'}
+            </span>
+          </div>
+        </div>
+      )}
 
       {lastUpdatedDisplay && (
         <p className="text-xs text-muted-foreground" suppressHydrationWarning>
