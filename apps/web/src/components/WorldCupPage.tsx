@@ -1,29 +1,30 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import {
-Trophy,
-Calendar,
-MapPin,
-Users,
-Radio,
-RefreshCw,
-Loader2,
-ExternalLink,
-Search,
-UserRound,
-Ruler,
-Cake,
-Building2,
-Shirt,
-BarChart3,
-ChevronRight,
-ChevronDown,
-ChevronUp,
-Filter,
-Target,
-BadgeDollarSign,
-} from 'lucide-react';
+
+type LocalIconProps = { className?: string };
+const Trophy = ({ className = '' }: LocalIconProps) => <span className={`inline-block ${className}`} aria-hidden="true">🏆</span>;
+const Calendar = ({ className = '' }: LocalIconProps) => <span className={`inline-block ${className}`} aria-hidden="true">▣</span>;
+const MapPin = ({ className = '' }: LocalIconProps) => <span className={`inline-block ${className}`} aria-hidden="true">⌖</span>;
+const Users = ({ className = '' }: LocalIconProps) => <span className={`inline-block ${className}`} aria-hidden="true">☷</span>;
+const Radio = ({ className = '' }: LocalIconProps) => <span className={`inline-block ${className}`} aria-hidden="true">◉</span>;
+const RefreshCw = ({ className = '' }: LocalIconProps) => <span className={`inline-block ${className}`} aria-hidden="true">↻</span>;
+const Loader2 = ({ className = '' }: LocalIconProps) => <span className={`inline-block ${className}`} aria-hidden="true">◌</span>;
+const ExternalLink = ({ className = '' }: LocalIconProps) => <span className={`inline-block ${className}`} aria-hidden="true">↗</span>;
+const Search = ({ className = '' }: LocalIconProps) => <span className={`inline-block ${className}`} aria-hidden="true">⌕</span>;
+const UserRound = ({ className = '' }: LocalIconProps) => <span className={`inline-block ${className}`} aria-hidden="true">♙</span>;
+const Ruler = ({ className = '' }: LocalIconProps) => <span className={`inline-block ${className}`} aria-hidden="true">▱</span>;
+const Cake = ({ className = '' }: LocalIconProps) => <span className={`inline-block ${className}`} aria-hidden="true">◇</span>;
+const Building2 = ({ className = '' }: LocalIconProps) => <span className={`inline-block ${className}`} aria-hidden="true">▥</span>;
+const Shirt = ({ className = '' }: LocalIconProps) => <span className={`inline-block ${className}`} aria-hidden="true">▤</span>;
+const BarChart3 = ({ className = '' }: LocalIconProps) => <span className={`inline-block ${className}`} aria-hidden="true">▥</span>;
+const ChevronRight = ({ className = '' }: LocalIconProps) => <span className={`inline-block ${className}`} aria-hidden="true">›</span>;
+const ChevronDown = ({ className = '' }: LocalIconProps) => <span className={`inline-block ${className}`} aria-hidden="true">⌄</span>;
+const ChevronUp = ({ className = '' }: LocalIconProps) => <span className={`inline-block ${className}`} aria-hidden="true">⌃</span>;
+const Filter = ({ className = '' }: LocalIconProps) => <span className={`inline-block ${className}`} aria-hidden="true">▿</span>;
+const Target = ({ className = '' }: LocalIconProps) => <span className={`inline-block ${className}`} aria-hidden="true">◎</span>;
+const BadgeDollarSign = ({ className = '' }: LocalIconProps) => <span className={`inline-block ${className}`} aria-hidden="true">$</span>;
+
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
