@@ -613,7 +613,7 @@ function calculateEventBasedStoppageInfo(messages: PlayByPlayMessage[]): Stoppag
   if (incidents.length === 0) return undefined;
 
   const totalStoppedMs = incidents.reduce((sum, incident) => sum + incident.durationMs, 0);
-  const predictedAddedMs = Math.min(totalStoppedMs, 8 * 60_000);
+  const predictedAddedMs = Math.min(Math.round(totalStoppedMs * 0.8), 8 * 60_000);
 
   return {
     totalStoppedMs,
