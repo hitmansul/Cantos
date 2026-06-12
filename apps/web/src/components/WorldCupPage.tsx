@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 
 type LocalIconProps = { className?: string };
 const Trophy = ({ className = '' }: LocalIconProps) => <span className={`inline-block ${className}`} aria-hidden="true">🏆</span>;
@@ -341,6 +341,50 @@ return value
 .replace(/[^a-z0-9\s-]/g, ' ')
 .replace(/\s+/g, ' ')
 .trim();
+}
+
+
+function displayWorldCupTeamName(name: string): string {
+  const normalized = normalizeTeamName(name);
+  const names: Record<string, string> = {
+    brazil: 'Brasil',
+    brasil: 'Brasil',
+    morocco: 'Marrocos',
+    marocco: 'Marrocos',
+    marrocos: 'Marrocos',
+    mexico: 'México',
+    canada: 'Canadá',
+    usa: 'EUA',
+    'united states': 'EUA',
+    paraguay: 'Paraguai',
+    qatar: 'Catar',
+    switzerland: 'Suíça',
+    haiti: 'Haiti',
+    scotland: 'Escócia',
+    australia: 'Austrália',
+    turkiye: 'Turquia',
+    turkey: 'Turquia',
+    germany: 'Alemanha',
+    curacao: 'Curaçao',
+    netherlands: 'Holanda',
+    japan: 'Japão',
+    'bosnia and herzegovina': 'Bósnia e Herzegovina',
+    'bosnia herzegovina': 'Bósnia e Herzegovina',
+    'south africa': 'África do Sul',
+  };
+  return names[normalized] ?? name;
+}
+
+function canonicalWorldCupTeamName(name: string): string {
+  const display = displayWorldCupTeamName(name);
+  return normalizeTeamName(display);
+}
+
+function worldCupMatchDedupeKey(match: { startTime: string; homeTeam: string; awayTeam: string }): string {
+  const date = match.startTime.slice(0, 10);
+  const time = formatMatchTime(match.startTime);
+  const teams = [canonicalWorldCupTeamName(match.homeTeam), canonicalWorldCupTeamName(match.awayTeam)].sort().join('-');
+  return `${date}-${time}-${teams}`;
 }
 
 function fifaTeamLookupName(value: string): string {
@@ -1624,226 +1668,235 @@ onClose={() => setSelectedMatchId(null)}
 }
 
 function WorldCupMatches({
-showResults = false,
-autoLoad = false,
+  showResults = false,
+  autoLoad = false,
 }: {
-showResults?: boolean;
-autoLoad?: boolean;
+  showResults?: boolean;
+  autoLoad?: boolean;
 }) {
-type WorldCupDisplayMatch = {
-id: number;
-startTime: string;
-homeTeam: string;
-awayTeam: string;
-timeLabel: string;
-roundName?: string;
-statusId?: number;
-statusText?: string;
-referee?: string | null;
-homeScore?: number;
-awayScore?: number;
-};
-const [loading, setLoading] = useState(false);
-const [matchGroups, setMatchGroups] = useState<
-Array<{
-dateLabel: string;
-matches: WorldCupDisplayMatch[];
-}>
->([]);
-const [error, setError] = useState<string | null>(null);
-const [loaded, setLoaded] = useState(false);
-const [selectedMatchId, setSelectedMatchId] = useState<number | null>(null);
+  type WorldCupDisplayMatch = {
+    id: number;
+    startTime: string;
+    homeTeam: string;
+    awayTeam: string;
+    timeLabel: string;
+    roundName?: string;
+    statusId?: number;
+    statusText?: string;
+    referee?: string | null;
+    homeScore?: number;
+    awayScore?: number;
+  };
 
-function isLiveMatch(match: WorldCupDisplayMatch): boolean {
-const status = `${match.statusText ?? ''}`.toLowerCase();
-return match.statusId === 2 || status.includes('live') || status.includes('ao vivo') || status.includes('in play');
-}
+  const [loading, setLoading] = useState(false);
+  const [matchGroups, setMatchGroups] = useState<Array<{ dateLabel: string; matches: WorldCupDisplayMatch[] }>>([]);
+  const [error, setError] = useState<string | null>(null);
+  const [loaded, setLoaded] = useState(false);
+  const [selectedMatchId, setSelectedMatchId] = useState<number | null>(null);
 
-const load = async () => {
-setLoading(true);
-setError(null);
-try {
-const endpoint = showResults
-? '/api/365scores/results/copa_do_mundo'
-: '/api/365scores/upcoming/copa_do_mundo';
-const res = await fetch(endpoint);
-if (!res.ok) throw new Error('Erro ao buscar dados');
-const data = await res.json();
-const rawMatches: Array<{
-id: number;
-startTime: string;
-roundName?: string;
-statusId?: number;
-statusText?: string;
-referee?: string | null;
-homeTeam: { id: number; name: string; score?: number };
-awayTeam: { id: number; name: string; score?: number };
-}> = data.matches || [];
+  function isLiveMatch(match: WorldCupDisplayMatch): boolean {
+    const status = `${match.statusText ?? ''}`.toLowerCase();
+    return match.statusId === 2 || status.includes('live') || status.includes('ao vivo') || status.includes('in play');
+  }
 
-const byDate: Record<string, (typeof matchGroups)[0]> = {};
-for (const m of rawMatches) {
-const dateLabel = formatMatchDate(m.startTime);
-const timeLabel = formatMatchTime(m.startTime);
-if (!byDate[dateLabel]) byDate[dateLabel] = { dateLabel, matches: [] };
-byDate[dateLabel].matches.push({
-id: m.id,
-startTime: m.startTime,
-homeTeam: m.homeTeam.name,
-awayTeam: m.awayTeam.name,
-timeLabel,
-roundName: m.roundName,
-statusId: m.statusId,
-statusText: m.statusText,
-referee: m.referee,
-homeScore: m.homeTeam.score,
-awayScore: m.awayTeam.score,
-});
-}
-const sortedGroups = Object.values(byDate)
-.map((group) => ({
-...group,
-matches: group.matches.sort((a, b) => Date.parse(a.startTime) - Date.parse(b.startTime)),
-}))
-.sort((a, b) => Date.parse(a.matches[0]?.startTime ?? '') - Date.parse(b.matches[0]?.startTime ?? ''));
-setMatchGroups(sortedGroups);
-setSelectedMatchId(null);
-setLoaded(true);
-} catch (e) {
-setError(e instanceof Error ? e.message : 'Erro desconhecido');
-} finally {
-setLoading(false);
-}
-};
+  const load = async () => {
+    setLoading(true);
+    setError(null);
 
-// Auto-load when requested
-useEffect(() => {
-if (autoLoad) {
-load();
-}
-// eslint-disable-next-line react-hooks/exhaustive-deps
-}, [autoLoad, showResults]);
+    try {
+      const endpoint = showResults
+        ? '/api/365scores/results/copa_do_mundo'
+        : '/api/365scores/upcoming/copa_do_mundo';
+      const res = await fetch(endpoint, { cache: 'no-store' });
+      if (!res.ok) throw new Error('Erro ao buscar dados');
+      const data = await res.json();
+      const rawMatches: Array<{
+        id: number;
+        startTime: string;
+        roundName?: string;
+        statusId?: number;
+        statusText?: string;
+        referee?: string | null;
+        homeTeam: { id: number; name: string; score?: number };
+        awayTeam: { id: number; name: string; score?: number };
+      }> = data.matches || [];
 
-if (loading) {
-return (
-<div className="flex items-center justify-center py-8">
-<Loader2 className="w-6 h-6 animate-spin text-emerald-500" />
-<span className="ml-2 text-muted-foreground">Carregando jogos...</span>
-</div>
-);
-}
+      const deduped = new Map<string, WorldCupDisplayMatch>();
 
-if (!loaded && !autoLoad) {
-return (
-<div className="text-center py-8 space-y-3">
-<p className="text-muted-foreground text-sm">
-{showResults
-? 'Clique para carregar os resultados'
-: 'Clique para carregar os próximos jogos'}{' '}
-da Copa do Mundo 2026
-</p>
-<Button onClick={load} className="bg-emerald-600 hover:bg-emerald-700">
-<Trophy className="w-4 h-4 mr-2" />
-Carregar Jogos
-</Button>
-</div>
-);
-}
+      for (const m of rawMatches) {
+        const match: WorldCupDisplayMatch = {
+          id: m.id,
+          startTime: m.startTime,
+          homeTeam: displayWorldCupTeamName(m.homeTeam.name),
+          awayTeam: displayWorldCupTeamName(m.awayTeam.name),
+          timeLabel: formatMatchTime(m.startTime),
+          roundName: m.roundName,
+          statusId: m.statusId,
+          statusText: m.statusText,
+          referee: m.referee,
+          homeScore: m.homeTeam.score,
+          awayScore: m.awayTeam.score,
+        };
 
-if (error) {
-return (
-<div className="text-center py-6 space-y-3">
-<p className="text-red-400 text-sm">{error}</p>
-<Button variant="outline" onClick={load} size="sm">
-<RefreshCw className="w-4 h-4 mr-2" />
-Tentar novamente
-</Button>
-</div>
-);
-}
+        const key = worldCupMatchDedupeKey(match);
+        const previous = deduped.get(key);
 
-if (loaded && matchGroups.length === 0) {
-return (
-<div className="text-center py-6">
-<p className="text-muted-foreground text-sm">
-{showResults ? 'Nenhum resultado disponível ainda' : 'Nenhum jogo agendado disponível'}
-</p>
-<p className="text-xs text-muted-foreground mt-1">
-A Copa do Mundo começa em 11 de junho de 2026
-</p>
-<Button variant="outline" onClick={load} size="sm" className="mt-3">
-<RefreshCw className="w-4 h-4 mr-2" />
-Atualizar
-</Button>
-</div>
-);
-}
+        if (!previous) {
+          deduped.set(key, match);
+          continue;
+        }
 
-if (!loaded) return null;
+        const currentScore = (match.homeScore !== undefined ? 1 : 0) + (match.awayScore !== undefined ? 1 : 0);
+        const previousScore = (previous.homeScore !== undefined ? 1 : 0) + (previous.awayScore !== undefined ? 1 : 0);
+        if (currentScore >= previousScore) deduped.set(key, match);
+      }
 
-return (
-<div className="space-y-4">
-<div className="flex justify-end">
-<Button variant="outline" size="sm" onClick={load}>
-<RefreshCw className="w-3 h-3 mr-1" />
-Atualizar
-</Button>
-</div>
-{matchGroups.map((group) => (
-<div key={group.dateLabel} className="space-y-2">
-<div className="text-xs font-semibold text-muted-foreground uppercase tracking-wide border-b border-border pb-1">
-{group.dateLabel}
-</div>
-<div className="space-y-2">
-{group.matches.map((match) => {
-const hasScore = showResults && match.homeScore !== undefined;
-const live = isLiveMatch(match);
-return (
-<div key={match.id} className="space-y-2">
-<div
-className={`bg-muted/40 rounded-lg px-4 py-3 flex items-center justify-between gap-3 border transition-colors ${
-!showResults
-? 'cursor-pointer border-transparent hover:border-emerald-500/40 hover:bg-emerald-500/10'
-: 'border-transparent'
-}`}
-onClick={() => {
-if (showResults) return;
-setSelectedMatchId((current) => (current === match.id ? null : match.id));
-}}
->
-<div className="flex-1 text-right pr-3">
-<span className="font-semibold text-sm">{match.homeTeam}</span>
-</div>
-<div className="flex flex-col items-center min-w-[80px]">
-<span className="text-xs text-muted-foreground">{match.timeLabel}</span>
-{hasScore ? (
-<span className="font-bold text-lg">
-{match.homeScore} – {match.awayScore}
-</span>
-) : (
-<span className="text-emerald-500 font-bold text-sm">vs</span>
-)}
-{live && <Badge className="mt-1 bg-red-500/20 text-red-300 border-red-500/30 text-[10px]">AO VIVO</Badge>}
-</div>
-<div className="flex-1 text-left pl-3">
-<span className="font-semibold text-sm">{match.awayTeam}</span>
-</div>
-</div>
-{selectedMatchId === match.id && !showResults && (
-<FutureMatchPrediction
-homeTeam={match.homeTeam}
-awayTeam={match.awayTeam}
-league="Copa do Mundo 2026"
-kickoff={match.startTime}
-referee={match.referee}
-onClose={() => setSelectedMatchId(null)}
-/>
-)}
-</div>
-);
-})}
-</div>
-</div>
-))}
-</div>
-);
+      const matches = [...deduped.values()].sort((a, b) => Date.parse(a.startTime) - Date.parse(b.startTime));
+      const byDate: Record<string, { dateLabel: string; matches: WorldCupDisplayMatch[] }> = {};
+
+      for (const match of matches) {
+        const dateLabel = formatMatchDate(match.startTime);
+        if (!byDate[dateLabel]) byDate[dateLabel] = { dateLabel, matches: [] };
+        byDate[dateLabel].matches.push(match);
+      }
+
+      const sortedGroups = Object.values(byDate).sort(
+        (a, b) => Date.parse(a.matches[0]?.startTime ?? '') - Date.parse(b.matches[0]?.startTime ?? '')
+      );
+
+      setMatchGroups(sortedGroups);
+      setSelectedMatchId(null);
+      setLoaded(true);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Erro desconhecido');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (autoLoad) load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoLoad, showResults]);
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-8">
+        <Loader2 className="w-6 h-6 animate-spin text-emerald-500" />
+        <span className="ml-2 text-muted-foreground">Carregando jogos...</span>
+      </div>
+    );
+  }
+
+  if (!loaded && !autoLoad) {
+    return (
+      <div className="text-center py-8 space-y-3">
+        <p className="text-muted-foreground text-sm">
+          {showResults ? 'Clique para carregar os resultados' : 'Clique para carregar os próximos jogos'} da Copa do Mundo 2026
+        </p>
+        <Button onClick={load} className="bg-emerald-600 hover:bg-emerald-700">
+          <Trophy className="w-4 h-4 mr-2" />
+          Carregar Jogos
+        </Button>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="text-center py-6 space-y-3">
+        <p className="text-red-400 text-sm">{error}</p>
+        <Button variant="outline" onClick={load} size="sm">
+          <RefreshCw className="w-4 h-4 mr-2" />
+          Tentar novamente
+        </Button>
+      </div>
+    );
+  }
+
+  if (loaded && matchGroups.length === 0) {
+    return (
+      <div className="text-center py-6">
+        <p className="text-muted-foreground text-sm">
+          {showResults ? 'Nenhum resultado disponível ainda' : 'Nenhum jogo agendado disponível'}
+        </p>
+        <p className="text-xs text-muted-foreground mt-1">A Copa do Mundo começa em 11 de junho de 2026</p>
+        <Button variant="outline" onClick={load} size="sm" className="mt-3">
+          <RefreshCw className="w-4 h-4 mr-2" />
+          Atualizar
+        </Button>
+      </div>
+    );
+  }
+
+  if (!loaded) return null;
+
+  return (
+    <div className="space-y-4">
+      <div className="flex justify-end">
+        <Button variant="outline" size="sm" onClick={load}>
+          <RefreshCw className="w-3 h-3 mr-1" />
+          Atualizar
+        </Button>
+      </div>
+
+      {matchGroups.map((group) => (
+        <div key={group.dateLabel} className="space-y-2">
+          <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wide border-b border-border pb-1">
+            {group.dateLabel}
+          </div>
+          <div className="space-y-2">
+            {group.matches.map((match) => {
+              const hasScore = showResults && match.homeScore !== undefined;
+              const live = isLiveMatch(match);
+              const selected = selectedMatchId === match.id;
+
+              return (
+                <div key={match.id} className="space-y-2">
+                  <div
+                    className={`bg-muted/40 rounded-lg px-4 py-3 flex items-center justify-between gap-3 border transition-colors ${
+                      !showResults
+                        ? 'cursor-pointer border-transparent hover:border-emerald-500/40 hover:bg-emerald-500/10'
+                        : 'border-transparent'
+                    } ${selected ? 'border-emerald-500/60 bg-emerald-500/10' : ''}`}
+                    onClick={() => {
+                      if (showResults) return;
+                      setSelectedMatchId((current) => (current === match.id ? null : match.id));
+                    }}
+                  >
+                    <div className="flex-1 text-right pr-3">
+                      <span className="font-semibold text-sm">{match.homeTeam}</span>
+                    </div>
+                    <div className="flex flex-col items-center min-w-[80px]">
+                      <span className="text-xs text-muted-foreground">{match.timeLabel}</span>
+                      {hasScore ? (
+                        <span className="font-bold text-lg">{match.homeScore} – {match.awayScore}</span>
+                      ) : (
+                        <span className="text-emerald-500 font-bold text-sm">vs</span>
+                      )}
+                      {live && <Badge className="mt-1 bg-red-500/20 text-red-300 border-red-500/30 text-[10px]">AO VIVO</Badge>}
+                    </div>
+                    <div className="flex-1 text-left pl-3">
+                      <span className="font-semibold text-sm">{match.awayTeam}</span>
+                    </div>
+                  </div>
+
+                  {selected && !showResults && (
+                    <FutureMatchPrediction
+                      homeTeam={match.homeTeam}
+                      awayTeam={match.awayTeam}
+                      league="Copa do Mundo 2026"
+                      kickoff={match.startTime}
+                      referee={match.referee}
+                      onClose={() => setSelectedMatchId(null)}
+                    />
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
 }
