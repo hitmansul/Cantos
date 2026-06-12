@@ -425,6 +425,7 @@ export function FutureMatchPrediction({
   const [oddsData, setOddsData] = useState<MatchOddsResponse | null>(null);
   const [oddsLoading, setOddsLoading] = useState(false);
   const [activeOddsCategory, setActiveOddsCategory] = useState<'corners' | 'cards'>('corners');
+  const [selectedCornerLine, setSelectedCornerLine] = useState<string>('all');
 
   useEffect(() => {
     let cancelled = false;
@@ -466,8 +467,35 @@ export function FutureMatchPrediction({
         : 'border-red-500/40 text-red-400';
   const cornerOdds = oddsData?.markets.filter((market) => market.category === 'corners') ?? [];
   const cardOdds = oddsData?.markets.filter((market) => market.category === 'cards') ?? [];
-  const selectedOdds = activeOddsCategory === 'corners' ? cornerOdds : cardOdds;
+  const cornerLineOptions = useMemo(() => {
+    const options = new Map<string, string>();
+    for (const market of cornerOdds) {
+      const lineLabel = market.lineValue !== null ? String(market.lineValue) : formatOddsSelection(market);
+      const key = market.lineValue !== null ? String(market.lineValue) : lineLabel;
+      options.set(key, lineLabel);
+    }
+    return [...options.entries()].sort((a, b) => {
+      const aNumber = Number(a[0]);
+      const bNumber = Number(b[0]);
+      if (Number.isFinite(aNumber) && Number.isFinite(bNumber)) return aNumber - bNumber;
+      return a[1].localeCompare(b[1], 'pt-BR');
+    });
+  }, [cornerOdds]);
+  const filteredCornerOdds = selectedCornerLine === 'all'
+    ? cornerOdds
+    : cornerOdds.filter((market) => {
+        const key = market.lineValue !== null ? String(market.lineValue) : formatOddsSelection(market);
+        return key === selectedCornerLine;
+      });
+  const selectedOdds = activeOddsCategory === 'corners' ? filteredCornerOdds : cardOdds;
   const hasOdds = cornerOdds.length > 0 || cardOdds.length > 0;
+
+
+  useEffect(() => {
+    if (selectedCornerLine !== 'all' && !cornerLineOptions.some(([value]) => value === selectedCornerLine)) {
+      setSelectedCornerLine('all');
+    }
+  }, [cornerLineOptions, selectedCornerLine]);
 
   return (
     <Card className="p-4 border-primary/20 bg-muted/20 space-y-4">
@@ -634,11 +662,42 @@ export function FutureMatchPrediction({
                 Cartões ({cardOdds.length})
               </Button>
             </div>
+            {activeOddsCategory === 'corners' && cornerOdds.length > 0 && (
+              <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/5 p-3">
+                <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-emerald-300">Filtrar linha de escanteios</p>
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant={selectedCornerLine === 'all' ? 'default' : 'outline'}
+                    onClick={() => setSelectedCornerLine('all')}
+                    className={selectedCornerLine === 'all' ? 'bg-emerald-600 hover:bg-emerald-700' : ''}
+                  >
+                    Todas
+                  </Button>
+                  {cornerLineOptions.map(([value, label]) => (
+                    <Button
+                      key={value}
+                      type="button"
+                      size="sm"
+                      variant={selectedCornerLine === value ? 'default' : 'outline'}
+                      onClick={() => setSelectedCornerLine(value)}
+                      className={selectedCornerLine === value ? 'bg-emerald-600 hover:bg-emerald-700' : ''}
+                    >
+                      Linha {label}
+                    </Button>
+                  ))}
+                </div>
+              </div>
+            )}
+
             <div className="grid gap-3">
-              {activeOddsCategory === 'corners' && cornerOdds.length > 0 && (
+              {activeOddsCategory === 'corners' && filteredCornerOdds.length > 0 && (
                 <div className="space-y-2">
-                  <p className="text-xs font-semibold uppercase tracking-wide text-emerald-300">Escanteios</p>
-                  {cornerOdds.map((market) => {
+                  <p className="text-xs font-semibold uppercase tracking-wide text-emerald-300">
+                    Escanteios ({filteredCornerOdds.length})
+                  </p>
+                  {filteredCornerOdds.map((market) => {
                     const best = market.offers[0];
                     return (
                       <div key={market.id} className="rounded-lg bg-muted/40 p-2">
