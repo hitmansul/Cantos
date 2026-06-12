@@ -18,6 +18,10 @@ Building2,
 Shirt,
 BarChart3,
 ChevronRight,
+ChevronDown,
+ChevronUp,
+Filter,
+Target,
 BadgeDollarSign,
 } from 'lucide-react';
 import { Card } from '@/components/ui/card';
@@ -137,55 +141,6 @@ suica: 'Switzerland',
 turquia: 'Turkiye',
 uruguai: 'Uruguay',
 };
-
-
-function displayWorldCupTeamName(name: string): string {
-  const key = name
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .toLowerCase()
-    .trim();
-
-  const names: Record<string, string> = {
-    brazil: 'Brasil',
-    brasil: 'Brasil',
-    morocco: 'Marrocos',
-    marocco: 'Marrocos',
-    marrocos: 'Marrocos',
-    mexico: 'México',
-    'south africa': 'África do Sul',
-    canada: 'Canadá',
-    'bosnia and herzegovina': 'Bósnia e Herzegovina',
-    usa: 'EUA',
-    'united states': 'EUA',
-    paraguay: 'Paraguai',
-    qatar: 'Catar',
-    switzerland: 'Suíça',
-    haiti: 'Haiti',
-    scotland: 'Escócia',
-    australia: 'Austrália',
-    turkiye: 'Turquia',
-    turkey: 'Turquia',
-    germany: 'Alemanha',
-    curacao: 'Curaçao',
-    netherlands: 'Holanda',
-    japan: 'Japão',
-  };
-
-  return names[key] ?? name;
-}
-
-function worldCupDedupeKey(startTime: string, homeTeam: string, awayTeam: string): string {
-  const day = startTime.slice(0, 10);
-  const clean = (value: string) =>
-    displayWorldCupTeamName(value)
-      .normalize('NFD')
-      .replace(/[\u0300-\u036f]/g, '')
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, ' ')
-      .trim();
-  return `${day}:${[clean(homeTeam), clean(awayTeam)].sort().join('-')}`;
-}
 
 const TEAM_FLAGS: Record<string, string> = {
 Brasil: '🇧🇷',
@@ -511,7 +466,7 @@ return (
 
 {/* Main Tabs */}
 <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
-<TabsList className="grid w-full grid-cols-7">
+<TabsList className="grid w-full grid-cols-8">
 <TabsTrigger value="grupos" className="gap-2">
 <Users className="w-4 h-4" />
 <span className="hidden sm:inline">Grupos</span>
@@ -523,6 +478,10 @@ return (
 <TabsTrigger value="agenda" className="gap-2">
 <Calendar className="w-4 h-4" />
 <span className="hidden sm:inline">Agenda</span>
+</TabsTrigger>
+<TabsTrigger value="pesquisa" className="gap-2">
+<Search className="w-4 h-4" />
+<span className="hidden sm:inline">Pesquisa</span>
 </TabsTrigger>
 <TabsTrigger value="resultados" className="gap-2">
 <Trophy className="w-4 h-4" />
@@ -722,6 +681,11 @@ Auto-atualizado
 </div>
 <WorldCupMatches autoLoad />
 </Card>
+</TabsContent>
+
+{/* Pesquisa Tab — somente Copa do Mundo */}
+<TabsContent value="pesquisa" className="space-y-4">
+<WorldCupCornerSearch />
 </TabsContent>
 
 {/* Resultados Tab */}
@@ -1221,6 +1185,443 @@ return (
 );
 }
 
+type WorldCupSearchDateOption = 'today' | 'tomorrow' | 'week' | 'custom' | 'all';
+type WorldCupSearchHalf = 'total' | '1st' | '2nd';
+
+type WorldCupOddLine = {
+bookmaker: string;
+market: string;
+line: string;
+side: 'over' | 'under' | 'home' | 'away' | 'exact' | 'other';
+label: string;
+odd: number;
+};
+
+type WorldCupOddEvent = {
+id: string;
+startTime: string;
+roundName?: string;
+homeTeam: string;
+awayTeam: string;
+bookmakersCount: number;
+cornerLines: WorldCupOddLine[];
+featuredLines?: Array<{
+key: string;
+market: string;
+line: string;
+side: WorldCupOddLine['side'];
+label: string;
+odds: WorldCupOddLine[];
+}>;
+};
+
+type WorldCupOddsSearchResponse = {
+configured: boolean;
+source: string;
+note: string;
+summary?: {
+eventsChecked: number;
+cornerLines: number;
+alerts: number;
+bookmakersCompared: number;
+};
+events: WorldCupOddEvent[];
+lastUpdated: string;
+};
+
+type WorldCupUpcomingSearchMatch = {
+id: number;
+startTime: string;
+roundName?: string;
+referee?: string | null;
+homeTeam: { id: number; name: string; score?: number };
+awayTeam: { id: number; name: string; score?: number };
+};
+
+const WORLD_CUP_SEARCH_THRESHOLDS = [3.5, 4.5, 5.5, 6.5, 7.5, 8.5, 9.5, 10.5, 11.5];
+
+function worldCupSearchDateKey(value: string): string {
+const date = new Date(value);
+if (Number.isNaN(date.getTime())) return '';
+return new Intl.DateTimeFormat('en-CA', {
+timeZone: 'America/Sao_Paulo',
+year: 'numeric',
+month: '2-digit',
+day: '2-digit',
+}).format(date);
+}
+
+function addDaysToDateKey(dateKey: string, days: number): string {
+const [year, month, day] = dateKey.split('-').map(Number);
+const date = new Date(Date.UTC(year, (month || 1) - 1, day || 1));
+date.setUTCDate(date.getUTCDate() + days);
+return date.toISOString().slice(0, 10);
+}
+
+function currentSaoPauloDateKey(): string {
+return worldCupSearchDateKey(new Date().toISOString());
+}
+
+function worldCupSearchMarketMatchesHalf(line: WorldCupOddLine, half: WorldCupSearchHalf): boolean {
+const text = normalizeTeamName(`${line.market} ${line.label}`);
+const isFirstHalf = text.includes('1st half') || text.includes('first half') || text.includes('1 tempo') || text.includes('1o tempo') || text.includes('primeiro tempo');
+const isSecondHalf = text.includes('2nd half') || text.includes('second half') || text.includes('2 tempo') || text.includes('2o tempo') || text.includes('segundo tempo');
+if (half === '1st') return isFirstHalf;
+if (half === '2nd') return isSecondHalf;
+return !isFirstHalf && !isSecondHalf;
+}
+
+function worldCupLineNumber(line: WorldCupOddLine): number | null {
+const parsed = Number(String(line.line).replace(',', '.'));
+return Number.isFinite(parsed) ? parsed : null;
+}
+
+function worldCupBestOdd(lines: WorldCupOddLine[]): WorldCupOddLine | null {
+return [...lines].sort((a, b) => b.odd - a.odd)[0] ?? null;
+}
+
+function worldCupLineKey(line: WorldCupOddLine): string {
+return [
+normalizeTeamName(line.market),
+line.line,
+line.side,
+normalizeTeamName(line.label).replace(/\d+(?:[.,]\d+)?/g, '').trim(),
+].join('|');
+}
+
+function groupWorldCupCornerLines(lines: WorldCupOddLine[]): Array<{
+key: string;
+market: string;
+line: string;
+side: WorldCupOddLine['side'];
+label: string;
+odds: WorldCupOddLine[];
+bestOdd: WorldCupOddLine | null;
+}> {
+const grouped = new Map<string, WorldCupOddLine[]>();
+for (const line of lines) {
+const key = worldCupLineKey(line);
+const current = grouped.get(key) ?? [];
+current.push(line);
+grouped.set(key, current);
+}
+return [...grouped.entries()].map(([key, values]) => {
+const uniqueByBookmaker = new Map<string, WorldCupOddLine>();
+for (const value of values) {
+const bookmakerKey = normalizeTeamName(value.bookmaker);
+const previous = uniqueByBookmaker.get(bookmakerKey);
+if (!previous || value.odd > previous.odd) uniqueByBookmaker.set(bookmakerKey, value);
+}
+const odds = [...uniqueByBookmaker.values()].sort((a, b) => b.odd - a.odd);
+return {
+key,
+market: values[0]?.market ?? '',
+line: values[0]?.line ?? '',
+side: values[0]?.side ?? 'other',
+label: values[0]?.label ?? '',
+odds,
+bestOdd: worldCupBestOdd(odds),
+};
+}).sort((a, b) => {
+const aLine = Number(a.line);
+const bLine = Number(b.line);
+if (Number.isFinite(aLine) && Number.isFinite(bLine) && aLine !== bLine) return aLine - bLine;
+return (b.bestOdd?.odd ?? 0) - (a.bestOdd?.odd ?? 0);
+});
+}
+
+function worldCupLineTitle(line: { market: string; line: string; side: WorldCupOddLine['side']; label: string }): string {
+const sideLabel: Record<WorldCupOddLine['side'], string> = {
+over: 'Over',
+under: 'Under',
+home: 'Casa',
+away: 'Fora',
+exact: 'Exato',
+other: 'Linha',
+};
+return `${line.market} — ${sideLabel[line.side]} ${line.line}`;
+}
+
+function WorldCupCornerSearch() {
+const [dateOption, setDateOption] = useState<WorldCupSearchDateOption>('week');
+const [customDate, setCustomDate] = useState('');
+const [half, setHalf] = useState<WorldCupSearchHalf>('total');
+const [threshold, setThreshold] = useState(8.5);
+const [searchTeam, setSearchTeam] = useState('');
+const [showFilters, setShowFilters] = useState(true);
+const [loading, setLoading] = useState(false);
+const [error, setError] = useState<string | null>(null);
+const [oddsData, setOddsData] = useState<WorldCupOddsSearchResponse | null>(null);
+const [upcomingMatches, setUpcomingMatches] = useState<WorldCupUpcomingSearchMatch[]>([]);
+const [selectedMatchId, setSelectedMatchId] = useState<string | null>(null);
+
+async function load() {
+setLoading(true);
+setError(null);
+try {
+const [oddsRes, upcomingRes] = await Promise.all([
+fetch('/api/odds/world-cup', { cache: 'no-store' }),
+fetch('/api/365scores/upcoming/copa_do_mundo', { cache: 'no-store' }),
+]);
+if (!oddsRes.ok) throw new Error('Erro ao buscar linhas de escanteios da Copa');
+const oddsJson = (await oddsRes.json()) as WorldCupOddsSearchResponse;
+setOddsData({ ...oddsJson, events: oddsJson.events ?? [] });
+if (upcomingRes.ok) {
+const upcomingJson = await upcomingRes.json();
+setUpcomingMatches(upcomingJson.matches ?? []);
+}
+} catch (err) {
+setError(err instanceof Error ? err.message : 'Erro desconhecido');
+} finally {
+setLoading(false);
+}
+}
+
+useEffect(() => {
+load();
+}, []);
+
+const searchRows = useMemo(() => {
+const oddsEvents = oddsData?.events ?? [];
+const oddsByTeams = new Map<string, WorldCupOddEvent>();
+for (const event of oddsEvents) {
+const key = `${normalizeTeamName(event.homeTeam)}-${normalizeTeamName(event.awayTeam)}`;
+oddsByTeams.set(key, event);
+}
+
+const baseEvents: WorldCupOddEvent[] = oddsEvents.length > 0
+? oddsEvents
+: upcomingMatches.map((match) => ({
+id: String(match.id),
+startTime: match.startTime,
+roundName: match.roundName,
+homeTeam: match.homeTeam.name,
+awayTeam: match.awayTeam.name,
+bookmakersCount: 0,
+cornerLines: [],
+featuredLines: [],
+}));
+
+return baseEvents.map((event) => {
+const matchingLines = event.cornerLines.filter((line) => {
+if (line.side !== 'over') return false;
+if (!worldCupSearchMarketMatchesHalf(line, half)) return false;
+const lineNumber = worldCupLineNumber(line);
+if (lineNumber === null || lineNumber < threshold) return false;
+return true;
+});
+const groupedLines = groupWorldCupCornerLines(matchingLines);
+const topLine = groupedLines[0] ?? null;
+return {
+...event,
+groupedLines,
+topLine,
+};
+});
+}, [half, oddsData?.events, threshold, upcomingMatches]);
+
+const filteredRows = useMemo(() => {
+const today = currentSaoPauloDateKey();
+const tomorrow = addDaysToDateKey(today, 1);
+const weekEnd = addDaysToDateKey(today, 7);
+const requestedDate = dateOption === 'custom' ? customDate : '';
+
+return searchRows.filter((event) => {
+const eventDate = worldCupSearchDateKey(event.startTime);
+if (dateOption === 'today' && eventDate !== today) return false;
+if (dateOption === 'tomorrow' && eventDate !== tomorrow) return false;
+if (dateOption === 'week' && (eventDate < today || eventDate > weekEnd)) return false;
+if (dateOption === 'custom' && requestedDate && eventDate !== requestedDate) return false;
+const teamQuery = normalizeTeamName(searchTeam);
+if (teamQuery) {
+const teams = normalizeTeamName(`${event.homeTeam} ${event.awayTeam}`);
+if (!teams.includes(teamQuery)) return false;
+}
+if (event.groupedLines.length === 0) return false;
+return true;
+}).sort((a, b) => {
+const bestA = a.topLine?.bestOdd?.odd ?? 0;
+const bestB = b.topLine?.bestOdd?.odd ?? 0;
+if (bestA !== bestB) return bestB - bestA;
+return Date.parse(a.startTime) - Date.parse(b.startTime);
+});
+}, [customDate, dateOption, searchRows, searchTeam]);
+
+const totalLines = filteredRows.reduce((sum, event) => sum + event.groupedLines.length, 0);
+const halfLabel = half === '1st' ? '1º tempo' : half === '2nd' ? '2º tempo' : 'jogo completo';
+
+return (
+<div className="space-y-4">
+<div className="flex items-center justify-between gap-3">
+<div className="flex items-center gap-2">
+<Target className="w-5 h-5 text-emerald-400" />
+<div>
+<h3 className="text-lg font-bold">Pesquisa de Escanteios — Copa do Mundo</h3>
+<p className="text-xs text-muted-foreground">Busca somente jogos e linhas reais da Copa do Mundo.</p>
+</div>
+</div>
+<Button variant="ghost" size="sm" onClick={() => setShowFilters((value) => !value)}>
+<Filter className="w-4 h-4 mr-1" />
+Filtros
+{showFilters ? <ChevronUp className="w-4 h-4 ml-1" /> : <ChevronDown className="w-4 h-4 ml-1" />}
+</Button>
+</div>
+
+{showFilters && (
+<Card className="p-4 space-y-4">
+<div>
+<label className="text-sm text-muted-foreground mb-2 block">
+<Calendar className="w-4 h-4 inline mr-1" />
+Quando?
+</label>
+<div className="flex flex-wrap gap-2">
+{(['today', 'tomorrow', 'week', 'all', 'custom'] as WorldCupSearchDateOption[]).map((value) => (
+<Button key={value} size="sm" variant={dateOption === value ? 'default' : 'outline'} onClick={() => setDateOption(value)}>
+{value === 'today' ? 'Hoje' : value === 'tomorrow' ? 'Amanhã' : value === 'week' ? 'Próx. 7 dias' : value === 'all' ? 'Todos' : 'Data específica'}
+</Button>
+))}
+</div>
+{dateOption === 'custom' && (
+<input
+className="mt-2 px-3 py-2 bg-background border border-border rounded-lg text-foreground text-sm"
+type="date"
+value={customDate}
+onChange={(event) => setCustomDate(event.target.value)}
+/>
+)}
+</div>
+
+<div>
+<label className="text-sm text-muted-foreground mb-2 block">
+<Target className="w-4 h-4 inline mr-1" />
+Período
+</label>
+<div className="flex flex-wrap gap-2">
+{(['total', '1st', '2nd'] as WorldCupSearchHalf[]).map((value) => (
+<Button key={value} size="sm" variant={half === value ? 'default' : 'outline'} onClick={() => setHalf(value)}>
+{value === 'total' ? 'Completo' : value === '1st' ? '1º Tempo' : '2º Tempo'}
+</Button>
+))}
+</div>
+</div>
+
+<div>
+<label className="text-sm text-muted-foreground mb-2 block">Mínimo ({halfLabel})</label>
+<div className="flex flex-wrap gap-2">
+{WORLD_CUP_SEARCH_THRESHOLDS.map((value) => (
+<Button key={value} size="sm" variant={threshold === value ? 'default' : 'outline'} onClick={() => setThreshold(value)}>
+Over {value}
+</Button>
+))}
+</div>
+</div>
+
+<div>
+<label className="text-sm text-muted-foreground mb-2 block">
+<Search className="w-4 h-4 inline mr-1" />
+Buscar seleção
+</label>
+<input
+value={searchTeam}
+onChange={(event) => setSearchTeam(event.target.value)}
+placeholder="Ex: Brasil, México, França..."
+className="w-full px-3 py-2 bg-background border border-border rounded-lg text-foreground text-sm"
+/>
+</div>
+</Card>
+)}
+
+<div className="flex flex-wrap items-center gap-2">
+<Badge className="bg-emerald-500/20 text-emerald-300 border-emerald-500/30">Jogos ({filteredRows.length})</Badge>
+<Badge variant="outline">Linhas ({totalLines})</Badge>
+<Badge variant="outline">Over {threshold}</Badge>
+<Badge variant="outline">{halfLabel}</Badge>
+<Button variant="outline" size="sm" onClick={load} disabled={loading}>
+{loading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <RefreshCw className="w-4 h-4 mr-2" />}
+Atualizar
+</Button>
+</div>
+
+{error && (
+<Card className="p-4 border-red-500/30 bg-red-500/10">
+<p className="text-sm text-red-300">{error}</p>
+</Card>
+)}
+
+{loading && !oddsData ? (
+<Card className="p-8 text-center">
+<Loader2 className="mx-auto mb-3 w-6 h-6 animate-spin text-emerald-500" />
+<p className="text-sm text-muted-foreground">Carregando linhas da Copa...</p>
+</Card>
+) : filteredRows.length === 0 ? (
+<Card className="p-8 text-center">
+<p className="text-sm text-muted-foreground">Nenhuma linha da Copa encontrada com os filtros atuais.</p>
+<p className="text-xs text-muted-foreground mt-1">Tente ampliar a data, trocar o período ou reduzir o Over mínimo.</p>
+</Card>
+) : (
+<div className="space-y-3">
+{filteredRows.map((event) => {
+const selected = selectedMatchId === event.id;
+return (
+<Card key={event.id} className="p-4 border-emerald-500/20 space-y-4">
+<div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+<div>
+<div className="flex flex-wrap items-center gap-2 mb-2">
+<Badge className="bg-emerald-500/15 text-emerald-300 border-emerald-500/30">Copa do Mundo</Badge>
+{event.roundName && <Badge variant="outline">{event.roundName}</Badge>}
+<Badge variant="outline">{event.groupedLines.length} linhas filtradas</Badge>
+<Badge variant="outline">{event.bookmakersCount} casas</Badge>
+</div>
+<h4 className="text-lg font-bold">{event.homeTeam} x {event.awayTeam}</h4>
+<p className="text-sm text-muted-foreground">{formatShortMatchDate(event.startTime)} às {formatMatchTime(event.startTime)} BRT</p>
+</div>
+<Button variant={selected ? 'default' : 'outline'} size="sm" onClick={() => setSelectedMatchId(selected ? null : event.id)}>
+{selected ? 'Fechar previsão' : 'Ver previsão'}
+</Button>
+</div>
+
+<div className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">
+{event.groupedLines.slice(0, 6).map((line) => {
+const best = line.bestOdd;
+return (
+<div key={line.key} className="rounded-lg bg-muted/30 border border-border p-3">
+<div className="font-semibold text-sm">{worldCupLineTitle(line)}</div>
+<div className="text-xs text-muted-foreground mb-2">{line.label}</div>
+{best ? (
+<div className="text-sm font-bold text-emerald-300">Melhor: {best.bookmaker} {best.odd.toFixed(2)}</div>
+) : (
+<div className="text-sm text-muted-foreground">Sem odd disponível</div>
+)}
+<div className="mt-2 flex flex-wrap gap-1">
+{line.odds.slice(0, 4).map((odd) => (
+<span key={`${odd.bookmaker}-${odd.odd}`} className="rounded-full bg-background/60 px-2 py-1 text-xs text-muted-foreground">
+{odd.bookmaker}: {odd.odd.toFixed(2)}
+</span>
+))}
+</div>
+</div>
+);
+})}
+</div>
+
+{selected && (
+<FutureMatchPrediction
+homeTeam={event.homeTeam}
+awayTeam={event.awayTeam}
+league="Copa do Mundo 2026"
+kickoff={event.startTime}
+onClose={() => setSelectedMatchId(null)}
+/>
+)}
+</Card>
+);
+})}
+</div>
+)}
+</div>
+);
+}
+
 function WorldCupMatches({
 showResults = false,
 autoLoad = false,
@@ -1278,21 +1679,17 @@ homeTeam: { id: number; name: string; score?: number };
 awayTeam: { id: number; name: string; score?: number };
 }> = data.matches || [];
 
-const deduped = new Map<string, WorldCupDisplayMatch>();
-
+const byDate: Record<string, (typeof matchGroups)[0]> = {};
 for (const m of rawMatches) {
-const homeName = displayWorldCupTeamName(m.homeTeam.name);
-const awayName = displayWorldCupTeamName(m.awayTeam.name);
-const key = worldCupDedupeKey(m.startTime, homeName, awayName);
-
-if (deduped.has(key)) continue;
-
-deduped.set(key, {
+const dateLabel = formatMatchDate(m.startTime);
+const timeLabel = formatMatchTime(m.startTime);
+if (!byDate[dateLabel]) byDate[dateLabel] = { dateLabel, matches: [] };
+byDate[dateLabel].matches.push({
 id: m.id,
 startTime: m.startTime,
-homeTeam: homeName,
-awayTeam: awayName,
-timeLabel: formatMatchTime(m.startTime),
+homeTeam: m.homeTeam.name,
+awayTeam: m.awayTeam.name,
+timeLabel,
 roundName: m.roundName,
 statusId: m.statusId,
 statusText: m.statusText,
@@ -1300,13 +1697,6 @@ referee: m.referee,
 homeScore: m.homeTeam.score,
 awayScore: m.awayTeam.score,
 });
-}
-
-const byDate: Record<string, (typeof matchGroups)[0]> = {};
-for (const match of deduped.values()) {
-const dateLabel = formatMatchDate(match.startTime);
-if (!byDate[dateLabel]) byDate[dateLabel] = { dateLabel, matches: [] };
-byDate[dateLabel].matches.push(match);
 }
 const sortedGroups = Object.values(byDate)
 .map((group) => ({
