@@ -128,8 +128,6 @@ type AiLiveMatch = {
   competition?: string;
   homeTeam: { name: string; score: number };
   awayTeam: { name: string; score: number };
-  corners?: { home: number; away: number; total: number };
-  liveStats?: Array<{ key: string; label: string; home: string; away: string }>;
   stoppage?: {
     totalStoppedMs: number;
     totalStoppedMinutes: number;
@@ -140,7 +138,8 @@ type AiLiveMatch = {
       | '365scores-sportradar'
       | '365scores-announced-added-time'
       | 'sofascore-announced-added-time'
-      | 'api-football-announced-added-time';
+      | 'api-football-announced-added-time'
+      | 'event-based-estimate';
   };
 };
 
@@ -811,208 +810,6 @@ async function worldCupSquadReply(question: string, ctx: string): Promise<string
   }
 
   return formatSquad(squad, requestedSquadPosition(question), sourceDate);
-}
-
-
-function mentionsWorldCup(text: string): boolean {
-  const normalized = normalize(text);
-  return ['copa do mundo', 'mundial', 'world cup', 'fifa 2026', 'copa 2026'].some((term) => normalized.includes(term));
-}
-
-type AiWorldCupSimpleMatch = {
-  id: number;
-  startTime?: string;
-  roundName?: string;
-  statusText?: string;
-  homeTeam: { name: string; score?: number };
-  awayTeam: { name: string; score?: number };
-  referee?: string | null;
-};
-
-type AiWorldCupScheduleResponse = { matches?: AiWorldCupSimpleMatch[] };
-
-type AiWorldCupCornerEvent = {
-  id: string;
-  startTime: string;
-  roundName?: string;
-  homeTeam: string;
-  awayTeam: string;
-  cornerLines?: Array<{ bookmaker: string; market: string; line: string; label: string; odd: number }>;
-  featuredLines?: Array<{ market: string; line: string; label: string; odds: Array<{ bookmaker: string; odd: number }> }>;
-  alerts?: Array<{
-    market: string;
-    line: string;
-    label: string;
-    bookmaker: string;
-    odd: number;
-    nextBestBookmaker?: string;
-    nextBestOdd?: number;
-    edgePct: number;
-  }>;
-};
-
-type AiWorldCupOddsResponse = {
-  configured: boolean;
-  summary?: { eventsChecked: number; cornerLines: number; alerts: number; bookmakersCompared: number };
-  events?: AiWorldCupCornerEvent[];
-  note?: string;
-};
-
-function isWorldCupLiveMatch(match: AiLiveMatch): boolean {
-  return normalize(match.competition ?? '').includes('world cup') || normalize(match.competition ?? '').includes('copa do mundo');
-}
-
-function teamPairScore(text: string, home: string, away: string): number {
-  const normalized = normalize(text);
-  let score = 0;
-  for (const team of [home, away]) {
-    const t = normalize(team);
-    if (t && normalized.includes(t)) score += 10;
-    for (const part of t.split(' ').filter((value) => value.length >= 4)) {
-      if (normalized.includes(part)) score += 2;
-    }
-  }
-  return score;
-}
-
-function liveCornersFromRows(match: AiLiveMatch): { home: number; away: number; total: number } | undefined {
-  if (match.corners) return match.corners;
-  const row = match.liveStats?.find((item) => {
-    const key = normalize(`${item.key} ${item.label}`);
-    return key.includes('corner') || key.includes('escanteio');
-  });
-  if (!row) return undefined;
-  const home = Number(String(row.home).replace(',', '.'));
-  const away = Number(String(row.away).replace(',', '.'));
-  if (!Number.isFinite(home) || !Number.isFinite(away)) return undefined;
-  return { home, away, total: home + away };
-}
-
-async function fetchJson<T>(url: string): Promise<T | null> {
-  try {
-    const response = await fetch(url, { cache: 'no-store' });
-    if (!response.ok) return null;
-    return (await response.json()) as T;
-  } catch {
-    return null;
-  }
-}
-
-function worldCupCoverageIntent(text: string): boolean {
-  const normalized = normalize(text);
-  return mentionsWorldCup(text) && (
-    normalized.includes('quais dados') ||
-    normalized.includes('que dados') ||
-    normalized.includes('dados temos') ||
-    normalized.includes('o que temos') ||
-    normalized.includes('como funciona') ||
-    normalized.includes('base da copa')
-  );
-}
-
-function worldCupStatsIntent(text: string): boolean {
-  const normalized = normalize(text);
-  return mentionsWorldCup(text) && (
-    normalized.includes('media') ||
-    normalized.includes('medias') ||
-    normalized.includes('escanteio') ||
-    normalized.includes('corner') ||
-    normalized.includes('ranking') ||
-    normalized.includes('top') ||
-    normalized.includes('qual selecao')
-  );
-}
-
-function formatWorldCupMatchTime(value?: string): string {
-  if (!value) return 'data não informada';
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-  return new Intl.DateTimeFormat('pt-BR', {
-    timeZone: 'America/Sao_Paulo',
-    day: '2-digit',
-    month: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false,
-  }).format(date);
-}
-
-async function worldCupDataReply(question: string, origin: string): Promise<string | null> {
-  if (!worldCupCoverageIntent(question)) return null;
-
-  const [upcoming, results, live, odds, squads] = await Promise.all([
-    fetchJson<AiWorldCupScheduleResponse>(`${origin}/api/365scores/upcoming/copa_do_mundo`),
-    fetchJson<AiWorldCupScheduleResponse>(`${origin}/api/365scores/results/copa_do_mundo`),
-    fetchJson<AiLiveResponse>(`${origin}/api/365scores/live`),
-    fetchJson<AiWorldCupOddsResponse>(`${origin}/api/odds/world-cup`),
-    getFifaWorldCupSquads().catch(() => null),
-  ]);
-
-  const liveWorldCup = (live?.matches ?? []).filter(isWorldCupLiveMatch);
-  const completed = results?.matches?.length ?? 0;
-  const upcomingCount = upcoming?.matches?.length ?? 0;
-  const oddsSummary = odds?.summary;
-  const squadLine = squads
-    ? `- Elencos FIFA: ${squads.totalTeams} seleções e ${squads.totalPlayers} jogadores carregados.`
-    : '- Elencos FIFA: fonte indisponível agora.';
-
-  return `Dados disponíveis da Copa do Mundo 2026 no app:\n\n- Agenda da Copa: ${upcomingCount} jogos carregados.\n- Resultados da Copa: ${completed} jogos carregados.\n- Jogos ao vivo da Copa agora: ${liveWorldCup.length}.\n${squadLine}\n- Odds reais de escanteios: ${oddsSummary?.cornerLines ?? 0} linhas, ${oddsSummary?.alerts ?? 0} alertas e ${oddsSummary?.bookmakersCompared ?? 0} casas comparadas.\n\nImportante: médias de escanteios da aba Copa do Mundo devem usar somente jogos da própria Copa. Eu não misturo amistosos, eliminatórias ou histórico geral das seleções. Se ainda não houver jogos suficientes da Copa com estatísticas de escanteios, eu vou avisar que a amostra é insuficiente.`;
-}
-
-async function worldCupStatsReply(question: string, origin: string): Promise<string | null> {
-  if (!worldCupStatsIntent(question)) return null;
-
-  const [live, results, odds] = await Promise.all([
-    fetchJson<AiLiveResponse>(`${origin}/api/365scores/live`),
-    fetchJson<AiWorldCupScheduleResponse>(`${origin}/api/365scores/results/copa_do_mundo`),
-    fetchJson<AiWorldCupOddsResponse>(`${origin}/api/odds/world-cup`),
-  ]);
-
-  const scopedText = normalize(question);
-  const liveWorldCup = (live?.matches ?? []).filter(isWorldCupLiveMatch);
-  const specificLive = liveWorldCup
-    .map((match) => ({ match, score: teamPairScore(question, match.homeTeam.name, match.awayTeam.name) }))
-    .sort((a, b) => b.score - a.score)[0];
-
-  if (specificLive && specificLive.score > 0) {
-    const match = specificLive.match;
-    const corners = liveCornersFromRows(match);
-    const minute = typeof match.minute === 'number' ? `${match.minute}'` : match.minute;
-    const stoppage = match.stoppage?.kind === 'announced-added-time'
-      ? `\n- Acréscimo anunciado: +${formatAiMinute(match.stoppage.predictedAddedMinutes)}.`
-      : match.stoppage
-        ? `\n- Bola parada confiável: ${formatAiMinute(match.stoppage.totalStoppedMinutes)}; previsão: +${formatAiMinute(match.stoppage.predictedAddedMinutes)}.`
-        : '';
-
-    return `${match.homeTeam.name} ${match.homeTeam.score} x ${match.awayTeam.score} ${match.awayTeam.name} — Copa do Mundo, ${minute}.\n\n- Escanteios ao vivo: ${corners ? `${corners.home} x ${corners.away} (total ${corners.total})` : 'a fonte ainda não enviou esse número para este evento.'}.${stoppage}\n\nEsses dados são apenas do jogo da Copa em andamento.`;
-  }
-
-  const completedWithScore = (results?.matches ?? []).filter((match) => typeof match.homeTeam.score === 'number' && typeof match.awayTeam.score === 'number');
-  const oddsEvents = odds?.events ?? [];
-
-  if (scopedText.includes('odd') || scopedText.includes('odds') || scopedText.includes('linha')) {
-    if (oddsEvents.length === 0) return 'Consultei as odds da Copa, mas nenhuma linha real de escanteios foi retornada agora.';
-    const selected = oddsEvents.slice(0, 5).map((event) => {
-      const featured = event.featuredLines?.[0];
-      const best = featured?.odds?.[0];
-      const alert = event.alerts?.[0];
-      const line = featured && best ? `${featured.market} ${featured.label}: ${best.bookmaker} ${best.odd.toFixed(2)}` : 'sem linha principal';
-      const alertText = alert ? ` | Alerta: ${alert.bookmaker} ${alert.odd.toFixed(2)} acima de ${alert.nextBestBookmaker ?? 'outra casa'} ${alert.nextBestOdd?.toFixed(2) ?? ''}` : '';
-      return `- ${event.homeTeam} x ${event.awayTeam}: ${line}${alertText}`;
-    }).join('\n');
-    return `Linhas reais de escanteios da Copa encontradas:\n\n${selected}`;
-  }
-
-  if (completedWithScore.length === 0) {
-    const liveLines = liveWorldCup.map((match) => {
-      const corners = liveCornersFromRows(match);
-      return `- ${match.homeTeam.name} ${match.homeTeam.score} x ${match.awayTeam.score} ${match.awayTeam.name}: ${corners ? `${corners.home} x ${corners.away} escanteios` : 'sem escanteios enviados pela fonte'}`;
-    });
-
-    return `Ainda não tenho amostra suficiente de jogos finalizados da Copa do Mundo para calcular médias confiáveis de escanteios.\n\n${liveLines.length ? `Jogos da Copa ao vivo agora:\n${liveLines.join('\n')}\n\n` : ''}Vou usar somente estatísticas da própria Copa. Não vou misturar amistosos, eliminatórias, Nations League ou histórico geral das seleções.`;
-  }
-
-  return `Tenho ${completedWithScore.length} resultado(s) da Copa carregado(s), mas ainda não encontrei estatísticas completas de escanteios finalizadas suficientes para ranking/médias da competição. Assim que a fonte enviar escanteios dos jogos da Copa, calculo média total, média por seleção, over 8.5/9.5/10.5 e ranking usando somente a Copa.`;
 }
 
 function dataUpdateReply(): string {
@@ -1712,7 +1509,7 @@ function liveAddedTimeText(match: AiLiveMatch): string {
     return `${title}:\n\n- Previsao de Acrescimo: +${formatAiMinute(match.stoppage.predictedAddedMinutes)}.\n- Fonte: acrescimo anunciado pela fonte ao vivo.\n- Tempo total de bola parada: nao informado pela API.`;
   }
 
-  return `${title}:\n\n- Tempo total de bola parada: ${formatAiMinute(match.stoppage.totalStoppedMinutes)}.\n- Previsao de Acrescimo: +${formatAiMinute(match.stoppage.predictedAddedMinutes)}.\n- Regra: 80% do tempo total parado identificado pela fonte ao vivo.`;
+  return `${title}:\n\n- Tempo total de bola parada: ${formatAiMinute(match.stoppage.totalStoppedMinutes)}.\n- Previsao de Acrescimo: +${formatAiMinute(match.stoppage.predictedAddedMinutes)}.\n- Regra: estimativa por eventos reais detectados no jogo (gol, substituicao, VAR, atendimento medico e cartoes).`;
 }
 
 async function liveAddedTimeReply(question: string, ctx: string, origin: string): Promise<string | null> {
@@ -1747,14 +1544,10 @@ async function liveAddedTimeReply(question: string, ctx: string, origin: string)
 }
 
 async function localReply(question: string, ctx: string, origin: string): Promise<string | null> {
-  const worldCupData = await worldCupDataReply(question, origin);
-  if (worldCupData) return worldCupData;
-  const worldCupStats = await worldCupStatsReply(question, origin);
-  if (worldCupStats) return worldCupStats;
-  const squad = await worldCupSquadReply(question, ctx);
-  if (squad) return squad;
   if (askedDataUpdate(question)) return dataUpdateReply();
   if (askedCoverage(question)) return coverageReply();
+  const squad = await worldCupSquadReply(question, ctx);
+  if (squad) return squad;
   const odds = await oddsAlertsReply(question, origin);
   if (odds) return odds;
   const liveAdded = await liveAddedTimeReply(question, ctx, origin);
