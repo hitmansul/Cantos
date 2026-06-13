@@ -426,6 +426,7 @@ export function FutureMatchPrediction({
   const [oddsLoading, setOddsLoading] = useState(false);
   const [activeOddsCategory, setActiveOddsCategory] = useState<'corners' | 'cards'>('corners');
   const [selectedCornerLine, setSelectedCornerLine] = useState<string>('all');
+  const [oddsBookmakerQuery, setOddsBookmakerQuery] = useState('');
 
   useEffect(() => {
     let cancelled = false;
@@ -481,13 +482,26 @@ export function FutureMatchPrediction({
       return a[1].localeCompare(b[1], 'pt-BR');
     });
   }, [cornerOdds]);
-  const filteredCornerOdds = selectedCornerLine === 'all'
+  const filteredCornerOddsByLine = selectedCornerLine === 'all'
     ? cornerOdds
     : cornerOdds.filter((market) => {
         const key = market.lineValue !== null ? String(market.lineValue) : formatOddsSelection(market);
         return key === selectedCornerLine;
       });
-  const selectedOdds = activeOddsCategory === 'corners' ? filteredCornerOdds : cardOdds;
+  const bookmakerQuery = normalizeText(oddsBookmakerQuery);
+  const filterOffersByBookmaker = (market: MatchOddsMarket): MatchOddsMarket | null => {
+    if (!bookmakerQuery) return market;
+    const offers = market.offers.filter((offer) => normalizeText(offer.bookmaker).includes(bookmakerQuery));
+    if (offers.length === 0) return null;
+    return { ...market, offers };
+  };
+  const filteredCornerOdds = filteredCornerOddsByLine
+    .map(filterOffersByBookmaker)
+    .filter((market): market is MatchOddsMarket => Boolean(market));
+  const filteredCardOdds = cardOdds
+    .map(filterOffersByBookmaker)
+    .filter((market): market is MatchOddsMarket => Boolean(market));
+  const selectedOdds = activeOddsCategory === 'corners' ? filteredCornerOdds : filteredCardOdds;
   const hasOdds = cornerOdds.length > 0 || cardOdds.length > 0;
 
 
@@ -662,34 +676,35 @@ export function FutureMatchPrediction({
                 Cartões ({cardOdds.length})
               </Button>
             </div>
-            {activeOddsCategory === 'corners' && cornerOdds.length > 0 && (
-              <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/5 p-3">
-                <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-emerald-300">Filtrar linha de escanteios</p>
-                <div className="flex flex-wrap gap-2">
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant={selectedCornerLine === 'all' ? 'default' : 'outline'}
-                    onClick={() => setSelectedCornerLine('all')}
-                    className={selectedCornerLine === 'all' ? 'bg-emerald-600 hover:bg-emerald-700' : ''}
-                  >
-                    Todas
-                  </Button>
-                  {cornerLineOptions.map(([value, label]) => (
-                    <Button
-                      key={value}
-                      type="button"
-                      size="sm"
-                      variant={selectedCornerLine === value ? 'default' : 'outline'}
-                      onClick={() => setSelectedCornerLine(value)}
-                      className={selectedCornerLine === value ? 'bg-emerald-600 hover:bg-emerald-700' : ''}
+            <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/5 p-3">
+              <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-emerald-300">Filtros das odds</p>
+              <div className="grid gap-3 md:grid-cols-2">
+                {activeOddsCategory === 'corners' && cornerOdds.length > 0 && (
+                  <label className="space-y-1 text-xs text-muted-foreground">
+                    Linha de escanteios
+                    <select
+                      value={selectedCornerLine}
+                      onChange={(event) => setSelectedCornerLine(event.target.value)}
+                      className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground"
                     >
-                      Linha {label}
-                    </Button>
-                  ))}
-                </div>
+                      <option value="all">Todas as linhas</option>
+                      {cornerLineOptions.map(([value, label]) => (
+                        <option key={value} value={value}>Linha {label}</option>
+                      ))}
+                    </select>
+                  </label>
+                )}
+                <label className="space-y-1 text-xs text-muted-foreground">
+                  Casa de aposta
+                  <input
+                    value={oddsBookmakerQuery}
+                    onChange={(event) => setOddsBookmakerQuery(event.target.value)}
+                    placeholder="Ex: Bet365, Betano, Superbet..."
+                    className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground"
+                  />
+                </label>
               </div>
-            )}
+            </div>
 
             <div className="grid gap-3">
               {activeOddsCategory === 'corners' && filteredCornerOdds.length > 0 && (
@@ -719,10 +734,10 @@ export function FutureMatchPrediction({
                 </div>
               )}
 
-              {activeOddsCategory === 'cards' && cardOdds.length > 0 && (
+              {activeOddsCategory === 'cards' && filteredCardOdds.length > 0 && (
                 <div className="space-y-2">
                   <p className="text-xs font-semibold uppercase tracking-wide text-amber-300">Cartões</p>
-                  {cardOdds.map((market) => {
+                  {filteredCardOdds.map((market) => {
                     const best = market.offers[0];
                     return (
                       <div key={market.id} className="rounded-lg bg-muted/40 p-2">
