@@ -167,75 +167,75 @@ Suíça: '🇨🇭',
 const WC_GROUPS: Record<string, WCTeam[]> = {
 A: [
 { country: 'México', flag: '🇲🇽' },
-{ country: 'Argentina', flag: '🇦🇷' },
-{ country: 'Polônia', flag: '🇵🇱' },
-{ country: 'Eswatini', flag: '🇸🇿' },
+{ country: 'Coreia do Sul', flag: '🇰🇷' },
+{ country: 'República Tcheca', flag: '🇨🇿' },
+{ country: 'África do Sul', flag: '🇿🇦' },
 ],
 B: [
-{ country: 'Holanda', flag: '🇳🇱' },
-{ country: 'Portugal', flag: '🇵🇹' },
-{ country: 'Irã', flag: '🇮🇷' },
-{ country: 'Equador', flag: '🇪🇨' },
+{ country: 'Catar', flag: '🇶🇦' },
+{ country: 'Suíça', flag: '🇨🇭' },
+{ country: 'Canadá', flag: '🇨🇦' },
+{ country: 'Bósnia e Herzegovina', flag: '🇧🇦' },
 ],
 C: [
+{ country: 'EUA', flag: '🇺🇸' },
+{ country: 'Paraguai', flag: '🇵🇾' },
+{ country: 'Austrália', flag: '🇦🇺' },
+{ country: 'Turquia', flag: '🇹🇷' },
+],
+D: [
 { country: 'Brasil', flag: '🇧🇷' },
 { country: 'Marrocos', flag: '🇲🇦' },
 { country: 'Haiti', flag: '🇭🇹' },
-{ country: 'Escócia', flag: '🏴󠁧󠁢󠁳󠁣󠁴󠁿' },
-],
-D: [
-{ country: 'França', flag: '🇫🇷' },
-{ country: 'Bélgica', flag: '🇧🇪' },
-{ country: 'Suíça', flag: '🇨🇭' },
-{ country: 'Tailândia', flag: '🇹🇭' },
+{ country: 'Escócia', flag: '🏴' },
 ],
 E: [
 { country: 'Alemanha', flag: '🇩🇪' },
-{ country: 'Espanha', flag: '🇪🇸' },
-{ country: 'Indonésia', flag: '🇮🇩' },
-{ country: 'Paraguai', flag: '🇵🇾' },
+{ country: 'Curaçao', flag: '🇨🇼' },
+{ country: 'Costa do Marfim', flag: '🇨🇮' },
+{ country: 'Equador', flag: '🇪🇨' },
 ],
 F: [
-{ country: 'Portugal', flag: '🇵🇹' },
-{ country: 'Camarões', flag: '🇨🇲' },
-{ country: 'Cuba', flag: '🇨🇺' },
-{ country: 'Eslováquia', flag: '🇸🇰' },
+{ country: 'Holanda', flag: '🇳🇱' },
+{ country: 'Japão', flag: '🇯🇵' },
+{ country: 'Suécia', flag: '🇸🇪' },
+{ country: 'Tunísia', flag: '🇹🇳' },
 ],
 G: [
-{ country: 'EUA', flag: '🇺🇸' },
-{ country: 'Canadá', flag: '🇨🇦' },
+{ country: 'Espanha', flag: '🇪🇸' },
+{ country: 'Cabo Verde', flag: '🇨🇻' },
+{ country: 'Arábia Saudita', flag: '🇸🇦' },
 { country: 'Uruguai', flag: '🇺🇾' },
-{ country: 'Panamá', flag: '🇵🇦' },
 ],
 H: [
-{ country: 'Colômbia', flag: '🇨🇴' },
-{ country: 'Holanda', flag: '🇳🇱' },
-{ country: 'Gana', flag: '🇬🇭' },
-{ country: 'Azerbaijão', flag: '🇦🇿' },
+{ country: 'Bélgica', flag: '🇧🇪' },
+{ country: 'Egito', flag: '🇪🇬' },
+{ country: 'Irã', flag: '🇮🇷' },
+{ country: 'Nova Zelândia', flag: '🇳🇿' },
 ],
 I: [
-{ country: 'Japão', flag: '🇯🇵' },
-{ country: 'Turquia', flag: '🇹🇷' },
-{ country: 'Costa do Marfim', flag: '🇨🇮' },
-{ country: 'Rep. Tcheca', flag: '🇨🇿' },
+{ country: 'França', flag: '🇫🇷' },
+{ country: 'Senegal', flag: '🇸🇳' },
+{ country: 'Iraque', flag: '🇮🇶' },
+{ country: 'Noruega', flag: '🇳🇴' },
 ],
 J: [
-{ country: 'Croácia', flag: '🇭🇷' },
+{ country: 'Argentina', flag: '🇦🇷' },
 { country: 'Argélia', flag: '🇩🇿' },
-{ country: 'Bolívia', flag: '🇧🇴' },
-{ country: 'Austrália', flag: '🇦🇺' },
+{ country: 'Áustria', flag: '🇦🇹' },
+{ country: 'Jordânia', flag: '🇯🇴' },
 ],
 K: [
-{ country: 'Coreia do Sul', flag: '🇰🇷' },
-{ country: 'Polônia', flag: '🇵🇱' },
-{ country: 'El Salvador', flag: '🇸🇻' },
-{ country: 'Gabão', flag: '🇬🇦' },
+{ country: 'Portugal', flag: '🇵🇹' },
+{ country: 'RD Congo', flag: '🇨🇩' },
+{ country: 'Uzbequistão', flag: '🇺🇿' },
+{ country: 'Colômbia', flag: '🇨🇴' },
 ],
 L: [
-{ country: 'Peru', flag: '🇵🇪' },
-{ country: 'Costa Rica', flag: '🇨🇷' },
-{ country: 'Romênia', flag: '🇷🇴' },
-{ country: 'Angola', flag: '🇦🇴' },
+{ country: 'Inglaterra', flag: '🏴' },
+{ country: 'Croácia', flag: '🇭🇷' },
+{ country: 'Gana', flag: '🇬🇭' },
+{ country: 'Panamá', flag: '🇵🇦' },
 ],
 };
 
@@ -368,6 +368,43 @@ function displayWorldCupTeamName(name: string): string {
     curacao: 'Curaçao',
     netherlands: 'Holanda',
     japan: 'Japão',
+    czechia: 'República Tcheca',
+    'czech republic': 'República Tcheca',
+    tchequia: 'República Tcheca',
+    'republica tcheca': 'República Tcheca',
+    'czech rep': 'República Tcheca',
+    sweden: 'Suécia',
+    tunisia: 'Tunísia',
+    spain: 'Espanha',
+    'cape verde': 'Cabo Verde',
+    'cape verde islands': 'Cabo Verde',
+    'saudi arabia': 'Arábia Saudita',
+    uruguay: 'Uruguai',
+    belgium: 'Bélgica',
+    egypt: 'Egito',
+    iran: 'Irã',
+    'ir iran': 'Irã',
+    'new zealand': 'Nova Zelândia',
+    france: 'França',
+    senegal: 'Senegal',
+    iraq: 'Iraque',
+    norway: 'Noruega',
+    argentina: 'Argentina',
+    algeria: 'Argélia',
+    austria: 'Áustria',
+    jordan: 'Jordânia',
+    portugal: 'Portugal',
+    'congo dr': 'RD Congo',
+    'dr congo': 'RD Congo',
+    'congo democratic republic': 'RD Congo',
+    uzbekistan: 'Uzbequistão',
+    colombia: 'Colômbia',
+    england: 'Inglaterra',
+    croatia: 'Croácia',
+    ghana: 'Gana',
+    panama: 'Panamá',
+    'ivory coast': 'Costa do Marfim',
+    ecuador: 'Equador',
     'bosnia and herzegovina': 'Bósnia e Herzegovina',
     'bosnia herzegovina': 'Bósnia e Herzegovina',
     'south africa': 'África do Sul',
@@ -617,7 +654,7 @@ return ['brasil', 'brazil'].includes(normalizeTeamName(name));
 }
 
 export function WorldCupPage() {
-const [activeGroup, setActiveGroup] = useState<string>('C');
+const [activeGroup, setActiveGroup] = useState<string>('A');
 const [activeTab, setActiveTab] = useState('grupos');
 const [selectedTeamQuery, setSelectedTeamQuery] = useState('Brasil');
 const [standings, setStandings] = useState<Record<string, WorldCupStandingRow[]>>(initialWorldCupStandings());
@@ -770,7 +807,7 @@ activeGroup === group ? 'bg-emerald-600 hover:bg-emerald-700 border-0' : ''
 }
 >
 Grupo {group}
-{group === 'C' && <span className="ml-1 text-xs">🇧🇷</span>}
+{group === 'D' && <span className="ml-1 text-xs">🇧🇷</span>}
 </Button>
 ))}
 </div>
@@ -781,7 +818,7 @@ Grupo {group}
 <h3 className="font-bold text-lg flex items-center gap-2">
 <Trophy className="w-5 h-5 text-amber-400" />
 Grupo {activeGroup}
-{activeGroup === 'C' && (
+{activeGroup === 'D' && (
 <Badge className="bg-green-500/20 text-green-400 border-green-500/30 text-xs">
 🇧🇷 Brasil
 </Badge>
@@ -858,7 +895,7 @@ onClick={() => setActiveGroup(group)}
 <span className="font-bold text-sm text-muted-foreground uppercase">
 Grupo {group}
 </span>
-{group === 'C' && <span className="text-xs">🇧🇷</span>}
+{group === 'D' && <span className="text-xs">🇧🇷</span>}
 </div>
 <div className="space-y-1">
 {teams.map((t) => (
@@ -888,12 +925,12 @@ className="flex w-full items-center gap-2 rounded-md px-1 py-0.5 text-left text-
 <div className="px-4 py-3 bg-green-500/10 border-b border-green-500/20">
 <h3 className="font-bold flex items-center gap-2">
 <span className="text-2xl">🇧🇷</span>
-Brasil — Grupo C
+Brasil — Grupo D
 </h3>
 </div>
 <div className="p-4 space-y-4">
 <div className="grid grid-cols-2 gap-3">
-{WC_GROUPS.C.map((team, idx) => (
+{WC_GROUPS.D.map((team, idx) => (
 <div
 key={team.country}
 className={`flex items-center gap-3 p-3 rounded-lg ${team.country === 'Brasil' ? 'bg-green-500/20 border border-green-500/30' : 'bg-muted/30'}`}
