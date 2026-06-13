@@ -387,6 +387,163 @@ function worldCupMatchDedupeKey(match: { startTime: string; homeTeam: string; aw
   return `${date}-${time}-${teams}`;
 }
 
+
+type WorldCupStandingRow = {
+  team: WCTeam;
+  played: number;
+  wins: number;
+  draws: number;
+  losses: number;
+  goalsFor: number;
+  goalsAgainst: number;
+  goalDifference: number;
+  points: number;
+  live: boolean;
+};
+
+type WorldCupResultInput = {
+  id?: number | string;
+  startTime: string;
+  roundName?: string;
+  statusId?: number;
+  statusText?: string;
+  competition?: string;
+  homeTeam: { name: string; score?: number | null };
+  awayTeam: { name: string; score?: number | null };
+};
+
+function initialWorldCupStandings(): Record<string, WorldCupStandingRow[]> {
+  return Object.fromEntries(
+    Object.entries(WC_GROUPS).map(([group, teams]) => [
+      group,
+      teams.map((team) => ({
+        team,
+        played: 0,
+        wins: 0,
+        draws: 0,
+        losses: 0,
+        goalsFor: 0,
+        goalsAgainst: 0,
+        goalDifference: 0,
+        points: 0,
+        live: false,
+      })),
+    ])
+  ) as Record<string, WorldCupStandingRow[]>;
+}
+
+function worldCupGroupForTeam(teamName: string): string | null {
+  const canonical = canonicalWorldCupTeamName(teamName);
+  for (const [group, teams] of Object.entries(WC_GROUPS)) {
+    if (teams.some((team) => canonicalWorldCupTeamName(team.country) === canonical)) return group;
+  }
+  return null;
+}
+
+function worldCupTeamFlag(teamName: string): string {
+  const canonical = canonicalWorldCupTeamName(teamName);
+  for (const teams of Object.values(WC_GROUPS)) {
+    const found = teams.find((team) => canonicalWorldCupTeamName(team.country) === canonical);
+    if (found) return found.flag;
+  }
+  return TEAM_FLAGS[displayWorldCupTeamName(teamName)] ?? '🏳️';
+}
+
+function isWorldCupLiveMatch(match: WorldCupResultInput): boolean {
+  const text = normalizeTeamName(`${match.competition ?? ''} ${match.statusText ?? ''}`);
+  return text.includes('world cup') || text.includes('copa do mundo');
+}
+
+function isLiveStatus(statusText?: string, statusId?: number): boolean {
+  const status = normalizeTeamName(statusText ?? '');
+  return statusId === 2 || status.includes('ao vivo') || status.includes('live') || status.includes('primeiro') || status.includes('segundo') || status.includes('half');
+}
+
+function isFinishedStatus(statusText?: string, statusId?: number): boolean {
+  const status = normalizeTeamName(statusText ?? '');
+  return statusId === 3 || status.includes('encerr') || status.includes('final') || status.includes('fim') || status.includes('finished');
+}
+
+function applyWorldCupMatchToStandings(
+  standings: Record<string, WorldCupStandingRow[]>,
+  match: WorldCupResultInput,
+  live: boolean
+) {
+  const homeName = displayWorldCupTeamName(match.homeTeam.name);
+  const awayName = displayWorldCupTeamName(match.awayTeam.name);
+  const group = worldCupGroupForTeam(homeName);
+  if (!group || group !== worldCupGroupForTeam(awayName)) return;
+
+  const homeScore = Number(match.homeTeam.score);
+  const awayScore = Number(match.awayTeam.score);
+  if (!Number.isFinite(homeScore) || !Number.isFinite(awayScore)) return;
+
+  const rows = standings[group];
+  const home = rows.find((row) => canonicalWorldCupTeamName(row.team.country) === canonicalWorldCupTeamName(homeName));
+  const away = rows.find((row) => canonicalWorldCupTeamName(row.team.country) === canonicalWorldCupTeamName(awayName));
+  if (!home || !away) return;
+
+  home.played += 1;
+  away.played += 1;
+  home.goalsFor += homeScore;
+  home.goalsAgainst += awayScore;
+  away.goalsFor += awayScore;
+  away.goalsAgainst += homeScore;
+  home.goalDifference = home.goalsFor - home.goalsAgainst;
+  away.goalDifference = away.goalsFor - away.goalsAgainst;
+  home.live = home.live || live;
+  away.live = away.live || live;
+
+  if (homeScore > awayScore) {
+    home.wins += 1;
+    away.losses += 1;
+    home.points += 3;
+  } else if (homeScore < awayScore) {
+    away.wins += 1;
+    home.losses += 1;
+    away.points += 3;
+  } else {
+    home.draws += 1;
+    away.draws += 1;
+    home.points += 1;
+    away.points += 1;
+  }
+}
+
+function sortWorldCupStandings(rows: WorldCupStandingRow[]) {
+  return [...rows].sort((a, b) => {
+    if (b.points !== a.points) return b.points - a.points;
+    if (b.goalDifference !== a.goalDifference) return b.goalDifference - a.goalDifference;
+    if (b.goalsFor !== a.goalsFor) return b.goalsFor - a.goalsFor;
+    return a.team.country.localeCompare(b.team.country, 'pt-BR');
+  });
+}
+
+function buildWorldCupStandings(matches: WorldCupResultInput[]) {
+  const standings = initialWorldCupStandings();
+  const applied = new Map<string, WorldCupResultInput & { live: boolean }>();
+
+  for (const match of matches) {
+    const live = isLiveStatus(match.statusText, match.statusId) && !isFinishedStatus(match.statusText, match.statusId);
+    const hasScore = match.homeTeam.score !== undefined && match.homeTeam.score !== null && match.awayTeam.score !== undefined && match.awayTeam.score !== null;
+    if (!hasScore) continue;
+
+    const home = displayWorldCupTeamName(match.homeTeam.name);
+    const away = displayWorldCupTeamName(match.awayTeam.name);
+    if (!worldCupGroupForTeam(home) || worldCupGroupForTeam(home) !== worldCupGroupForTeam(away)) continue;
+
+    const key = worldCupMatchDedupeKey({ startTime: match.startTime, homeTeam: home, awayTeam: away });
+    const previous = applied.get(key);
+    if (!previous || live || isFinishedStatus(match.statusText, match.statusId)) applied.set(key, { ...match, live });
+  }
+
+  for (const match of applied.values()) applyWorldCupMatchToStandings(standings, match, match.live);
+
+  return Object.fromEntries(
+    Object.entries(standings).map(([group, rows]) => [group, sortWorldCupStandings(rows)])
+  ) as Record<string, WorldCupStandingRow[]>;
+}
+
 function fifaTeamLookupName(value: string): string {
 const normalized = normalizeTeamName(value);
 return SQUAD_TEAM_ALIASES[normalized] ?? value;
@@ -463,6 +620,59 @@ export function WorldCupPage() {
 const [activeGroup, setActiveGroup] = useState<string>('C');
 const [activeTab, setActiveTab] = useState('grupos');
 const [selectedTeamQuery, setSelectedTeamQuery] = useState('Brasil');
+const [standings, setStandings] = useState<Record<string, WorldCupStandingRow[]>>(initialWorldCupStandings());
+const [standingsUpdatedAt, setStandingsUpdatedAt] = useState<string>('');
+
+async function loadWorldCupStandings() {
+  try {
+    const [resultsRes, liveRes] = await Promise.allSettled([
+      fetch('/api/365scores/results/copa_do_mundo', { cache: 'no-store' }),
+      fetch('/api/365scores/live', { cache: 'no-store' }),
+    ]);
+
+    const matches: WorldCupResultInput[] = [];
+
+    if (resultsRes.status === 'fulfilled' && resultsRes.value.ok) {
+      const data = await resultsRes.value.json();
+      for (const match of data.matches ?? []) {
+        matches.push(match);
+      }
+    }
+
+    if (liveRes.status === 'fulfilled' && liveRes.value.ok) {
+      const data = await liveRes.value.json();
+      for (const match of data.matches ?? []) {
+        if (!isWorldCupLiveMatch(match)) continue;
+        matches.push({
+          id: match.id,
+          startTime: new Date().toISOString(),
+          statusText: match.statusText,
+          competition: match.competition,
+          homeTeam: { name: match.homeTeam?.name, score: match.homeTeam?.score },
+          awayTeam: { name: match.awayTeam?.name, score: match.awayTeam?.score },
+        });
+      }
+    }
+
+    setStandings(buildWorldCupStandings(matches));
+    setStandingsUpdatedAt(
+      new Intl.DateTimeFormat('pt-BR', {
+        timeZone: 'America/Sao_Paulo',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+      }).format(Date.now())
+    );
+  } catch {
+    setStandings(initialWorldCupStandings());
+  }
+}
+
+useEffect(() => {
+  loadWorldCupStandings();
+  const interval = setInterval(loadWorldCupStandings, 30_000);
+  return () => clearInterval(interval);
+}, []);
 
 function openTeamDetails(teamName: string) {
 setSelectedTeamQuery(teamName);
@@ -577,6 +787,9 @@ Grupo {activeGroup}
 </Badge>
 )}
 </h3>
+{standingsUpdatedAt && (
+<Badge variant="outline" className="text-xs text-emerald-300">Tabela auto: {standingsUpdatedAt}</Badge>
+)}
 </div>
 <div className="overflow-x-auto">
 <table className="w-full text-sm">
@@ -593,29 +806,30 @@ Grupo {activeGroup}
 </tr>
 </thead>
 <tbody className="divide-y divide-border">
-{WC_GROUPS[activeGroup].map((team, idx) => (
+{(standings[activeGroup] ?? initialWorldCupStandings()[activeGroup]).map((row, idx) => (
 <tr
-key={team.country}
+key={row.team.country}
 className={`hover:bg-muted/50 transition-colors ${idx < 2 ? 'border-l-2 border-l-emerald-500' : ''}`}
 >
 <td className="px-4 py-3 text-muted-foreground font-mono">{idx + 1}</td>
 <td className="px-4 py-3">
 <button
 type="button"
-onClick={() => openTeamDetails(team.country)}
+onClick={() => openTeamDetails(row.team.country)}
 className="flex items-center gap-3 rounded-lg px-2 py-1 -ml-2 text-left transition-colors hover:bg-emerald-500/10 focus:outline-none focus:ring-2 focus:ring-emerald-500/60"
 >
-<span className="text-xl">{team.flag}</span>
-<span className="font-medium">{team.country}</span>
+<span className="text-xl">{row.team.flag}</span>
+<span className="font-medium">{row.team.country}</span>
+{row.live && <Badge className="bg-red-500/20 text-red-300 border-red-500/30 text-[10px]">ao vivo</Badge>}
 <ChevronRight className="w-4 h-4 text-muted-foreground" />
 </button>
 </td>
-<td className="px-4 py-3 text-center text-muted-foreground">0</td>
-<td className="px-4 py-3 text-center text-green-400">0</td>
-<td className="px-4 py-3 text-center text-yellow-400">0</td>
-<td className="px-4 py-3 text-center text-red-400">0</td>
-<td className="px-4 py-3 text-center text-muted-foreground">0</td>
-<td className="px-4 py-3 text-center font-bold text-emerald-400">0</td>
+<td className="px-4 py-3 text-center text-muted-foreground">{row.played}</td>
+<td className="px-4 py-3 text-center text-green-400">{row.wins}</td>
+<td className="px-4 py-3 text-center text-yellow-400">{row.draws}</td>
+<td className="px-4 py-3 text-center text-red-400">{row.losses}</td>
+<td className="px-4 py-3 text-center text-muted-foreground">{row.goalDifference}</td>
+<td className="px-4 py-3 text-center font-bold text-emerald-400">{row.points}</td>
 </tr>
 ))}
 </tbody>
@@ -1737,6 +1951,10 @@ function WorldCupMatches({
   const [error, setError] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [selectedMatchId, setSelectedMatchId] = useState<number | null>(null);
+  const [dateOption, setDateOption] = useState<WorldCupSearchDateOption>('all');
+  const [customDate, setCustomDate] = useState('');
+  const [teamQuery, setTeamQuery] = useState('');
+  const [showFilters, setShowFilters] = useState(true);
 
   function isLiveMatch(match: WorldCupDisplayMatch): boolean {
     const status = `${match.statusText ?? ''}`.toLowerCase();
@@ -1823,6 +2041,32 @@ function WorldCupMatches({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [autoLoad, showResults]);
 
+  const filteredMatchGroups = useMemo(() => {
+    const today = currentSaoPauloDateKey();
+    const tomorrow = addDaysToDateKey(today, 1);
+    const weekEnd = addDaysToDateKey(today, 7);
+    const requestedDate = dateOption === 'custom' ? customDate : '';
+    const query = normalizeTeamName(teamQuery);
+
+    return matchGroups
+      .map((group) => ({
+        ...group,
+        matches: group.matches.filter((match) => {
+          const eventDate = worldCupSearchDateKey(match.startTime);
+          if (dateOption === 'today' && eventDate !== today) return false;
+          if (dateOption === 'tomorrow' && eventDate !== tomorrow) return false;
+          if (dateOption === 'week' && (eventDate < today || eventDate > weekEnd)) return false;
+          if (dateOption === 'custom' && requestedDate && eventDate !== requestedDate) return false;
+          if (query) {
+            const teams = normalizeTeamName(`${match.homeTeam} ${match.awayTeam}`);
+            if (!teams.includes(query)) return false;
+          }
+          return true;
+        }),
+      }))
+      .filter((group) => group.matches.length > 0);
+  }, [customDate, dateOption, matchGroups, teamQuery]);
+
   if (loading) {
     return (
       <div className="flex items-center justify-center py-8">
@@ -1877,14 +2121,62 @@ function WorldCupMatches({
 
   return (
     <div className="space-y-4">
-      <div className="flex justify-end">
+      <div className="flex items-center justify-between gap-3">
+        <Button variant="ghost" size="sm" onClick={() => setShowFilters((value) => !value)}>
+          <Filter className="w-4 h-4 mr-1" />
+          Filtros
+          {showFilters ? <ChevronUp className="w-4 h-4 ml-1" /> : <ChevronDown className="w-4 h-4 ml-1" />}
+        </Button>
         <Button variant="outline" size="sm" onClick={load}>
           <RefreshCw className="w-3 h-3 mr-1" />
           Atualizar
         </Button>
       </div>
 
-      {matchGroups.map((group) => (
+      {showFilters && (
+        <Card className="p-4 space-y-4">
+          <div>
+            <label className="text-sm text-muted-foreground mb-2 block">
+              <Calendar className="w-4 h-4 inline mr-1" />
+              Quando?
+            </label>
+            <div className="flex flex-wrap gap-2">
+              {(['today', 'tomorrow', 'week', 'all', 'custom'] as WorldCupSearchDateOption[]).map((value) => (
+                <Button key={value} size="sm" variant={dateOption === value ? 'default' : 'outline'} onClick={() => setDateOption(value)}>
+                  {value === 'today' ? 'Hoje' : value === 'tomorrow' ? 'Amanhã' : value === 'week' ? 'Próx. 7 dias' : value === 'all' ? 'Todos' : 'Data específica'}
+                </Button>
+              ))}
+            </div>
+            {dateOption === 'custom' && (
+              <input
+                className="mt-2 px-3 py-2 bg-background border border-border rounded-lg text-foreground text-sm"
+                type="date"
+                value={customDate}
+                onChange={(event) => setCustomDate(event.target.value)}
+              />
+            )}
+          </div>
+
+          <div>
+            <label className="text-sm text-muted-foreground mb-2 block">
+              <Search className="w-4 h-4 inline mr-1" />
+              Buscar seleção
+            </label>
+            <input
+              value={teamQuery}
+              onChange={(event) => setTeamQuery(event.target.value)}
+              placeholder="Ex: Brasil, México, França..."
+              className="w-full px-3 py-2 bg-background border border-border rounded-lg text-foreground text-sm"
+            />
+          </div>
+        </Card>
+      )}
+
+      {filteredMatchGroups.length === 0 ? (
+        <Card className="p-8 text-center">
+          <p className="text-sm text-muted-foreground">Nenhum jogo encontrado com os filtros atuais.</p>
+        </Card>
+      ) : filteredMatchGroups.map((group) => (
         <div key={group.dateLabel} className="space-y-2">
           <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wide border-b border-border pb-1">
             {group.dateLabel}
