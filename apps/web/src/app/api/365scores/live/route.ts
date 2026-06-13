@@ -362,14 +362,41 @@ function parseAddedTimeMinutes(value?: string | number | null) {
   return Number.isFinite(minutes) && minutes > 0 ? minutes : null;
 }
 
-function parseTimelineMinuteNumber(value?: string) {
+function parseTimelineParts(value?: string): { base: number; extra: number; total: number } | null {
   if (!value) return null;
   const match = String(value).match(/(\d{1,3})(?:\s*\+\s*(\d{1,2}))?/);
   if (!match) return null;
   const base = Number(match[1]);
   const extra = match[2] ? Number(match[2]) : 0;
   if (!Number.isFinite(base) || !Number.isFinite(extra)) return null;
-  return base + extra;
+  return { base, extra, total: base + extra };
+}
+
+function parseTimelineMinuteNumber(value?: string) {
+  return parseTimelineParts(value)?.total ?? null;
+}
+
+function periodFromTimelineMinute(value?: string): StoppagePeriodSummary['period'] {
+  const parts = parseTimelineParts(value);
+  if (!parts) return 'unknown';
+
+  // 45+1, 45+2 etc. continuam sendo 1º tempo.
+  // 90+1, 90+2 etc. continuam sendo 2º tempo.
+  // A 365Scores às vezes envia Timeline "45+2"; somar 45+2 e jogar para 2º tempo era o bug.
+  if (parts.base <= 45) return 'first-half';
+  if (parts.base <= 90) return 'second-half';
+  return 'extra-time';
+}
+
+function activePeriodFromMinute(minute: number | string, statusText?: string): StoppagePeriodSummary['period'] {
+  const byTimeline = periodFromTimelineMinute(String(minute ?? ''));
+  if (byTimeline !== 'unknown') return byTimeline;
+
+  const status = normalizeText(statusText ?? '');
+  if (status.includes('second') || status.includes('segundo') || status.includes('2')) return 'second-half';
+  if (status.includes('first') || status.includes('primeiro') || status.includes('1')) return 'first-half';
+  if (status.includes('extra') || status.includes('prolong')) return 'extra-time';
+  return 'unknown';
 }
 
 function periodFromMessage(message: PlayByPlayMessage): StoppagePeriodSummary['period'] {
@@ -380,9 +407,7 @@ function periodFromMessage(message: PlayByPlayMessage): StoppagePeriodSummary['p
   // do primeiro tempo quando o jogo já está no 2º tempo. Por isso a linha do evento
   // (Timeline: 12, 15, 21, 56 etc.) é a fonte principal para separar 1º e 2º tempo.
   if (timelineMinute !== null) {
-    if (timelineMinute <= 45) return 'first-half';
-    if (timelineMinute <= 90) return 'second-half';
-    return 'extra-time';
+    return periodFromTimelineMinute(message.Timeline);
   }
 
   if (period.includes('second') || period.includes('segundo') || period.includes('2')) return 'second-half';
@@ -393,11 +418,7 @@ function periodFromMessage(message: PlayByPlayMessage): StoppagePeriodSummary['p
 }
 
 function periodFromTimeline(timeline?: string): StoppagePeriodSummary['period'] {
-  const minute = parseTimelineMinuteNumber(timeline);
-  if (minute === null) return 'unknown';
-  if (minute <= 45) return 'first-half';
-  if (minute <= 90) return 'second-half';
-  return 'extra-time';
+  return periodFromTimelineMinute(timeline);
 }
 
 function stoppagePeriodLabel(period: StoppagePeriodSummary['period']) {
@@ -692,7 +713,7 @@ function ruleForEventComment(comment: string): EventStoppageRule | null {
   return EVENT_STOPPAGE_RULES.find((rule) => rule.terms.some((term) => normalized.includes(term))) ?? null;
 }
 
-function calculateEventBasedStoppageInfo(messages: PlayByPlayMessage[]): StoppageInfo | undefined {
+function calculateEventBasedStoppageInfo(messages: PlayByPlayMessage[], activePeriodOverride?: StoppagePeriodSummary['period']): StoppageInfo | undefined {
   const incidents: StoppageIncident[] = [];
   const seen = new Set<string>();
 
@@ -722,7 +743,7 @@ function calculateEventBasedStoppageInfo(messages: PlayByPlayMessage[]): Stoppag
 
   if (incidents.length === 0) return undefined;
 
-  const activePeriod = activePeriodFromMessages(messages);
+  const activePeriod = activePeriodOverride && activePeriodOverride !== 'unknown' ? activePeriodOverride : activePeriodFromMessages(messages);
   const { active, breakdown } = buildPeriodBreakdown(incidents, activePeriod);
 
   if (active.totalStoppedMs <= 0) return undefined;
@@ -741,7 +762,7 @@ function calculateEventBasedStoppageInfo(messages: PlayByPlayMessage[]): Stoppag
   };
 }
 
-function calculateStoppageInfo(messages: PlayByPlayMessage[]): StoppageInfo | undefined {
+function calculateStoppageInfo(messages: PlayByPlayMessage[], activePeriodOverride?: StoppagePeriodSummary['period']): StoppageInfo | undefined {
   const sortedMessages = messages
     .map((message) => ({ message, timestamp: messageTime(message) }))
     .filter(
@@ -806,7 +827,7 @@ function calculateStoppageInfo(messages: PlayByPlayMessage[]): StoppageInfo | un
 
   if (incidents.length === 0) return undefined;
 
-  const activePeriod = activePeriodFromMessages(messages);
+  const activePeriod = activePeriodOverride && activePeriodOverride !== 'unknown' ? activePeriodOverride : activePeriodFromMessages(messages);
   const { active, breakdown } = buildPeriodBreakdown(incidents, activePeriod);
   if (active.totalStoppedMs <= 0) return undefined;
 
@@ -824,7 +845,7 @@ function calculateStoppageInfo(messages: PlayByPlayMessage[]): StoppageInfo | un
   };
 }
 
-async function fetchStoppageInfo(gameId: number): Promise<StoppageInfo | undefined> {
+async function fetchStoppageInfo(gameId: number, matchMinute: number | string, statusText?: string): Promise<StoppageInfo | undefined> {
   try {
     const detailRes = await fetchWithTimeout(
       `https://webws.365scores.com/web/game/?appTypeId=5&langId=31&gameId=${gameId}`,
@@ -858,7 +879,8 @@ async function fetchStoppageInfo(gameId: number): Promise<StoppageInfo | undefin
     const playByPlay = (await playByPlayRes.json()) as { Messages?: PlayByPlayMessage[] };
     const messages = playByPlay.Messages ?? [];
 
-    return calculateEventBasedStoppageInfo(messages) ?? calculateStoppageInfo(messages);
+    const activePeriod = activePeriodFromMinute(matchMinute, statusText);
+    return calculateEventBasedStoppageInfo(messages, activePeriod) ?? calculateStoppageInfo(messages, activePeriod);
   } catch (err) {
     console.warn('[live/365scores/stoppage] error:', err);
     return undefined;
@@ -871,7 +893,7 @@ async function enrichWithStoppage(matches: LiveMatch[]): Promise<LiveMatch[]> {
 
   await Promise.all(
     enrichedMatches.slice(0, limit).map(async (match, index) => {
-      const stoppage = await fetchStoppageInfo(match.id);
+      const stoppage = await fetchStoppageInfo(match.id, match.minute, match.statusText);
       if (stoppage) {
         enrichedMatches[index] = { ...match, stoppage };
       }
