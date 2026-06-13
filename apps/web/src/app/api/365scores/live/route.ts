@@ -376,15 +376,18 @@ function periodFromMessage(message: PlayByPlayMessage): StoppagePeriodSummary['p
   const period = normalizeText(message.Period ?? '');
   const timelineMinute = parseTimelineMinuteNumber(message.Timeline);
 
-  if (period.includes('second') || period.includes('segundo') || period.includes('2')) return 'second-half';
-  if (period.includes('first') || period.includes('primeiro') || period.includes('1')) return 'first-half';
-  if (period.includes('extra') || period.includes('prolong')) return 'extra-time';
-
+  // IMPORTANTE: a 365Scores pode devolver Period = "Segundo Tempo" em mensagens antigas
+  // do primeiro tempo quando o jogo já está no 2º tempo. Por isso a linha do evento
+  // (Timeline: 12, 15, 21, 56 etc.) é a fonte principal para separar 1º e 2º tempo.
   if (timelineMinute !== null) {
     if (timelineMinute <= 45) return 'first-half';
     if (timelineMinute <= 90) return 'second-half';
     return 'extra-time';
   }
+
+  if (period.includes('second') || period.includes('segundo') || period.includes('2')) return 'second-half';
+  if (period.includes('first') || period.includes('primeiro') || period.includes('1')) return 'first-half';
+  if (period.includes('extra') || period.includes('prolong')) return 'extra-time';
 
   return 'unknown';
 }
