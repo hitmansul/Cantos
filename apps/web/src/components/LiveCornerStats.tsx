@@ -39,6 +39,24 @@ interface LiveMatch {
     totalStoppedMinutes: number;
     predictedAddedMs: number;
     predictedAddedMinutes: number;
+    activePeriod?: 'first-half' | 'second-half' | 'extra-time' | 'unknown';
+    activePeriodLabel?: string;
+    periodBreakdown?: Array<{
+      period: 'first-half' | 'second-half' | 'extra-time' | 'unknown';
+      label: string;
+      totalStoppedMs: number;
+      totalStoppedMinutes: number;
+      predictedAddedMs: number;
+      predictedAddedMinutes: number;
+      incidents: Array<{
+        startAt: string;
+        endAt?: string;
+        durationMs: number;
+        reason: string;
+        period?: string;
+        timeline?: string;
+      }>;
+    }>;
     source:
       | '365scores-actual-play-time'
       | '365scores-sportradar'
@@ -153,7 +171,7 @@ function formatMatchMinute(value: number) {
 
 function getOfficialAddedTimePrediction(
   match: LiveMatch
-): { totalLabel?: string; addedLabel: string; sourceLabel: string; announcedOnly: boolean } | null {
+): { totalLabel?: string; addedLabel: string; sourceLabel: string; announcedOnly: boolean; periodLabel?: string } | null {
   if (!match.stoppage) return null;
 
   const incidentCount = match.stoppage.incidents.length;
@@ -174,6 +192,7 @@ function getOfficialAddedTimePrediction(
       addedLabel: `+${formatMinuteValue(match.stoppage.predictedAddedMinutes)}`,
       sourceLabel: `Acréscimo informado via ${sourceLabel}`,
       announcedOnly: true,
+      periodLabel: match.stoppage.activePeriodLabel,
     };
   }
 
@@ -186,6 +205,7 @@ function getOfficialAddedTimePrediction(
       incidentCount === 1 ? '' : 's'
     } via ${sourceLabel}`,
     announcedOnly: false,
+    periodLabel: match.stoppage.activePeriodLabel,
   };
 }
 
@@ -407,13 +427,13 @@ function LiveMatchCard({
                 variant="outline"
                 className="justify-center bg-cyan-500/10 text-cyan-300 border-cyan-500/20"
               >
-                Bola parada {addedTime.totalLabel}
+                Bola parada {addedTime.periodLabel ? `${addedTime.periodLabel}: ` : ''}{addedTime.totalLabel}
               </Badge>
               <Badge
                 variant="outline"
                 className="justify-center bg-amber-500/10 text-amber-300 border-amber-500/20"
               >
-                Previsão de Acréscimo {addedTime.addedLabel}
+                Previsão {addedTime.periodLabel ? `${addedTime.periodLabel}: ` : ''}{addedTime.addedLabel}
               </Badge>
             </div>
           )}
@@ -572,7 +592,7 @@ function LiveMatchDetails({
             <div className="rounded-lg border border-cyan-500/20 bg-cyan-500/10 p-3">
               <p className="flex items-center gap-2 text-sm font-semibold text-cyan-300">
                 <Timer className="w-4 h-4" />
-                Tempo total de bola parada
+                Tempo total de bola parada {addedTime.periodLabel ? `— ${addedTime.periodLabel}` : ''}
               </p>
               <p className="mt-1 text-2xl font-bold">{addedTime.totalLabel ?? 'não informado'}</p>
               <p className="text-xs text-muted-foreground">
@@ -584,7 +604,7 @@ function LiveMatchDetails({
             <div className="rounded-lg border border-amber-500/20 bg-amber-500/10 p-3">
               <p className="flex items-center gap-2 text-sm font-semibold text-amber-300">
                 <Clock className="w-4 h-4" />
-                Previsão de Acréscimo
+                Previsão de Acréscimo {addedTime.periodLabel ? `— ${addedTime.periodLabel}` : ''}
               </p>
               <p className="mt-1 text-2xl font-bold">{addedTime.addedLabel}</p>
               <p className="text-xs text-muted-foreground">
@@ -610,11 +630,48 @@ function LiveMatchDetails({
         </div>
       )}
 
+      {match.stoppage?.periodBreakdown && match.stoppage.periodBreakdown.length > 0 ? (
+        <div className="rounded-lg border border-border bg-background/40 p-3">
+          <p className="mb-3 text-sm font-semibold">Resumo por tempo</p>
+          <div className="grid gap-2 md:grid-cols-2">
+            {match.stoppage.periodBreakdown
+              .filter((summary) => summary.period !== 'unknown')
+              .map((summary) => (
+                <div
+                  key={summary.period}
+                  className={`rounded-md border p-3 ${
+                    summary.period === match.stoppage?.activePeriod
+                      ? 'border-emerald-500/30 bg-emerald-500/10'
+                      : 'border-border/70 bg-muted/20'
+                  }`}
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-semibold">{summary.label}</span>
+                    {summary.period === match.stoppage?.activePeriod && (
+                      <Badge variant="outline" className="text-emerald-300">tempo atual</Badge>
+                    )}
+                  </div>
+                  <div className="mt-2 grid grid-cols-2 gap-2 text-sm">
+                    <div>
+                      <p className="text-muted-foreground">Bola parada</p>
+                      <p className="font-bold">{formatMinuteValue(summary.totalStoppedMinutes)}</p>
+                    </div>
+                    <div>
+                      <p className="text-muted-foreground">Previsão 80%</p>
+                      <p className="font-bold">+{formatMinuteValue(summary.predictedAddedMinutes)}</p>
+                    </div>
+                  </div>
+                </div>
+              ))}
+          </div>
+        </div>
+      ) : null}
+
       {stoppageIncidents.length > 0 ? (
         <div className="rounded-lg border border-cyan-500/20 bg-cyan-500/5 p-3">
           <p className="mb-3 flex items-center gap-2 text-sm font-semibold text-cyan-300">
             <Timer className="w-4 h-4" />
-            Paradas detectadas
+            Paradas detectadas no tempo atual
           </p>
           <div className="space-y-2">
             {stoppageIncidents.map((incident, index) => (
