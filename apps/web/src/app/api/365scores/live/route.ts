@@ -36,11 +36,24 @@ interface StoppageIncident {
   timeline?: string;
 }
 
+interface StoppagePeriodSummary {
+  period: 'first-half' | 'second-half' | 'extra-time' | 'unknown';
+  label: string;
+  totalStoppedMs: number;
+  totalStoppedMinutes: number;
+  predictedAddedMs: number;
+  predictedAddedMinutes: number;
+  incidents: StoppageIncident[];
+}
+
 interface StoppageInfo {
   totalStoppedMs: number;
   totalStoppedMinutes: number;
   predictedAddedMs: number;
   predictedAddedMinutes: number;
+  activePeriod?: StoppagePeriodSummary['period'];
+  activePeriodLabel?: string;
+  periodBreakdown?: StoppagePeriodSummary[];
   source:
     | '365scores-actual-play-time'
     | '365scores-sportradar'
@@ -349,6 +362,99 @@ function parseAddedTimeMinutes(value?: string | number | null) {
   return Number.isFinite(minutes) && minutes > 0 ? minutes : null;
 }
 
+function parseTimelineMinuteNumber(value?: string) {
+  if (!value) return null;
+  const match = String(value).match(/(\d{1,3})(?:\s*\+\s*(\d{1,2}))?/);
+  if (!match) return null;
+  const base = Number(match[1]);
+  const extra = match[2] ? Number(match[2]) : 0;
+  if (!Number.isFinite(base) || !Number.isFinite(extra)) return null;
+  return base + extra;
+}
+
+function periodFromMessage(message: PlayByPlayMessage): StoppagePeriodSummary['period'] {
+  const period = normalizeText(message.Period ?? '');
+  const timelineMinute = parseTimelineMinuteNumber(message.Timeline);
+
+  if (period.includes('second') || period.includes('segundo') || period.includes('2')) return 'second-half';
+  if (period.includes('first') || period.includes('primeiro') || period.includes('1')) return 'first-half';
+  if (period.includes('extra') || period.includes('prolong')) return 'extra-time';
+
+  if (timelineMinute !== null) {
+    if (timelineMinute <= 45) return 'first-half';
+    if (timelineMinute <= 90) return 'second-half';
+    return 'extra-time';
+  }
+
+  return 'unknown';
+}
+
+function periodFromTimeline(timeline?: string): StoppagePeriodSummary['period'] {
+  const minute = parseTimelineMinuteNumber(timeline);
+  if (minute === null) return 'unknown';
+  if (minute <= 45) return 'first-half';
+  if (minute <= 90) return 'second-half';
+  return 'extra-time';
+}
+
+function stoppagePeriodLabel(period: StoppagePeriodSummary['period']) {
+  if (period === 'first-half') return '1º tempo';
+  if (period === 'second-half') return '2º tempo';
+  if (period === 'extra-time') return 'prorrogação';
+  return 'período não identificado';
+}
+
+function activePeriodFromMessages(messages: PlayByPlayMessage[]): StoppagePeriodSummary['period'] {
+  const periods = messages.map(periodFromMessage);
+  if (periods.includes('extra-time')) return 'extra-time';
+  if (periods.includes('second-half')) return 'second-half';
+  if (periods.includes('first-half')) return 'first-half';
+  return 'unknown';
+}
+
+function buildPeriodBreakdown(
+  incidents: StoppageIncident[],
+  activePeriod: StoppagePeriodSummary['period']
+): { active: StoppagePeriodSummary; breakdown: StoppagePeriodSummary[] } {
+  const periods: StoppagePeriodSummary['period'][] = ['first-half', 'second-half', 'extra-time', 'unknown'];
+  const breakdown = periods
+    .map((period) => {
+      const periodIncidents = incidents.filter((incident) => {
+        const incidentPeriod = incident.period
+          ? periodFromMessage({ Period: incident.period, Timeline: incident.timeline })
+          : periodFromTimeline(incident.timeline);
+        return incidentPeriod === period;
+      });
+      const totalStoppedMs = periodIncidents.reduce((sum, incident) => sum + incident.durationMs, 0);
+      const predictedAddedMs = Math.min(Math.round(totalStoppedMs * 0.8), 8 * 60_000);
+
+      return {
+        period,
+        label: stoppagePeriodLabel(period),
+        totalStoppedMs,
+        totalStoppedMinutes: toRoundedMinutes(totalStoppedMs),
+        predictedAddedMs,
+        predictedAddedMinutes: toRoundedMinutes(predictedAddedMs),
+        incidents: periodIncidents,
+      } satisfies StoppagePeriodSummary;
+    })
+    .filter((summary) => summary.incidents.length > 0 || summary.period === activePeriod);
+
+  const active =
+    breakdown.find((summary) => summary.period === activePeriod) ??
+    ({
+      period: activePeriod,
+      label: stoppagePeriodLabel(activePeriod),
+      totalStoppedMs: 0,
+      totalStoppedMinutes: 0,
+      predictedAddedMs: 0,
+      predictedAddedMinutes: 0,
+      incidents: [],
+    } satisfies StoppagePeriodSummary);
+
+  return { active, breakdown };
+}
+
 function calculateAnnouncedAddedTime(
   addedMinutes: number | null,
   source: StoppageInfo['source'],
@@ -595,34 +701,40 @@ function calculateEventBasedStoppageInfo(messages: PlayByPlayMessage[]): Stoppag
     if (!rule) continue;
 
     const timeline = message.Timeline ?? '';
-    const key = `${rule.key}:${timeline}:${normalizeText(comment).slice(0, 120)}`;
+    const period = periodFromMessage(message);
+    const key = `${rule.key}:${period}:${timeline}:${normalizeText(comment).slice(0, 120)}`;
     if (seen.has(key)) continue;
     seen.add(key);
 
     incidents.push({
-      startAt: message.LastModified
+      startAt: message.LastModified && Number.isFinite(Date.parse(message.LastModified))
         ? new Date(Date.parse(message.LastModified)).toISOString()
         : new Date().toISOString(),
       durationMs: rule.seconds * 1000,
       reason: `${rule.label}: ${comment}`,
-      period: message.Period,
+      period,
       timeline: message.Timeline,
     });
   }
 
   if (incidents.length === 0) return undefined;
 
-  const totalStoppedMs = incidents.reduce((sum, incident) => sum + incident.durationMs, 0);
-  const predictedAddedMs = Math.min(Math.round(totalStoppedMs * 0.8), 8 * 60_000);
+  const activePeriod = activePeriodFromMessages(messages);
+  const { active, breakdown } = buildPeriodBreakdown(incidents, activePeriod);
+
+  if (active.totalStoppedMs <= 0) return undefined;
 
   return {
-    totalStoppedMs,
-    totalStoppedMinutes: toRoundedMinutes(totalStoppedMs),
-    predictedAddedMs,
-    predictedAddedMinutes: toRoundedMinutes(predictedAddedMs),
+    totalStoppedMs: active.totalStoppedMs,
+    totalStoppedMinutes: active.totalStoppedMinutes,
+    predictedAddedMs: active.predictedAddedMs,
+    predictedAddedMinutes: active.predictedAddedMinutes,
+    activePeriod,
+    activePeriodLabel: active.label,
+    periodBreakdown: breakdown,
     source: '365scores-event-estimate',
     kind: 'calculated-stoppage',
-    incidents,
+    incidents: active.incidents,
   };
 }
 
@@ -689,18 +801,23 @@ function calculateStoppageInfo(messages: PlayByPlayMessage[]): StoppageInfo | un
     }
   }
 
-  const totalStoppedMs = incidents.reduce((sum, incident) => sum + incident.durationMs, 0);
-  if (totalStoppedMs <= 0) return undefined;
+  if (incidents.length === 0) return undefined;
 
-  const predictedAddedMs = Math.round(totalStoppedMs * 0.8);
+  const activePeriod = activePeriodFromMessages(messages);
+  const { active, breakdown } = buildPeriodBreakdown(incidents, activePeriod);
+  if (active.totalStoppedMs <= 0) return undefined;
+
   return {
-    totalStoppedMs,
-    totalStoppedMinutes: toRoundedMinutes(totalStoppedMs),
-    predictedAddedMs,
-    predictedAddedMinutes: toRoundedMinutes(predictedAddedMs),
+    totalStoppedMs: active.totalStoppedMs,
+    totalStoppedMinutes: active.totalStoppedMinutes,
+    predictedAddedMs: active.predictedAddedMs,
+    predictedAddedMinutes: active.predictedAddedMinutes,
+    activePeriod,
+    activePeriodLabel: active.label,
+    periodBreakdown: breakdown,
     source: '365scores-sportradar',
     kind: 'calculated-stoppage',
-    incidents,
+    incidents: active.incidents,
   };
 }
 
