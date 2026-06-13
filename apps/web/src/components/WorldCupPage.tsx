@@ -1392,6 +1392,7 @@ const [dateOption, setDateOption] = useState<WorldCupSearchDateOption>('week');
 const [customDate, setCustomDate] = useState('');
 const [half, setHalf] = useState<WorldCupSearchHalf>('total');
 const [threshold, setThreshold] = useState(8.5);
+const [bookmakerFilter, setBookmakerFilter] = useState('all');
 const [searchTeam, setSearchTeam] = useState('');
 const [showFilters, setShowFilters] = useState(true);
 const [loading, setLoading] = useState(false);
@@ -1426,6 +1427,16 @@ useEffect(() => {
 load();
 }, []);
 
+const availableBookmakers = useMemo(() => {
+const names = new Set<string>();
+for (const event of oddsData?.events ?? []) {
+for (const line of event.cornerLines ?? []) {
+if (line.bookmaker) names.add(line.bookmaker);
+}
+}
+return [...names].sort((a, b) => a.localeCompare(b, 'pt-BR'));
+}, [oddsData?.events]);
+
 const searchRows = useMemo(() => {
 const oddsEvents = oddsData?.events ?? [];
 const oddsByTeams = new Map<string, WorldCupOddEvent>();
@@ -1451,6 +1462,7 @@ return baseEvents.map((event) => {
 const matchingLines = event.cornerLines.filter((line) => {
 if (line.side !== 'over') return false;
 if (!worldCupSearchMarketMatchesHalf(line, half)) return false;
+if (bookmakerFilter !== 'all' && normalizeTeamName(line.bookmaker) !== normalizeTeamName(bookmakerFilter)) return false;
 const lineNumber = worldCupLineNumber(line);
 if (lineNumber === null || lineNumber < threshold) return false;
 return true;
@@ -1463,7 +1475,7 @@ groupedLines,
 topLine,
 };
 });
-}, [half, oddsData?.events, threshold, upcomingMatches]);
+}, [bookmakerFilter, half, oddsData?.events, threshold, upcomingMatches]);
 
 const filteredRows = useMemo(() => {
 const today = currentSaoPauloDateKey();
@@ -1562,6 +1574,37 @@ Over {value}
 </div>
 
 <div>
+<label className="text-sm text-muted-foreground mb-2 block">Casa de aposta</label>
+<div className="grid gap-2 md:grid-cols-[260px_1fr]">
+<select
+value={bookmakerFilter}
+onChange={(event) => setBookmakerFilter(event.target.value)}
+className="w-full px-3 py-2 bg-background border border-border rounded-lg text-foreground text-sm"
+>
+<option value="all">Todas as casas</option>
+{availableBookmakers.map((bookmaker) => (
+<option key={bookmaker} value={bookmaker}>{bookmaker}</option>
+))}
+</select>
+<div className="flex flex-wrap gap-2">
+<Button size="sm" variant={bookmakerFilter === 'all' ? 'default' : 'outline'} onClick={() => setBookmakerFilter('all')}>
+Todas
+</Button>
+{availableBookmakers.slice(0, 10).map((bookmaker) => (
+<Button
+key={bookmaker}
+size="sm"
+variant={bookmakerFilter === bookmaker ? 'default' : 'outline'}
+onClick={() => setBookmakerFilter(bookmaker)}
+>
+{bookmaker}
+</Button>
+))}
+</div>
+</div>
+</div>
+
+<div>
 <label className="text-sm text-muted-foreground mb-2 block">
 <Search className="w-4 h-4 inline mr-1" />
 Buscar seleção
@@ -1581,6 +1624,7 @@ className="w-full px-3 py-2 bg-background border border-border rounded-lg text-f
 <Badge variant="outline">Linhas ({totalLines})</Badge>
 <Badge variant="outline">Over {threshold}</Badge>
 <Badge variant="outline">{halfLabel}</Badge>
+<Badge variant="outline">{bookmakerFilter === 'all' ? 'Todas as casas' : bookmakerFilter}</Badge>
 <Button variant="outline" size="sm" onClick={load} disabled={loading}>
 {loading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <RefreshCw className="w-4 h-4 mr-2" />}
 Atualizar
@@ -1601,7 +1645,7 @@ Atualizar
 ) : filteredRows.length === 0 ? (
 <Card className="p-8 text-center">
 <p className="text-sm text-muted-foreground">Nenhuma linha da Copa encontrada com os filtros atuais.</p>
-<p className="text-xs text-muted-foreground mt-1">Tente ampliar a data, trocar o período ou reduzir o Over mínimo.</p>
+<p className="text-xs text-muted-foreground mt-1">Tente ampliar a data, trocar o período, trocar a casa de aposta ou reduzir o Over mínimo.</p>
 </Card>
 ) : (
 <div className="space-y-3">
