@@ -370,74 +370,6 @@ function parseAddedTimeMinutes(value?: string | number | null) {
   return Number.isFinite(minutes) && minutes > 0 ? minutes : null;
 }
 
-
-function periodFromAddedTimeBase(base: number): StoppagePeriodSummary['period'] {
-  if (base === 45) return 'first-half';
-  if (base === 90) return 'second-half';
-  if (base === 105 || base === 120) return 'extra-time';
-  if (base < 45) return 'first-half';
-  if (base < 90) return 'second-half';
-  return 'extra-time';
-}
-
-type AddedTimeByPeriod = Partial<Record<StoppagePeriodSummary['period'], {
-  minutes: number;
-  source: StoppagePeriodSummary['actualAddedSource'];
-}>>;
-
-function setAddedTimeIfHigher(
-  map: AddedTimeByPeriod,
-  period: StoppagePeriodSummary['period'],
-  minutes: number,
-  source: StoppagePeriodSummary['actualAddedSource']
-) {
-  if (!Number.isFinite(minutes) || minutes <= 0 || period === 'unknown') return;
-  const current = map[period]?.minutes ?? 0;
-  if (minutes > current) map[period] = { minutes, source };
-}
-
-function addedTimeByPeriodFromClock(value?: string | number | null): AddedTimeByPeriod {
-  const map: AddedTimeByPeriod = {};
-  if (value === undefined || value === null) return map;
-  const normalized = String(value).replace(/\s+/g, '');
-  for (const match of normalized.matchAll(/(45|90|105|120)\+(\d{1,2})/g)) {
-    const base = Number(match[1]);
-    const minutes = Number(match[2]);
-    setAddedTimeIfHigher(map, periodFromAddedTimeBase(base), minutes, 'clock');
-  }
-  return map;
-}
-
-function mergeAddedTimeMaps(...maps: AddedTimeByPeriod[]): AddedTimeByPeriod {
-  const merged: AddedTimeByPeriod = {};
-  for (const map of maps) {
-    for (const [period, value] of Object.entries(map) as Array<[StoppagePeriodSummary['period'], { minutes: number; source: StoppagePeriodSummary['actualAddedSource'] }]>) {
-      setAddedTimeIfHigher(merged, period, value.minutes, value.source);
-    }
-  }
-  return merged;
-}
-
-function addedTimeByPeriodFromMessages(messages: PlayByPlayMessage[]): AddedTimeByPeriod {
-  const map: AddedTimeByPeriod = {};
-
-  for (const message of messages) {
-    const timelineParts = parseTimelineParts(message.Timeline);
-    if (timelineParts?.extra && [45, 90, 105, 120].includes(timelineParts.base)) {
-      setAddedTimeIfHigher(map, periodFromAddedTimeBase(timelineParts.base), timelineParts.extra, 'timeline');
-    }
-
-    const comment = normalizeText(message.Comment ?? '');
-    const explicit = comment.match(/(?:acrescimo|acresimos|added time|stoppage time|additional time|tempo extra)[^0-9]{0,30}(\d{1,2})/);
-    if (explicit) {
-      const period = periodFromMessage(message);
-      setAddedTimeIfHigher(map, period, Number(explicit[1]), 'comment');
-    }
-  }
-
-  return map;
-}
-
 function parseTimelineParts(value?: string): { base: number; extra: number; total: number } | null {
   if (!value) return null;
   const match = String(value).match(/(\d{1,3})(?:\s*\+\s*(\d{1,2}))?/);
@@ -528,7 +460,6 @@ function buildPeriodBreakdown(
       });
       const totalStoppedMs = periodIncidents.reduce((sum, incident) => sum + incident.durationMs, 0);
       const predictedAddedMs = Math.min(Math.round(totalStoppedMs * 0.8), 8 * 60_000);
-
       const actualAdded = addedTimeByPeriod[period];
 
       return {
@@ -544,7 +475,7 @@ function buildPeriodBreakdown(
         incidents: periodIncidents,
       } satisfies StoppagePeriodSummary;
     })
-    .filter((summary) => summary.incidents.length > 0 || summary.period === activePeriod);
+    .filter((summary) => summary.incidents.length > 0 || summary.period === activePeriod || !!summary.actualAddedMinutes);
 
   const active =
     breakdown.find((summary) => summary.period === activePeriod) ??
@@ -571,16 +502,21 @@ function calculateAnnouncedAddedTime(
   timeline?: string
 ): StoppageInfo | undefined {
   if (!addedMinutes || addedMinutes <= 0) return undefined;
-  const predictedAddedMs = addedMinutes * 60_000;
-  const period = periodFromTimelineMinute(timeline) === 'unknown'
-    ? periodFromAddedTimeBase(String(timeline ?? '').includes('45+') ? 45 : String(timeline ?? '').includes('90+') ? 90 : 90)
-    : periodFromTimelineMinute(timeline);
+
+  const addedMs = addedMinutes * 60_000;
+  const normalizedTimeline = String(timeline ?? '').replace(/\s+/g, '');
+  const parsedPeriod = periodFromTimelineMinute(normalizedTimeline);
+  const period = parsedPeriod === 'unknown'
+    ? periodFromAddedTimeBase(normalizedTimeline.includes('45+') ? 45 : normalizedTimeline.includes('90+') ? 90 : 90)
+    : parsedPeriod;
+
   return {
+    // Acréscimo anunciado pelo juiz/fonte NÃO é previsão e NÃO é tempo de bola parada.
     totalStoppedMs: 0,
     totalStoppedMinutes: 0,
-    predictedAddedMs,
-    predictedAddedMinutes: addedMinutes,
-    actualAddedMs: predictedAddedMs,
+    predictedAddedMs: 0,
+    predictedAddedMinutes: 0,
+    actualAddedMs: addedMs,
     actualAddedMinutes: addedMinutes,
     actualAddedSource: 'announced',
     activePeriod: period,
@@ -590,9 +526,9 @@ function calculateAnnouncedAddedTime(
       label: stoppagePeriodLabel(period),
       totalStoppedMs: 0,
       totalStoppedMinutes: 0,
-      predictedAddedMs,
-      predictedAddedMinutes: addedMinutes,
-      actualAddedMs: predictedAddedMs,
+      predictedAddedMs: 0,
+      predictedAddedMinutes: 0,
+      actualAddedMs: addedMs,
       actualAddedMinutes: addedMinutes,
       actualAddedSource: 'announced',
       incidents: [],
@@ -849,19 +785,15 @@ function calculateEventBasedStoppageInfo(messages: PlayByPlayMessage[], activePe
   if (incidents.length === 0) return undefined;
 
   const activePeriod = activePeriodOverride && activePeriodOverride !== 'unknown' ? activePeriodOverride : activePeriodFromMessages(messages);
-  const realAddedByPeriod = addedTimeByPeriodFromMessages(messages);
-  const { active, breakdown } = buildPeriodBreakdown(incidents, activePeriod, realAddedByPeriod);
+  const { active, breakdown } = buildPeriodBreakdown(incidents, activePeriod);
 
-  if (active.totalStoppedMs <= 0 && !breakdown.some((summary) => summary.actualAddedMinutes && summary.actualAddedMinutes > 0)) return undefined;
+  if (active.totalStoppedMs <= 0) return undefined;
 
   return {
     totalStoppedMs: active.totalStoppedMs,
     totalStoppedMinutes: active.totalStoppedMinutes,
     predictedAddedMs: active.predictedAddedMs,
     predictedAddedMinutes: active.predictedAddedMinutes,
-    actualAddedMs: active.actualAddedMs,
-    actualAddedMinutes: active.actualAddedMinutes,
-    actualAddedSource: active.actualAddedSource,
     activePeriod,
     activePeriodLabel: active.label,
     periodBreakdown: breakdown,
@@ -937,18 +869,14 @@ function calculateStoppageInfo(messages: PlayByPlayMessage[], activePeriodOverri
   if (incidents.length === 0) return undefined;
 
   const activePeriod = activePeriodOverride && activePeriodOverride !== 'unknown' ? activePeriodOverride : activePeriodFromMessages(messages);
-  const realAddedByPeriod = addedTimeByPeriodFromMessages(messages);
-  const { active, breakdown } = buildPeriodBreakdown(incidents, activePeriod, realAddedByPeriod);
-  if (active.totalStoppedMs <= 0 && !breakdown.some((summary) => summary.actualAddedMinutes && summary.actualAddedMinutes > 0)) return undefined;
+  const { active, breakdown } = buildPeriodBreakdown(incidents, activePeriod);
+  if (active.totalStoppedMs <= 0) return undefined;
 
   return {
     totalStoppedMs: active.totalStoppedMs,
     totalStoppedMinutes: active.totalStoppedMinutes,
     predictedAddedMs: active.predictedAddedMs,
     predictedAddedMinutes: active.predictedAddedMinutes,
-    actualAddedMs: active.actualAddedMs,
-    actualAddedMinutes: active.actualAddedMinutes,
-    actualAddedSource: active.actualAddedSource,
     activePeriod,
     activePeriodLabel: active.label,
     periodBreakdown: breakdown,
@@ -993,38 +921,7 @@ async function fetchStoppageInfo(gameId: number, matchMinute: number | string, s
     const messages = playByPlay.Messages ?? [];
 
     const activePeriod = activePeriodFromMinute(matchMinute, statusText);
-    const fromEvents = calculateEventBasedStoppageInfo(messages, activePeriod) ?? calculateStoppageInfo(messages, activePeriod);
-    const clockAddedByPeriod = addedTimeByPeriodFromClock(matchMinute);
-
-    if (fromEvents) {
-      const mergedAdded = mergeAddedTimeMaps(
-        Object.fromEntries((fromEvents.periodBreakdown ?? []).filter((summary) => summary.actualAddedMinutes).map((summary) => [summary.period, { minutes: summary.actualAddedMinutes!, source: summary.actualAddedSource ?? 'timeline' }])) as AddedTimeByPeriod,
-        clockAddedByPeriod
-      );
-      if (Object.keys(mergedAdded).length > 0 && fromEvents.periodBreakdown) {
-        fromEvents.periodBreakdown = fromEvents.periodBreakdown.map((summary) => {
-          const actual = mergedAdded[summary.period];
-          return actual
-            ? { ...summary, actualAddedMs: actual.minutes * 60_000, actualAddedMinutes: actual.minutes, actualAddedSource: actual.source }
-            : summary;
-        });
-        const activeSummary = fromEvents.periodBreakdown.find((summary) => summary.period === fromEvents.activePeriod);
-        if (activeSummary?.actualAddedMinutes) {
-          fromEvents.actualAddedMs = activeSummary.actualAddedMs;
-          fromEvents.actualAddedMinutes = activeSummary.actualAddedMinutes;
-          fromEvents.actualAddedSource = activeSummary.actualAddedSource;
-        }
-      }
-      return fromEvents;
-    }
-
-    const currentClockAdded = parseAddedTimeMinutes(matchMinute);
-    return calculateAnnouncedAddedTime(
-      currentClockAdded,
-      '365scores-announced-added-time',
-      'Acréscimo anunciado no relógio da 365Scores.',
-      String(matchMinute ?? '')
-    );
+    return calculateEventBasedStoppageInfo(messages, activePeriod) ?? calculateStoppageInfo(messages, activePeriod);
   } catch (err) {
     console.warn('[live/365scores/stoppage] error:', err);
     return undefined;
