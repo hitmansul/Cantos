@@ -467,7 +467,7 @@ function LiveMatchCard({
             <Badge
               variant="outline"
               className="mt-2 justify-center border-border/70 bg-background/40 text-[11px] text-muted-foreground"
-              title="A fonte ao vivo ainda não enviou paradas, retomadas ou acrescimo anunciado para este jogo."
+              title="A fonte ao vivo ainda não enviou paradas, retomadas ou acréscimo anunciado para este jogo."
             >
               Previsão de Acréscimo indisponível
             </Badge>
@@ -646,7 +646,7 @@ function LiveMatchDetails({
               </p>
               <p className="mt-1 text-2xl font-bold">{addedTime.realAddedLabel ?? 'não informado'}</p>
               <p className="text-xs text-muted-foreground">
-                Tempo anunciado pelo juiz/fonte oficial quando disponível.
+                Tempo realmente anunciado pelo juiz/fonte oficial no período correspondente.
               </p>
             </div>
           </div>
@@ -668,7 +668,7 @@ function LiveMatchDetails({
 
       {match.stoppage?.periodBreakdown && match.stoppage.periodBreakdown.length > 0 ? (
         <div className="rounded-lg border border-border bg-background/40 p-3">
-          <p className="mb-3 text-sm font-semibold">Resumo de acréscimos por tempo</p>
+          <p className="mb-3 text-sm font-semibold">Resumo por tempo: bola parada, previsão e acréscimo real</p>
           <div className="grid gap-2 md:grid-cols-2">
             {match.stoppage.periodBreakdown
               .filter((summary) => summary.period !== 'unknown')
@@ -684,7 +684,7 @@ function LiveMatchDetails({
                   <div className="flex items-center justify-between gap-2">
                     <span className="font-semibold">{summary.label}</span>
                     {summary.period === match.stoppage?.activePeriod && (
-                      <Badge variant="outline" className="text-emerald-300">tempo atual</Badge>
+                      <Badge variant="outline" className="text-emerald-300">tempo corrente</Badge>
                     )}
                   </div>
                   <div className="mt-2 grid grid-cols-3 gap-2 text-sm">
@@ -992,7 +992,7 @@ export function LiveMatches() {
       {lastUpdatedDisplay && (
         <p className="text-xs text-muted-foreground" suppressHydrationWarning>
           Última atualização: {lastUpdatedDisplay}
-          {autoRefresh && ' (atualiza a cada 30s)'}
+          {autoRefresh && ' (atualiza a cada 10s)'}
         </p>
       )}
 
