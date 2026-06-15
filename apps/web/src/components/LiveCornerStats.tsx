@@ -199,11 +199,12 @@ function getOfficialAddedTimePrediction(
   };
   const sourceLabel = sourceLabels[match.stoppage.source] ?? 'fonte ao vivo';
 
-  if (announcedOnly && match.stoppage.predictedAddedMinutes > 0) {
+  if (announcedOnly && (match.stoppage.actualAddedMinutes ?? match.stoppage.predictedAddedMinutes) > 0) {
+    const real = match.stoppage.actualAddedMinutes ?? match.stoppage.predictedAddedMinutes;
     return {
       totalLabel: 'não informado',
-      addedLabel: `+${formatMinuteValue(match.stoppage.predictedAddedMinutes)}`,
-      realAddedLabel: `+${formatMinuteValue(match.stoppage.actualAddedMinutes ?? match.stoppage.predictedAddedMinutes)}`,
+      addedLabel: 'não calculada',
+      realAddedLabel: `+${formatMinuteValue(real)}`,
       sourceLabel: `Acréscimo informado via ${sourceLabel}`,
       announcedOnly: true,
       periodLabel: match.stoppage.activePeriodLabel,
@@ -626,7 +627,7 @@ function LiveMatchDetails({
               <p className="mt-1 text-2xl font-bold">{addedTime.addedLabel}</p>
               <p className="text-xs text-muted-foreground">
                 {addedTime.announcedOnly
-                  ? `${addedTime.sourceLabel}. A fonte não enviou o tempo total de bola parada.`
+                  ? 'Sem cálculo: a fonte só informou o acréscimo real do juiz.'
                   : '80% do tempo total parado identificado.'}
               </p>
             </div>
@@ -659,7 +660,7 @@ function LiveMatchDetails({
 
       {match.stoppage?.periodBreakdown && match.stoppage.periodBreakdown.length > 0 ? (
         <div className="rounded-lg border border-border bg-background/40 p-3">
-          <p className="mb-3 text-sm font-semibold">Resumo por tempo</p>
+          <p className="mb-3 text-sm font-semibold">Resumo de acréscimos por tempo</p>
           <div className="grid gap-2 md:grid-cols-2">
             {match.stoppage.periodBreakdown
               .filter((summary) => summary.period !== 'unknown')
@@ -685,7 +686,7 @@ function LiveMatchDetails({
                     </div>
                     <div>
                       <p className="text-muted-foreground">Previsão 80%</p>
-                      <p className="font-bold">+{formatMinuteValue(summary.predictedAddedMinutes)}</p>
+                      <p className="font-bold">{summary.predictedAddedMinutes > 0 ? `+${formatMinuteValue(summary.predictedAddedMinutes)}` : 'não calculada'}</p>
                     </div>
                     <div>
                       <p className="text-muted-foreground">Acréscimo real</p>
