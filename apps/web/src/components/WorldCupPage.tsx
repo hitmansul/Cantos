@@ -419,9 +419,41 @@ function canonicalWorldCupTeamName(name: string): string {
 
 function worldCupMatchDedupeKey(match: { startTime: string; homeTeam: string; awayTeam: string }): string {
   const date = match.startTime.slice(0, 10);
-  const time = formatMatchTime(match.startTime);
-  const teams = [canonicalWorldCupTeamName(match.homeTeam), canonicalWorldCupTeamName(match.awayTeam)].sort().join('-');
-  return `${date}-${time}-${teams}`;
+  const teams = [canonicalWorldCupTeamName(match.homeTeam), canonicalWorldCupTeamName(match.awayTeam)]
+    .sort()
+    .join('-');
+  return `${date}-${teams}`;
+}
+
+function displayMatchDedupeKey(match: DisplayMatch): string {
+  const date = match.startTime.slice(0, 10);
+  const teams = [canonicalWorldCupTeamName(match.homeTeam.country), canonicalWorldCupTeamName(match.awayTeam.country)]
+    .sort()
+    .join('-');
+  return `${date}-${teams}`;
+}
+
+function dedupeDisplayMatches(matches: DisplayMatch[]): DisplayMatch[] {
+  const map = new Map<string, DisplayMatch>();
+  for (const match of matches) {
+    const normalized: DisplayMatch = {
+      ...match,
+      homeTeam: {
+        ...match.homeTeam,
+        country: displayWorldCupTeamName(match.homeTeam.country),
+        flag: flagForTeam(displayWorldCupTeamName(match.homeTeam.country)),
+      },
+      awayTeam: {
+        ...match.awayTeam,
+        country: displayWorldCupTeamName(match.awayTeam.country),
+        flag: flagForTeam(displayWorldCupTeamName(match.awayTeam.country)),
+      },
+    };
+    const key = displayMatchDedupeKey(normalized);
+    const current = map.get(key);
+    if (!current || (normalized.id && !current.id)) map.set(key, normalized);
+  }
+  return [...map.values()].sort((a, b) => Date.parse(a.startTime) - Date.parse(b.startTime));
 }
 
 
@@ -1031,7 +1063,7 @@ Auto-atualizado
 }
 
 function BrazilMatches() {
-const [matches, setMatches] = useState<DisplayMatch[]>(BRAZIL_MATCHES);
+const [matches, setMatches] = useState<DisplayMatch[]>(() => dedupeDisplayMatches(BRAZIL_MATCHES));
 
 useEffect(() => {
 let cancelled = false;
@@ -1058,20 +1090,20 @@ id: match.id,
 startTime: match.startTime,
 venue: match.venue,
 homeTeam: {
-country: match.homeTeam.name,
-flag: flagForTeam(match.homeTeam.name),
+country: displayWorldCupTeamName(match.homeTeam.name),
+flag: flagForTeam(displayWorldCupTeamName(match.homeTeam.name)),
 },
 awayTeam: {
-country: match.awayTeam.name,
-flag: flagForTeam(match.awayTeam.name),
+country: displayWorldCupTeamName(match.awayTeam.name),
+flag: flagForTeam(displayWorldCupTeamName(match.awayTeam.name)),
 },
 }));
 
 if (!cancelled && apiMatches.length > 0) {
-setMatches(apiMatches);
+setMatches(dedupeDisplayMatches(apiMatches));
 }
 } catch {
-if (!cancelled) setMatches(BRAZIL_MATCHES);
+if (!cancelled) setMatches(dedupeDisplayMatches(BRAZIL_MATCHES));
 }
 }
 
