@@ -43,6 +43,10 @@ interface StoppagePeriodSummary {
   totalStoppedMinutes: number;
   predictedAddedMs: number;
   predictedAddedMinutes: number;
+  /** Acréscimo real/anunciado pelo juiz, quando a fonte informa. */
+  actualAddedMs?: number;
+  actualAddedMinutes?: number;
+  actualAddedSource?: 'timeline' | 'clock' | 'comment' | 'announced';
   incidents: StoppageIncident[];
 }
 
@@ -51,6 +55,10 @@ interface StoppageInfo {
   totalStoppedMinutes: number;
   predictedAddedMs: number;
   predictedAddedMinutes: number;
+  /** Acréscimo real/anunciado pelo juiz do período ativo, quando conhecido. */
+  actualAddedMs?: number;
+  actualAddedMinutes?: number;
+  actualAddedSource?: StoppagePeriodSummary['actualAddedSource'];
   activePeriod?: StoppagePeriodSummary['period'];
   activePeriodLabel?: string;
   periodBreakdown?: StoppagePeriodSummary[];
@@ -362,6 +370,74 @@ function parseAddedTimeMinutes(value?: string | number | null) {
   return Number.isFinite(minutes) && minutes > 0 ? minutes : null;
 }
 
+
+function periodFromAddedTimeBase(base: number): StoppagePeriodSummary['period'] {
+  if (base === 45) return 'first-half';
+  if (base === 90) return 'second-half';
+  if (base === 105 || base === 120) return 'extra-time';
+  if (base < 45) return 'first-half';
+  if (base < 90) return 'second-half';
+  return 'extra-time';
+}
+
+type AddedTimeByPeriod = Partial<Record<StoppagePeriodSummary['period'], {
+  minutes: number;
+  source: StoppagePeriodSummary['actualAddedSource'];
+}>>;
+
+function setAddedTimeIfHigher(
+  map: AddedTimeByPeriod,
+  period: StoppagePeriodSummary['period'],
+  minutes: number,
+  source: StoppagePeriodSummary['actualAddedSource']
+) {
+  if (!Number.isFinite(minutes) || minutes <= 0 || period === 'unknown') return;
+  const current = map[period]?.minutes ?? 0;
+  if (minutes > current) map[period] = { minutes, source };
+}
+
+function addedTimeByPeriodFromClock(value?: string | number | null): AddedTimeByPeriod {
+  const map: AddedTimeByPeriod = {};
+  if (value === undefined || value === null) return map;
+  const normalized = String(value).replace(/\s+/g, '');
+  for (const match of normalized.matchAll(/(45|90|105|120)\+(\d{1,2})/g)) {
+    const base = Number(match[1]);
+    const minutes = Number(match[2]);
+    setAddedTimeIfHigher(map, periodFromAddedTimeBase(base), minutes, 'clock');
+  }
+  return map;
+}
+
+function mergeAddedTimeMaps(...maps: AddedTimeByPeriod[]): AddedTimeByPeriod {
+  const merged: AddedTimeByPeriod = {};
+  for (const map of maps) {
+    for (const [period, value] of Object.entries(map) as Array<[StoppagePeriodSummary['period'], { minutes: number; source: StoppagePeriodSummary['actualAddedSource'] }]>) {
+      setAddedTimeIfHigher(merged, period, value.minutes, value.source);
+    }
+  }
+  return merged;
+}
+
+function addedTimeByPeriodFromMessages(messages: PlayByPlayMessage[]): AddedTimeByPeriod {
+  const map: AddedTimeByPeriod = {};
+
+  for (const message of messages) {
+    const timelineParts = parseTimelineParts(message.Timeline);
+    if (timelineParts?.extra && [45, 90, 105, 120].includes(timelineParts.base)) {
+      setAddedTimeIfHigher(map, periodFromAddedTimeBase(timelineParts.base), timelineParts.extra, 'timeline');
+    }
+
+    const comment = normalizeText(message.Comment ?? '');
+    const explicit = comment.match(/(?:acrescimo|acresimos|added time|stoppage time|additional time|tempo extra)[^0-9]{0,30}(\d{1,2})/);
+    if (explicit) {
+      const period = periodFromMessage(message);
+      setAddedTimeIfHigher(map, period, Number(explicit[1]), 'comment');
+    }
+  }
+
+  return map;
+}
+
 function parseTimelineParts(value?: string): { base: number; extra: number; total: number } | null {
   if (!value) return null;
   const match = String(value).match(/(\d{1,3})(?:\s*\+\s*(\d{1,2}))?/);
@@ -438,7 +514,8 @@ function activePeriodFromMessages(messages: PlayByPlayMessage[]): StoppagePeriod
 
 function buildPeriodBreakdown(
   incidents: StoppageIncident[],
-  activePeriod: StoppagePeriodSummary['period']
+  activePeriod: StoppagePeriodSummary['period'],
+  addedTimeByPeriod: AddedTimeByPeriod = {}
 ): { active: StoppagePeriodSummary; breakdown: StoppagePeriodSummary[] } {
   const periods: StoppagePeriodSummary['period'][] = ['first-half', 'second-half', 'extra-time', 'unknown'];
   const breakdown = periods
@@ -452,6 +529,8 @@ function buildPeriodBreakdown(
       const totalStoppedMs = periodIncidents.reduce((sum, incident) => sum + incident.durationMs, 0);
       const predictedAddedMs = Math.min(Math.round(totalStoppedMs * 0.8), 8 * 60_000);
 
+      const actualAdded = addedTimeByPeriod[period];
+
       return {
         period,
         label: stoppagePeriodLabel(period),
@@ -459,6 +538,9 @@ function buildPeriodBreakdown(
         totalStoppedMinutes: toRoundedMinutes(totalStoppedMs),
         predictedAddedMs,
         predictedAddedMinutes: toRoundedMinutes(predictedAddedMs),
+        actualAddedMs: actualAdded ? actualAdded.minutes * 60_000 : undefined,
+        actualAddedMinutes: actualAdded?.minutes,
+        actualAddedSource: actualAdded?.source,
         incidents: periodIncidents,
       } satisfies StoppagePeriodSummary;
     })
@@ -473,6 +555,9 @@ function buildPeriodBreakdown(
       totalStoppedMinutes: 0,
       predictedAddedMs: 0,
       predictedAddedMinutes: 0,
+      actualAddedMs: addedTimeByPeriod[activePeriod]?.minutes ? addedTimeByPeriod[activePeriod]!.minutes * 60_000 : undefined,
+      actualAddedMinutes: addedTimeByPeriod[activePeriod]?.minutes,
+      actualAddedSource: addedTimeByPeriod[activePeriod]?.source,
       incidents: [],
     } satisfies StoppagePeriodSummary);
 
@@ -487,11 +572,31 @@ function calculateAnnouncedAddedTime(
 ): StoppageInfo | undefined {
   if (!addedMinutes || addedMinutes <= 0) return undefined;
   const predictedAddedMs = addedMinutes * 60_000;
+  const period = periodFromTimelineMinute(timeline) === 'unknown'
+    ? periodFromAddedTimeBase(String(timeline ?? '').includes('45+') ? 45 : String(timeline ?? '').includes('90+') ? 90 : 90)
+    : periodFromTimelineMinute(timeline);
   return {
     totalStoppedMs: 0,
     totalStoppedMinutes: 0,
     predictedAddedMs,
     predictedAddedMinutes: addedMinutes,
+    actualAddedMs: predictedAddedMs,
+    actualAddedMinutes: addedMinutes,
+    actualAddedSource: 'announced',
+    activePeriod: period,
+    activePeriodLabel: stoppagePeriodLabel(period),
+    periodBreakdown: [{
+      period,
+      label: stoppagePeriodLabel(period),
+      totalStoppedMs: 0,
+      totalStoppedMinutes: 0,
+      predictedAddedMs,
+      predictedAddedMinutes: addedMinutes,
+      actualAddedMs: predictedAddedMs,
+      actualAddedMinutes: addedMinutes,
+      actualAddedSource: 'announced',
+      incidents: [],
+    }],
     source,
     kind: 'announced-added-time',
     incidents: [],
@@ -744,15 +849,19 @@ function calculateEventBasedStoppageInfo(messages: PlayByPlayMessage[], activePe
   if (incidents.length === 0) return undefined;
 
   const activePeriod = activePeriodOverride && activePeriodOverride !== 'unknown' ? activePeriodOverride : activePeriodFromMessages(messages);
-  const { active, breakdown } = buildPeriodBreakdown(incidents, activePeriod);
+  const realAddedByPeriod = addedTimeByPeriodFromMessages(messages);
+  const { active, breakdown } = buildPeriodBreakdown(incidents, activePeriod, realAddedByPeriod);
 
-  if (active.totalStoppedMs <= 0) return undefined;
+  if (active.totalStoppedMs <= 0 && !breakdown.some((summary) => summary.actualAddedMinutes && summary.actualAddedMinutes > 0)) return undefined;
 
   return {
     totalStoppedMs: active.totalStoppedMs,
     totalStoppedMinutes: active.totalStoppedMinutes,
     predictedAddedMs: active.predictedAddedMs,
     predictedAddedMinutes: active.predictedAddedMinutes,
+    actualAddedMs: active.actualAddedMs,
+    actualAddedMinutes: active.actualAddedMinutes,
+    actualAddedSource: active.actualAddedSource,
     activePeriod,
     activePeriodLabel: active.label,
     periodBreakdown: breakdown,
@@ -828,14 +937,18 @@ function calculateStoppageInfo(messages: PlayByPlayMessage[], activePeriodOverri
   if (incidents.length === 0) return undefined;
 
   const activePeriod = activePeriodOverride && activePeriodOverride !== 'unknown' ? activePeriodOverride : activePeriodFromMessages(messages);
-  const { active, breakdown } = buildPeriodBreakdown(incidents, activePeriod);
-  if (active.totalStoppedMs <= 0) return undefined;
+  const realAddedByPeriod = addedTimeByPeriodFromMessages(messages);
+  const { active, breakdown } = buildPeriodBreakdown(incidents, activePeriod, realAddedByPeriod);
+  if (active.totalStoppedMs <= 0 && !breakdown.some((summary) => summary.actualAddedMinutes && summary.actualAddedMinutes > 0)) return undefined;
 
   return {
     totalStoppedMs: active.totalStoppedMs,
     totalStoppedMinutes: active.totalStoppedMinutes,
     predictedAddedMs: active.predictedAddedMs,
     predictedAddedMinutes: active.predictedAddedMinutes,
+    actualAddedMs: active.actualAddedMs,
+    actualAddedMinutes: active.actualAddedMinutes,
+    actualAddedSource: active.actualAddedSource,
     activePeriod,
     activePeriodLabel: active.label,
     periodBreakdown: breakdown,
@@ -880,7 +993,38 @@ async function fetchStoppageInfo(gameId: number, matchMinute: number | string, s
     const messages = playByPlay.Messages ?? [];
 
     const activePeriod = activePeriodFromMinute(matchMinute, statusText);
-    return calculateEventBasedStoppageInfo(messages, activePeriod) ?? calculateStoppageInfo(messages, activePeriod);
+    const fromEvents = calculateEventBasedStoppageInfo(messages, activePeriod) ?? calculateStoppageInfo(messages, activePeriod);
+    const clockAddedByPeriod = addedTimeByPeriodFromClock(matchMinute);
+
+    if (fromEvents) {
+      const mergedAdded = mergeAddedTimeMaps(
+        Object.fromEntries((fromEvents.periodBreakdown ?? []).filter((summary) => summary.actualAddedMinutes).map((summary) => [summary.period, { minutes: summary.actualAddedMinutes!, source: summary.actualAddedSource ?? 'timeline' }])) as AddedTimeByPeriod,
+        clockAddedByPeriod
+      );
+      if (Object.keys(mergedAdded).length > 0 && fromEvents.periodBreakdown) {
+        fromEvents.periodBreakdown = fromEvents.periodBreakdown.map((summary) => {
+          const actual = mergedAdded[summary.period];
+          return actual
+            ? { ...summary, actualAddedMs: actual.minutes * 60_000, actualAddedMinutes: actual.minutes, actualAddedSource: actual.source }
+            : summary;
+        });
+        const activeSummary = fromEvents.periodBreakdown.find((summary) => summary.period === fromEvents.activePeriod);
+        if (activeSummary?.actualAddedMinutes) {
+          fromEvents.actualAddedMs = activeSummary.actualAddedMs;
+          fromEvents.actualAddedMinutes = activeSummary.actualAddedMinutes;
+          fromEvents.actualAddedSource = activeSummary.actualAddedSource;
+        }
+      }
+      return fromEvents;
+    }
+
+    const currentClockAdded = parseAddedTimeMinutes(matchMinute);
+    return calculateAnnouncedAddedTime(
+      currentClockAdded,
+      '365scores-announced-added-time',
+      'Acréscimo anunciado no relógio da 365Scores.',
+      String(matchMinute ?? '')
+    );
   } catch (err) {
     console.warn('[live/365scores/stoppage] error:', err);
     return undefined;
