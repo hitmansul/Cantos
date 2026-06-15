@@ -165,7 +165,7 @@ const SCORES365_COUNTRIES: Record<number, string> = {
 
 const MAX_STOPPAGE_ENRICHMENT = 24;
 const MAX_API_FOOTBALL_STATS_ENRICHMENT = 8;
-const LIVE_CACHE_TTL_MS = 45_000;
+const LIVE_CACHE_TTL_MS = 8_000;
 const STOPPAGE_MIN_DURATION_MS = 15_000;
 const STOPPAGE_MAX_OPEN_DURATION_MS = 7 * 60_000;
 const STOPPAGE_FETCH_TIMEOUT_MS = 4_500;
@@ -363,9 +363,18 @@ function calculateStoppageFromActualPlayTime(
 
 function parseAddedTimeMinutes(value?: string | number | null) {
   if (value === undefined || value === null) return null;
-  const normalized = String(value).replace(/\s+/g, '');
-  const match = normalized.match(/(?:45|90|105|120)\+(\d{1,2})/);
+
+  const raw = String(value);
+  const normalized = raw.replace(/\s+/g, '');
+
+  // Formatos aceitos: 45+4, 90+6, 45:37 +4.
+  const direct = normalized.match(/(?:45|90|105|120)\+(\d{1,2})/);
+  const separated = raw.match(/(?:45|90|105|120)\s*[:']\s*\d{1,2}\s*\+\s*(\d{1,2})/);
+  const standalone = raw.match(/(?:^|\s)\+\s*(\d{1,2})(?:\s|$)/);
+
+  const match = direct ?? separated ?? standalone;
   if (!match) return null;
+
   const minutes = Number(match[1]);
   return Number.isFinite(minutes) && minutes > 0 ? minutes : null;
 }
@@ -552,6 +561,109 @@ function parseStatNumber(value: string) {
 function statKey(stat: Scores365Statistic) {
   return `${stat.id ?? 'stat'}:${normalizeText(stat.name ?? '')}`;
 }
+
+
+function extractAnnouncedAddedTimeFromMessages(
+  messages: PlayByPlayMessage[],
+  activePeriod: StoppagePeriodSummary['period'],
+  source: StoppageInfo['source']
+): StoppageInfo | undefined {
+  for (const message of [...messages].reverse()) {
+    const raw = message.Comment ?? '';
+    const comment = normalizeText(raw);
+    if (!comment) continue;
+
+    const looksLikeAdded =
+      comment.includes('added time') ||
+      comment.includes('stoppage time') ||
+      comment.includes('additional time') ||
+      comment.includes('acrescimo') ||
+      comment.includes('acrescido') ||
+      comment.includes('tempo adicional');
+
+    if (!looksLikeAdded) continue;
+
+    const match =
+      raw.match(/(\d{1,2})\s*(?:minutes?|mins?|minutos?|min)\b/i) ??
+      raw.match(/\+(\d{1,2})\b/);
+
+    if (!match) continue;
+
+    const minutes = Number(match[1]);
+    if (!Number.isFinite(minutes) || minutes <= 0) continue;
+
+    const timeline =
+      message.Timeline ||
+      (activePeriod === 'first-half'
+        ? '45'
+        : activePeriod === 'second-half'
+          ? '90'
+          : undefined);
+
+    return calculateAnnouncedAddedTime(
+      minutes,
+      source,
+      'Acréscimo anunciado no play-by-play da fonte ao vivo.',
+      timeline
+    );
+  }
+
+  return undefined;
+}
+
+function mergeStoppageWithActual(
+  calculated: StoppageInfo | undefined,
+  announced: StoppageInfo | undefined
+): StoppageInfo | undefined {
+  if (!calculated) return announced;
+  if (!announced?.actualAddedMinutes) return calculated;
+
+  const actualPeriod = announced.activePeriod ?? calculated.activePeriod ?? 'unknown';
+  const actualMinutes = announced.actualAddedMinutes;
+  const actualMs = announced.actualAddedMs ?? actualMinutes * 60_000;
+  const actualSource = announced.actualAddedSource ?? 'announced';
+
+  const baseBreakdown = calculated.periodBreakdown ?? [];
+  const breakdownWithActual = baseBreakdown.map((summary) =>
+    summary.period === actualPeriod
+      ? {
+          ...summary,
+          actualAddedMs: actualMs,
+          actualAddedMinutes: actualMinutes,
+          actualAddedSource: actualSource,
+        }
+      : summary
+  );
+
+  const periodBreakdown = breakdownWithActual.some((summary) => summary.period === actualPeriod)
+    ? breakdownWithActual
+    : [
+        ...breakdownWithActual,
+        {
+          period: actualPeriod,
+          label: stoppagePeriodLabel(actualPeriod),
+          totalStoppedMs: 0,
+          totalStoppedMinutes: 0,
+          predictedAddedMs: 0,
+          predictedAddedMinutes: 0,
+          actualAddedMs: actualMs,
+          actualAddedMinutes: actualMinutes,
+          actualAddedSource: actualSource,
+          incidents: [],
+        } satisfies StoppagePeriodSummary,
+      ];
+
+  const isSameActivePeriod = (calculated.activePeriod ?? 'unknown') === actualPeriod;
+
+  return {
+    ...calculated,
+    actualAddedMs: isSameActivePeriod ? actualMs : calculated.actualAddedMs,
+    actualAddedMinutes: isSameActivePeriod ? actualMinutes : calculated.actualAddedMinutes,
+    actualAddedSource: isSameActivePeriod ? actualSource : calculated.actualAddedSource,
+    periodBreakdown,
+  };
+}
+
 
 function extractRowsForMatch(stats: Scores365Statistic[], match: LiveMatch): LiveStatRow[] {
   const rows = new Map<string, LiveStatRow>();
@@ -901,6 +1013,9 @@ async function fetchStoppageInfo(gameId: number, matchMinute: number | string, s
     const detail = (await detailRes.json()) as {
       game?: {
         actualPlayTime?: Scores365ActualPlayTime;
+        gameTimeDisplay?: string;
+        preciseGameTime?: string;
+        statusText?: string;
         playByPlay?: {
           feedURL?: string;
         };
@@ -921,7 +1036,31 @@ async function fetchStoppageInfo(gameId: number, matchMinute: number | string, s
     const messages = playByPlay.Messages ?? [];
 
     const activePeriod = activePeriodFromMinute(matchMinute, statusText);
-    return calculateEventBasedStoppageInfo(messages, activePeriod) ?? calculateStoppageInfo(messages, activePeriod);
+    const detailMinute =
+      detail.game?.gameTimeDisplay ??
+      detail.game?.preciseGameTime ??
+      detail.game?.statusText ??
+      String(matchMinute ?? '');
+
+    const announcedFromClock = calculateAnnouncedAddedTime(
+      parseAddedTimeMinutes(detailMinute),
+      '365scores-announced-added-time',
+      'Acréscimo anunciado no relógio da 365Scores.',
+      detailMinute
+    );
+
+    const announcedFromMessages = extractAnnouncedAddedTimeFromMessages(
+      messages,
+      activePeriod,
+      '365scores-announced-added-time'
+    );
+
+    const announced = announcedFromClock ?? announcedFromMessages;
+    const calculated =
+      calculateEventBasedStoppageInfo(messages, activePeriod) ??
+      calculateStoppageInfo(messages, activePeriod);
+
+    return mergeStoppageWithActual(calculated, announced);
   } catch (err) {
     console.warn('[live/365scores/stoppage] error:', err);
     return undefined;
@@ -935,8 +1074,9 @@ async function enrichWithStoppage(matches: LiveMatch[]): Promise<LiveMatch[]> {
   await Promise.all(
     enrichedMatches.slice(0, limit).map(async (match, index) => {
       const stoppage = await fetchStoppageInfo(match.id, match.minute, match.statusText);
-      if (stoppage) {
-        enrichedMatches[index] = { ...match, stoppage };
+      const mergedStoppage = mergeStoppageWithActual(stoppage, match.stoppage);
+      if (mergedStoppage) {
+        enrichedMatches[index] = { ...match, stoppage: mergedStoppage };
       }
     })
   );
