@@ -453,6 +453,14 @@ function LiveMatchCard({
               >
                 Previsão {addedTime.periodLabel ? `${addedTime.periodLabel}: ` : ''}{addedTime.addedLabel}
               </Badge>
+              {addedTime.realAddedLabel && (
+                <Badge
+                  variant="outline"
+                  className="justify-center bg-emerald-500/10 text-emerald-300 border-emerald-500/20"
+                >
+                  Acréscimo real {addedTime.periodLabel ? `${addedTime.periodLabel}: ` : ''}{addedTime.realAddedLabel}
+                </Badge>
+              )}
             </div>
           )}
           {!addedTime && (
@@ -802,8 +810,8 @@ export function LiveMatches() {
     try {
       setError(null);
       const [scores365Res, sofascoreRes] = await Promise.allSettled([
-        fetch('/api/365scores/live'),
-        fetch('/api/sofascore-direct/live'),
+        fetch(`/api/365scores/live?t=${Date.now()}`, { cache: 'no-store' }),
+        fetch(`/api/sofascore-direct/live?t=${Date.now()}`, { cache: 'no-store' }),
       ]);
 
       const allMatches: LiveMatch[] = [];
@@ -849,7 +857,7 @@ export function LiveMatches() {
 
   useEffect(() => {
     if (!autoRefresh) return;
-    const interval = setInterval(fetchLiveMatches, 30000);
+    const interval = setInterval(fetchLiveMatches, 10000);
     return () => clearInterval(interval);
   }, [autoRefresh, fetchLiveMatches]);
 
