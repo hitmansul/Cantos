@@ -367,12 +367,14 @@ function parseAddedTimeMinutes(value?: string | number | null) {
   const raw = String(value);
   const normalized = raw.replace(/\s+/g, '');
 
-  // Formatos aceitos: 45+4, 90+6, 45:37 +4.
+  // Formatos aceitos:
+  // 45+4, 90+6, 45:37 +4, 93:32 +5, "90 + 4", "+5".
   const direct = normalized.match(/(?:45|90|105|120)\+(\d{1,2})/);
-  const separated = raw.match(/(?:45|90|105|120)\s*[:']\s*\d{1,2}\s*\+\s*(\d{1,2})/);
+  const clockWithAdded = raw.match(/\b\d{1,3}\s*[:']\s*\d{1,2}\s*\+\s*(\d{1,2})\b/);
+  const baseWithAdded = raw.match(/\b\d{1,3}\s*\+\s*(\d{1,2})\b/);
   const standalone = raw.match(/(?:^|\s)\+\s*(\d{1,2})(?:\s|$)/);
 
-  const match = direct ?? separated ?? standalone;
+  const match = direct ?? clockWithAdded ?? baseWithAdded ?? standalone;
   if (!match) return null;
 
   const minutes = Number(match[1]);
@@ -381,7 +383,21 @@ function parseAddedTimeMinutes(value?: string | number | null) {
 
 function parseTimelineParts(value?: string): { base: number; extra: number; total: number } | null {
   if (!value) return null;
-  const match = String(value).match(/(\d{1,3})(?:\s*\+\s*(\d{1,2}))?/);
+  const raw = String(value);
+
+  // 365Scores pode mostrar "93:32 +5". Isso significa que o juiz deu +5 no 2º tempo,
+  // não que o jogo esteja em prorrogação. Para classificar período, tratamos 90-104 com +N
+  // como base 90; 45-59 com +N como base 45.
+  const clockAdded = raw.match(/\b(\d{1,3})\s*[:']\s*\d{1,2}\s*\+\s*(\d{1,2})\b/);
+  if (clockAdded) {
+    const elapsed = Number(clockAdded[1]);
+    const extra = Number(clockAdded[2]);
+    if (!Number.isFinite(elapsed) || !Number.isFinite(extra)) return null;
+    const base = elapsed >= 90 && elapsed < 105 ? 90 : elapsed >= 45 && elapsed < 60 ? 45 : elapsed;
+    return { base, extra, total: elapsed };
+  }
+
+  const match = raw.match(/(\d{1,3})(?:\s*\+\s*(\d{1,2}))?/);
   if (!match) return null;
   const base = Number(match[1]);
   const extra = match[2] ? Number(match[2]) : 0;
@@ -514,9 +530,9 @@ function calculateAnnouncedAddedTime(
 
   const addedMs = addedMinutes * 60_000;
   const normalizedTimeline = String(timeline ?? '').replace(/\s+/g, '');
-  const parsedPeriod = periodFromTimelineMinute(normalizedTimeline);
+  const parsedPeriod = periodFromTimelineMinute(String(timeline ?? ''));
   const period = parsedPeriod === 'unknown'
-    ? periodFromAddedTimeBase(normalizedTimeline.includes('45+') ? 45 : normalizedTimeline.includes('90+') ? 90 : 90)
+    ? periodFromAddedTimeBase(normalizedTimeline.includes('45+') ? 45 : 90)
     : parsedPeriod;
 
   return {
