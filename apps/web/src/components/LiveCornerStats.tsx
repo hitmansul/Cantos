@@ -39,6 +39,9 @@ interface LiveMatch {
     totalStoppedMinutes: number;
     predictedAddedMs: number;
     predictedAddedMinutes: number;
+    actualAddedMs?: number;
+    actualAddedMinutes?: number;
+    actualAddedSource?: 'timeline' | 'clock' | 'comment' | 'announced';
     activePeriod?: 'first-half' | 'second-half' | 'extra-time' | 'unknown';
     activePeriodLabel?: string;
     periodBreakdown?: Array<{
@@ -48,6 +51,9 @@ interface LiveMatch {
       totalStoppedMinutes: number;
       predictedAddedMs: number;
       predictedAddedMinutes: number;
+      actualAddedMs?: number;
+      actualAddedMinutes?: number;
+      actualAddedSource?: 'timeline' | 'clock' | 'comment' | 'announced';
       incidents: Array<{
         startAt: string;
         endAt?: string;
@@ -171,7 +177,14 @@ function formatMatchMinute(value: number) {
 
 function getOfficialAddedTimePrediction(
   match: LiveMatch
-): { totalLabel?: string; addedLabel: string; sourceLabel: string; announcedOnly: boolean; periodLabel?: string } | null {
+): {
+  totalLabel?: string;
+  addedLabel: string;
+  realAddedLabel?: string;
+  sourceLabel: string;
+  announcedOnly: boolean;
+  periodLabel?: string;
+} | null {
   if (!match.stoppage) return null;
 
   const incidentCount = match.stoppage.incidents.length;
@@ -190,6 +203,7 @@ function getOfficialAddedTimePrediction(
     return {
       totalLabel: 'não informado',
       addedLabel: `+${formatMinuteValue(match.stoppage.predictedAddedMinutes)}`,
+      realAddedLabel: `+${formatMinuteValue(match.stoppage.actualAddedMinutes ?? match.stoppage.predictedAddedMinutes)}`,
       sourceLabel: `Acréscimo informado via ${sourceLabel}`,
       announcedOnly: true,
       periodLabel: match.stoppage.activePeriodLabel,
@@ -201,6 +215,9 @@ function getOfficialAddedTimePrediction(
   return {
     totalLabel: formatMinuteValue(match.stoppage.totalStoppedMinutes),
     addedLabel: `+${formatMinuteValue(match.stoppage.predictedAddedMinutes)}`,
+    realAddedLabel: match.stoppage.actualAddedMinutes
+      ? `+${formatMinuteValue(match.stoppage.actualAddedMinutes)}`
+      : undefined,
     sourceLabel: `${incidentCount} parada${incidentCount === 1 ? '' : 's'} detectada${
       incidentCount === 1 ? '' : 's'
     } via ${sourceLabel}`,
@@ -588,7 +605,7 @@ function LiveMatchDetails({
 
       {addedTime ? (
         <>
-          <div className="grid gap-3 md:grid-cols-2">
+          <div className="grid gap-3 md:grid-cols-3">
             <div className="rounded-lg border border-cyan-500/20 bg-cyan-500/10 p-3">
               <p className="flex items-center gap-2 text-sm font-semibold text-cyan-300">
                 <Timer className="w-4 h-4" />
@@ -611,6 +628,16 @@ function LiveMatchDetails({
                 {addedTime.announcedOnly
                   ? `${addedTime.sourceLabel}. A fonte não enviou o tempo total de bola parada.`
                   : '80% do tempo total parado identificado.'}
+              </p>
+            </div>
+            <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/10 p-3">
+              <p className="flex items-center gap-2 text-sm font-semibold text-emerald-300">
+                <Trophy className="w-4 h-4" />
+                Acréscimo Real {addedTime.periodLabel ? `— ${addedTime.periodLabel}` : ''}
+              </p>
+              <p className="mt-1 text-2xl font-bold">{addedTime.realAddedLabel ?? 'não informado'}</p>
+              <p className="text-xs text-muted-foreground">
+                Tempo anunciado pelo juiz/fonte oficial quando disponível.
               </p>
             </div>
           </div>
@@ -651,7 +678,7 @@ function LiveMatchDetails({
                       <Badge variant="outline" className="text-emerald-300">tempo atual</Badge>
                     )}
                   </div>
-                  <div className="mt-2 grid grid-cols-2 gap-2 text-sm">
+                  <div className="mt-2 grid grid-cols-3 gap-2 text-sm">
                     <div>
                       <p className="text-muted-foreground">Bola parada</p>
                       <p className="font-bold">{formatMinuteValue(summary.totalStoppedMinutes)}</p>
@@ -659,6 +686,12 @@ function LiveMatchDetails({
                     <div>
                       <p className="text-muted-foreground">Previsão 80%</p>
                       <p className="font-bold">+{formatMinuteValue(summary.predictedAddedMinutes)}</p>
+                    </div>
+                    <div>
+                      <p className="text-muted-foreground">Acréscimo real</p>
+                      <p className="font-bold">
+                        {summary.actualAddedMinutes ? `+${formatMinuteValue(summary.actualAddedMinutes)}` : 'não informado'}
+                      </p>
                     </div>
                   </div>
                 </div>
