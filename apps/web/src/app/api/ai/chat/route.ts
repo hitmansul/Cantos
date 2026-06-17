@@ -12,6 +12,9 @@ import {
 } from '@/data/cornerStats';
 import { SCORES365_COMPETITIONS, scores365Get } from '@/app/api/utils/scores365';
 import { findFifaSquad, getFifaWorldCupSquads, type FifaSquad, type FifaSquadPlayer } from '@/lib/fifaWorldCup';
+import { isWorldCupQuestion, worldCupTeams } from '@/data/worldCupTeams';
+import { emptyWorldCupCornersReply, worldCupCornerStats, worldCupCornersSummary } from '@/data/worldCupCornerStats';
+import { emptyWorldCupCardsReply, worldCupCardStats, worldCupCardsSummary } from '@/data/worldCupCardStats';
 
 export const maxDuration = 60;
 
@@ -369,6 +372,74 @@ function askedCoverage(text: string): boolean {
     'base da copa do mundo',
   ].some((term) => normalized.includes(term));
 }
+
+function askedWorldCupCoverage(text: string): boolean {
+  const normalized = normalize(text);
+  if (!isWorldCupQuestion(text)) return false;
+
+  return [
+    'quais dados',
+    'dados voce possui',
+    'dados possui',
+    'o que voce possui',
+    'o que voce tem',
+    'quais informacoes',
+    'base da copa',
+    'quantos jogos',
+    'jogos cadastrados',
+    'selecoes cadastradas',
+    'times cadastrados',
+  ].some((term) => normalized.includes(term));
+}
+
+function worldCupCoverageReply(): string {
+  const teamsCount = worldCupTeams.length;
+  const cornerTeams = unique(worldCupCornerStats.map((stats) => stats.team));
+  const cardTeams = unique(worldCupCardStats.map((stats) => stats.team));
+
+  return [
+    'Dados atualmente disponíveis da Copa do Mundo:',
+    '',
+    `✓ ${teamsCount} seleções cadastradas`,
+    '✓ Elencos oficiais FIFA com cache diário',
+    '✓ Convocações por seleção',
+    '✓ Jogadores por posição: goleiros, defensores, meias e atacantes',
+    '',
+    'Estatísticas locais da Copa:',
+    `- Escanteios: ${cornerTeams.length} seleções com estatísticas carregadas`,
+    `- Cartões: ${cardTeams.length} seleções com estatísticas carregadas`,
+    '',
+    'Ainda não disponíveis em arquivo local:',
+    '- Jogos/resultados da Copa',
+    '- Tabela/classificação da Copa',
+    '- Histórico completo de partidas',
+    '',
+    'Regra aplicada:',
+    '- Quando a pergunta for sobre Copa do Mundo, uso somente dados da Copa.',
+    '- Não misturo Eliminatórias, amistosos, Copa América, Euro ou ligas nacionais.',
+  ].join('\n');
+}
+
+function worldCupStatsReply(question: string): string | null {
+  if (!isWorldCupQuestion(question)) return null;
+
+  if (askedWorldCupCoverage(question)) {
+    return worldCupCoverageReply();
+  }
+
+  if (askedCards(question)) {
+    const summary = worldCupCardsSummary(question);
+    return summary ?? emptyWorldCupCardsReply();
+  }
+
+  if (askedStats(question)) {
+    const summary = worldCupCornersSummary(question);
+    return summary ?? emptyWorldCupCornersReply();
+  }
+
+  return null;
+}
+
 
 function askedDataUpdate(text: string): boolean {
   const normalized = normalize(text);
@@ -1559,9 +1630,15 @@ async function liveAddedTimeReply(question: string, ctx: string, origin: string)
 
 async function localReply(question: string, ctx: string, origin: string): Promise<string | null> {
   if (askedDataUpdate(question)) return dataUpdateReply();
+
+  const worldCupStats = worldCupStatsReply(question);
+  if (worldCupStats) return worldCupStats;
+
   if (askedCoverage(question)) return coverageReply();
+
   const squad = await worldCupSquadReply(question, ctx);
   if (squad) return squad;
+
   const odds = await oddsAlertsReply(question, origin);
   if (odds) return odds;
   const liveAdded = await liveAddedTimeReply(question, ctx, origin);
@@ -1576,6 +1653,9 @@ async function localReply(question: string, ctx: string, origin: string): Promis
   if (isFollowUpQuestion(question) && ctx) {
     const contextualQuestion = `${ctx} ${question}`;
     if (askedDataUpdate(ctx)) return dataUpdateReply();
+    const contextualWorldCupStats = worldCupStatsReply(contextualQuestion);
+    if (contextualWorldCupStats) return contextualWorldCupStats;
+
     const contextualSquad = await worldCupSquadReply(contextualQuestion, '');
     if (contextualSquad) return contextualSquad;
     if (askedOdds(ctx)) {
@@ -1624,20 +1704,31 @@ ${currentUpcomingMatches.map(matchLine).join('\n')}`;
 
 export async function POST(request: NextRequest) {
   try {
-    const { messages } = (await request.json()) as { messages: ChatMessage[] };
-    const lastUser = messages?.slice().reverse().find((message) => message.role === 'user');
+    const body = (await request.json().catch(() => null)) as { messages?: ChatMessage[] } | null;
+    const messages = body?.messages ?? [];
+
+    const lastUser = messages.slice().reverse().find((message) => message.role === 'user');
     if (!lastUser) {
-      return NextResponse.json({ error: 'Nenhuma mensagem de usuario encontrada' }, { status: 400 });
+      return NextResponse.json({
+        reply: 'Nenhuma mensagem de usuario encontrada.',
+        provider: 'local-error',
+      });
     }
 
     const ctx = context(messages);
     const origin = new URL(request.url).origin;
+
     const local = await localReply(lastUser.content, ctx, origin);
-    if (local) return NextResponse.json({ reply: local, provider: 'local-first' });
+    if (local) {
+      return NextResponse.json({ reply: local, provider: 'local-first' });
+    }
 
     const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) {
-      return NextResponse.json({ reply: await fallbackReply(lastUser.content, ctx, origin), provider: 'local-fallback' });
+      return NextResponse.json({
+        reply: await fallbackReply(lastUser.content, ctx, origin),
+        provider: 'local-fallback',
+      });
     }
 
     const response = await fetch(
@@ -1662,28 +1753,45 @@ export async function POST(request: NextRequest) {
       }
     );
 
+    const rawText = await response.text();
+
     if (!response.ok) {
       const prefix =
         response.status === 429
           ? 'O Gemini gratuito atingiu o limite agora. Respondi com os dados locais do app.'
           : `O Gemini retornou erro ${response.status}. Respondi com os dados locais do app.`;
+
       return NextResponse.json({
         reply: `${prefix}\n\n${await fallbackReply(lastUser.content, ctx, origin)}`,
         provider: 'local-fallback',
       });
     }
 
-    const data = (await response.json()) as {
+    let data: {
       candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
-    };
+    } | null = null;
+
+    try {
+      data = rawText ? JSON.parse(rawText) : null;
+    } catch (error) {
+      console.error('Gemini invalid JSON:', rawText.slice(0, 500));
+      return NextResponse.json({
+        reply: await fallbackReply(lastUser.content, ctx, origin),
+        provider: 'local-fallback-invalid-json',
+      });
+    }
+
+    const geminiText = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+
     return NextResponse.json({
-      reply:
-        data.candidates?.[0]?.content?.parts?.[0]?.text ??
-        (await fallbackReply(lastUser.content, ctx, origin)),
-      provider: 'gemini',
+      reply: geminiText || (await fallbackReply(lastUser.content, ctx, origin)),
+      provider: geminiText ? 'gemini' : 'local-fallback-empty-gemini',
     });
   } catch (error) {
     console.error('AI chat error:', error);
-    return NextResponse.json({ error: 'Erro interno. Tente novamente.' }, { status: 500 });
+    return NextResponse.json({
+      reply: 'Erro interno na IA. A rota respondeu em JSON, mas houve falha no processamento.',
+      provider: 'local-error',
+    });
   }
 }
