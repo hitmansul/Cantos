@@ -343,6 +343,7 @@ function latestTeams(text: string, limit = 2): string[] {
 
 function askedCoverage(text: string): boolean {
   const normalized = normalize(text);
+
   return [
     'quais ligas',
     'ligas disponiveis',
@@ -352,6 +353,20 @@ function askedCoverage(text: string): boolean {
     'dados que temos local',
     'quais dados temos',
     'o que temos local',
+
+    // Copa do Mundo
+    'quais dados voce possui da copa',
+    'quais dados possui da copa',
+    'quais dados da copa',
+    'dados da copa do mundo',
+    'o que voce possui da copa',
+    'o que voce tem da copa',
+    'quais informacoes da copa',
+    'quantos jogos da copa',
+    'quantos jogos copa do mundo',
+    'selecoes cadastradas',
+    'times cadastrados da copa',
+    'base da copa do mundo',
   ].some((term) => normalized.includes(term));
 }
 
@@ -752,7 +767,7 @@ function coverageReply(): string {
     return `- ${set.label}: ${teams.length} times com media geral e por tempo.`;
   }).join('\n');
 
-  return `Ligas integradas no app:\n\n${formatCatalog()}\n\nBases estatisticas carregadas:\n${statsLines}\n\nCopa do Mundo:\n- Elencos oficiais da FIFA com cache diario pela rota de elencos da Copa.\n\nOdds e alertas:\n- Odds reais para as ligas integradas quando a fonte retorna casas e mercados para os jogos.\n- Linhas de escanteios sao prioridade. Outros mercados so aparecem quando uma casa paga bem acima das demais.\n\nTempo Real:\n- Placar, tempo, estatisticas e acrescimos tentam usar fontes ao vivo em camadas. Se uma fonte nao trouxer um numero, eu tento a outra; se nenhuma trouxer, aviso que nao tenho.\n\nA IA tenta responder primeiro por esses dados locais e pelas rotas internas. O Gemini so entra quando a pergunta pede interpretacao aberta ou quando o dado nao existe na base.`;
+  return `Ligas integradas no app:\n\n${formatCatalog()}\n\nBases estatisticas carregadas:\n${statsLines}\n\nCopa do Mundo:\n- 48 selecoes cadastradas na base da Copa.\n- Elencos oficiais da FIFA com cache diario pela rota de elencos da Copa.\n- Convocacoes por selecao.\n- Jogadores por posicao: goleiros, defensores, meias e atacantes.\n\nAinda nao carregado na base da Copa:\n- Jogos/resultados da Copa em arquivo local.\n- Tabela/classificacao da Copa em arquivo local.\n- Estatisticas oficiais de escanteios da Copa.\n- Estatisticas oficiais de cartoes da Copa.\n\nRegra da Copa do Mundo:\n- Quando a pergunta for sobre Copa do Mundo, a IA deve usar somente dados da Copa.\n- Nao misturar Eliminatorias, amistosos, Copa America, Euro ou ligas nacionais.\n\nOdds e alertas:\n- Odds reais para as ligas integradas quando a fonte retorna casas e mercados para os jogos.\n- Linhas de escanteios sao prioridade. Outros mercados so aparecem quando uma casa paga bem acima das demais.\n\nTempo Real:\n- Placar, tempo, estatisticas e acrescimos tentam usar fontes ao vivo em camadas. Se uma fonte nao trouxer um numero, eu tento a outra; se nenhuma trouxer, aviso que nao tenho.\n\nA IA tenta responder primeiro por esses dados locais e pelas rotas internas. O Gemini so entra quando a pergunta pede interpretacao aberta ou quando o dado nao existe na base.`;
 }
 
 const SQUAD_POSITION_LABELS: Record<FifaSquadPlayer['position'], string> = {
