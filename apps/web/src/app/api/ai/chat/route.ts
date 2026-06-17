@@ -423,8 +423,34 @@ function worldCupCoverageReply(): string {
 function worldCupStatsReply(question: string): string | null {
   if (!isWorldCupQuestion(question)) return null;
 
+  const q = normalize(question);
+
   if (askedWorldCupCoverage(question)) {
     return worldCupCoverageReply();
+  }
+
+  // Quantidade de seleções com escanteios
+  if (
+    q.includes('quantas selecoes') &&
+    q.includes('escanteios')
+  ) {
+    const cornerTeams = unique(
+      worldCupCornerStats.map((stats) => stats.team)
+    );
+
+    return `${cornerTeams.length} seleções da Copa possuem estatísticas de escanteios carregadas na base local.`;
+  }
+
+  // Quantidade de seleções com cartões
+  if (
+    q.includes('quantas selecoes') &&
+    q.includes('cartoes')
+  ) {
+    const cardTeams = unique(
+      worldCupCardStats.map((stats) => stats.team)
+    );
+
+    return `${cardTeams.length} seleções da Copa possuem estatísticas de cartões carregadas na base local.`;
   }
 
   if (askedCards(question)) {
