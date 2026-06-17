@@ -26,6 +26,12 @@ interface FaqItem {
   asked_count: number;
 }
 
+type AiChatApiResponse = {
+  reply?: string;
+  error?: string;
+  provider?: string;
+};
+
 const FALLBACK_QUESTIONS = [
   'Quais dados temos da Copa do Mundo?',
   'México x África do Sul tem quantos escanteios ao vivo?',
@@ -39,6 +45,17 @@ let msgCounter = 0;
 function nextId() {
   msgCounter += 1;
   return String(msgCounter);
+}
+
+async function readJsonSafely<T>(response: Response): Promise<T | null> {
+  const rawText = await response.text();
+  if (!rawText.trim()) return null;
+
+  try {
+    return JSON.parse(rawText) as T;
+  } catch {
+    return null;
+  }
 }
 
 function MessageBubble({ message }: { message: Message }) {
@@ -86,12 +103,11 @@ export function AIChat() {
     scrollToBottom();
   }, [messages, isLoading, scrollToBottom]);
 
-  // Fetch top FAQs on mount
   useEffect(() => {
     fetch('/api/faq')
-      .then((r) => r.json())
-      .then((data: { faqs: FaqItem[] }) => {
-        setFaqs(data.faqs ?? []);
+      .then(async (r) => readJsonSafely<{ faqs: FaqItem[] }>(r))
+      .then((data) => {
+        setFaqs(data?.faqs ?? []);
         setFaqsLoaded(true);
       })
       .catch(() => setFaqsLoaded(true));
@@ -127,12 +143,21 @@ export function AIChat() {
           body: JSON.stringify({ messages: historyForApi }),
         });
 
+        const data = await readJsonSafely<AiChatApiResponse>(res);
+
         if (!res.ok) {
-          const errData = (await res.json()) as { error?: string };
-          throw new Error(errData.error ?? 'Erro desconhecido');
+          throw new Error(
+            data?.reply ??
+              data?.error ??
+              `A API da IA retornou erro ${res.status}. Verifique os logs da Vercel em /api/ai/chat.`
+          );
         }
 
-        const data = (await res.json()) as { reply: string };
+        if (!data?.reply) {
+          throw new Error(
+            'A API da IA respondeu sem JSON válido. Verifique se apps/web/src/app/api/ai/chat/route.ts está publicado no deploy correto.'
+          );
+        }
 
         const assistantMessage: Message = {
           id: nextId(),
@@ -142,10 +167,9 @@ export function AIChat() {
 
         setMessages((prev) => [...prev, assistantMessage]);
 
-        // Refresh FAQs after sending (non-blocking)
         fetch('/api/faq')
-          .then((r) => r.json())
-          .then((d: { faqs: FaqItem[] }) => setFaqs(d.faqs ?? []))
+          .then(async (r) => readJsonSafely<{ faqs: FaqItem[] }>(r))
+          .then((d) => setFaqs(d?.faqs ?? []))
           .catch(() => {});
       } catch (err) {
         const msg = err instanceof Error ? err.message : 'Erro ao enviar mensagem';
@@ -179,7 +203,6 @@ export function AIChat() {
 
   return (
     <div className="flex flex-col h-[calc(100vh-200px)] min-h-[500px]">
-      {/* Header */}
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-emerald-500 to-green-600 flex items-center justify-center shadow-lg">
@@ -203,9 +226,7 @@ export function AIChat() {
         )}
       </div>
 
-      {/* Chat Area */}
       <Card className="flex-1 flex flex-col overflow-hidden">
-        {/* Messages */}
         <div className="flex-1 overflow-y-auto p-4 space-y-4">
           {isEmpty ? (
             <div className="flex flex-col items-center justify-center h-full text-center space-y-6 py-8">
@@ -308,7 +329,6 @@ export function AIChat() {
           )}
         </div>
 
-        {/* Input Area */}
         <div className="border-t border-border p-4">
           <form onSubmit={handleSubmit} className="flex gap-2 items-end">
             <div className="flex-1">
