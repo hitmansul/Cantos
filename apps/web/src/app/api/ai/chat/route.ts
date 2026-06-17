@@ -429,7 +429,7 @@ function worldCupStatsReply(question: string): string | null {
     return worldCupCoverageReply();
   }
 
-  // Quantidade de seleções com escanteios
+  // Seleções com estatísticas de escanteios
   if (
     q.includes('quantas selecoes') &&
     q.includes('escanteios')
@@ -441,7 +441,7 @@ function worldCupStatsReply(question: string): string | null {
     return `${cornerTeams.length} seleções da Copa possuem estatísticas de escanteios carregadas na base local.`;
   }
 
-  // Quantidade de seleções com cartões
+  // Seleções com estatísticas de cartões
   if (
     q.includes('quantas selecoes') &&
     q.includes('cartoes')
@@ -451,6 +451,64 @@ function worldCupStatsReply(question: string): string | null {
     );
 
     return `${cardTeams.length} seleções da Copa possuem estatísticas de cartões carregadas na base local.`;
+  }
+
+  // Total de jogadores
+  if (
+    q.includes('quantos jogadores') ||
+    q.includes('total de jogadores')
+  ) {
+    const totalPlayers = fifaWorldCupSquadsSnapshot.totalPlayers;
+
+    return `Existem ${totalPlayers} jogadores cadastrados na base oficial da Copa do Mundo.`;
+  }
+
+  // Goleiros
+  if (
+    q.includes('quantos goleiros')
+  ) {
+    const total = fifaWorldCupSquadsSnapshot.teams
+      .flatMap(team => team.players)
+      .filter(player => player.position === 'GK')
+      .length;
+
+    return `Existem ${total} goleiros cadastrados na base oficial da Copa do Mundo.`;
+  }
+
+  // Defensores
+  if (
+    q.includes('quantos defensores')
+  ) {
+    const total = fifaWorldCupSquadsSnapshot.teams
+      .flatMap(team => team.players)
+      .filter(player => player.position === 'DF')
+      .length;
+
+    return `Existem ${total} defensores cadastrados na base oficial da Copa do Mundo.`;
+  }
+
+  // Meias
+  if (
+    q.includes('quantos meias')
+  ) {
+    const total = fifaWorldCupSquadsSnapshot.teams
+      .flatMap(team => team.players)
+      .filter(player => player.position === 'MF')
+      .length;
+
+    return `Existem ${total} meias cadastrados na base oficial da Copa do Mundo.`;
+  }
+
+  // Atacantes
+  if (
+    q.includes('quantos atacantes')
+  ) {
+    const total = fifaWorldCupSquadsSnapshot.teams
+      .flatMap(team => team.players)
+      .filter(player => player.position === 'FW')
+      .length;
+
+    return `Existem ${total} atacantes cadastrados na base oficial da Copa do Mundo.`;
   }
 
   if (askedCards(question)) {
