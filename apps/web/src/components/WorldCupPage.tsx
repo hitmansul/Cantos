@@ -26,6 +26,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Button } from '@/components/ui/button';
 import { WorldCupOddsAlerts } from '@/components/WorldCupOddsAlerts';
 import { FutureMatchPrediction } from '@/components/FutureMatchPrediction';
+import { findWorldCupPlayerStats } from '@/data/worldCupPlayerStats';
 
 type WCTeam = { country: string; flag: string };
 
@@ -463,6 +464,17 @@ status.includes('ft')
 
 function matchHasScore(match: WorldCupDisplayMatch): boolean {
 return typeof match.homeScore === 'number' && typeof match.awayScore === 'number';
+}
+
+function matchDynamicStat(match: WorldCupDisplayMatch, keys: string[]): string {
+const record = match as unknown as Record<string, unknown>;
+for (const key of keys) {
+const value = record[key];
+if (value === null || value === undefined || value === '') continue;
+if (typeof value === 'number') return Number.isFinite(value) ? String(value) : 'não informado';
+if (typeof value === 'string') return value;
+}
+return 'não informado';
 }
 
 function matchIsFuture(match: WorldCupDisplayMatch, now = Date.now()): boolean {
@@ -1469,6 +1481,8 @@ const heightDiff =
 player.heightCm && teamStats.averageHeight
 ? Math.round((player.heightCm - teamStats.averageHeight) * 10) / 10
 : null;
+const cupStats = findWorldCupPlayerStats(team.team, player.playerName);
+const cupCards = cupStats ? cupStats.yellowCards + cupStats.redCards : null;
 
 const detailRows = [
 { icon: Shirt, label: 'Camisa', value: String(player.number) },
@@ -1543,10 +1557,10 @@ return (
 </div>
 <div className="grid grid-cols-2 gap-2 text-sm">
 {[
-['Minutos', 'não informado'],
-['Gols', 'não informado'],
-['Assistências', 'não informado'],
-['Cartões', 'não informado'],
+['Minutos', cupStats?.minutes ?? 'não informado'],
+['Gols', cupStats?.goals ?? 'não informado'],
+['Assistências', cupStats?.assists ?? 'não informado'],
+['Cartões', cupCards ?? 'não informado'],
 ].map(([label, value]) => (
 <div key={label} className="rounded-md bg-muted/30 p-2">
 <div className="text-xs text-muted-foreground">{label}</div>
@@ -1555,7 +1569,9 @@ return (
 ))}
 </div>
 <p className="text-xs text-muted-foreground">
-Atualizaremos estes dados quando os relatórios oficiais da FIFA forem importados após cada jogo.
+{cupStats
+? `Fonte: ${cupStats.source} • atualizado em ${formatSourceDate(cupStats.updatedAt)}`
+: 'Ainda não recebemos estatísticas individuais dessa Copa para este jogador. Quando FIFA/365Scores/API-Football enviarem, estes campos serão preenchidos.'}
 </p>
 </div>
 </aside>
@@ -1825,8 +1841,25 @@ Fechar
 <BarChart3 className="w-4 h-4 text-emerald-400" />
 Números do jogo
 </div>
-<p className="mt-2 text-sm text-muted-foreground">
-Quando a fonte enviar finalizações, escanteios, cartões, posse e demais estatísticas, estes dados serão exibidos aqui.
+<div className="mt-3 grid grid-cols-2 gap-2 text-sm">
+{[
+['Posse', matchDynamicStat(match, ['possession', 'ballPossession', 'posse'])],
+['Finalizações', matchDynamicStat(match, ['shots', 'totalShots', 'finalizacoes'])],
+['Chutes no gol', matchDynamicStat(match, ['shotsOnTarget', 'onTarget', 'chutesNoGol'])],
+['Escanteios', matchDynamicStat(match, ['corners', 'cornerKicks', 'escanteios'])],
+['Cartões amarelos', matchDynamicStat(match, ['yellowCards', 'cardsYellow', 'cartoesAmarelos'])],
+['Cartões vermelhos', matchDynamicStat(match, ['redCards', 'cardsRed', 'cartoesVermelhos'])],
+['Faltas', matchDynamicStat(match, ['fouls', 'faltas'])],
+['Impedimentos', matchDynamicStat(match, ['offsides', 'impedimentos'])],
+].map(([label, value]) => (
+<div key={label} className="rounded-md bg-muted/30 p-2">
+<div className="text-xs text-muted-foreground">{label}</div>
+<div className="font-semibold">{value}</div>
+</div>
+))}
+</div>
+<p className="mt-2 text-xs text-muted-foreground">
+Os campos ficam como “não informado” quando 365Scores, API-Football ou relatório FIFA ainda não enviaram a estatística.
 </p>
 </div>
 <div className="rounded-lg border border-border bg-background/30 p-3">
@@ -1834,8 +1867,21 @@ Quando a fonte enviar finalizações, escanteios, cartões, posse e demais estat
 <Users className="w-4 h-4 text-emerald-400" />
 Estatísticas dos jogadores
 </div>
-<p className="mt-2 text-sm text-muted-foreground">
-Preparado para receber minutos, gols, assistências, cartões e eventos individuais dos relatórios oficiais pós-jogo.
+<div className="mt-3 grid grid-cols-2 gap-2 text-sm">
+{[
+['Jogadores com dados', matchDynamicStat(match, ['playerStatsCount', 'playersWithStats'])],
+['Minutos', matchDynamicStat(match, ['playerMinutesStatus', 'minutesStatus'])],
+['Gols/assistências', matchDynamicStat(match, ['playerGoalsStatus', 'goalsAssistsStatus'])],
+['Cartões individuais', matchDynamicStat(match, ['playerCardsStatus', 'cardsStatus'])],
+].map(([label, value]) => (
+<div key={label} className="rounded-md bg-muted/30 p-2">
+<div className="text-xs text-muted-foreground">{label}</div>
+<div className="font-semibold">{value}</div>
+</div>
+))}
+</div>
+<p className="mt-2 text-xs text-muted-foreground">
+Para preencher estes dados é necessário importar estatísticas individuais pós-jogo para a base worldCupPlayerStats.
 </p>
 </div>
 </div>
