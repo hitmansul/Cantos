@@ -670,40 +670,31 @@ export function FutureMatchPrediction({
                   </div>
                 </div>
               ) : selectedOdds.length > 0 ? (
-                <div className="grid gap-2 md:grid-cols-2">
-                  {selectedOdds.map((market) => {
-                    const best = market.offers[0];
-                    return (
-                      <button
-                        key={market.id}
-                        type="button"
-                        onClick={() => setSelectedOddsMarketId(market.id)}
-                        className="rounded-lg bg-muted/40 p-2 text-left transition-colors hover:bg-emerald-500/10 hover:ring-1 hover:ring-emerald-500/40"
-                      >
-                        <div className="flex items-start justify-between gap-3">
-                          <div>
-                            <p className="text-sm font-semibold">{translateOddsMarket(market.marketName)}</p>
-                            <p className="text-xs text-muted-foreground">{formatOddsSelection(market)}</p>
-                            <p className="mt-1 text-[11px] text-muted-foreground">
-                              {market.offers.length} casa(s). Clique para comparar.
-                            </p>
-                          </div>
-                          {best && (
-                            <div className="text-right">
-                              <p
-                                className={`text-sm font-bold ${
-                                  activeOddsCategory === 'cards' ? 'text-amber-300' : 'text-emerald-300'
-                                }`}
-                              >
-                                {best.odd.toFixed(2)}
-                              </p>
-                              <p className="text-xs text-muted-foreground">{best.bookmaker}</p>
-                            </div>
-                          )}
-                        </div>
-                      </button>
-                    );
-                  })}
+                <div className="space-y-3 rounded-lg border border-border/70 bg-background/30 p-3">
+                  <div className="space-y-1">
+                    <label className="text-xs font-semibold text-muted-foreground">
+                      Escolha a linha para comparar as casas
+                    </label>
+                    <select
+                      value={selectedOddsMarketId ?? ''}
+                      onChange={(event) => setSelectedOddsMarketId(event.target.value || null)}
+                      className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:border-emerald-500"
+                    >
+                      <option value="">Selecione uma linha</option>
+                      {selectedOdds.map((market) => {
+                        const best = market.offers[0];
+                        const bestLabel = best ? ` — melhor ${best.bookmaker} ${best.odd.toFixed(2)}` : '';
+                        return (
+                          <option key={market.id} value={market.id}>
+                            {translateOddsMarket(market.marketName)} | {formatOddsSelection(market)} | {market.offers.length} casa(s){bestLabel}
+                          </option>
+                        );
+                      })}
+                    </select>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    A lista completa ficou oculta para não poluir a tela. Depois de escolher uma linha, exibimos somente as casas disponíveis para ela.
+                  </p>
                 </div>
               ) : (
                 <div className="rounded-lg bg-muted/40 p-6 text-center text-sm text-muted-foreground">
