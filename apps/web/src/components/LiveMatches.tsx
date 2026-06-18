@@ -42,7 +42,6 @@ interface LiveMatch {
     source:
       | '365scores-actual-play-time'
       | '365scores-sportradar'
-      | '365scores-event-estimate'
       | '365scores-announced-added-time'
       | 'sofascore-announced-added-time'
       | 'api-football-announced-added-time';
@@ -52,10 +51,39 @@ interface LiveMatch {
       endAt?: string;
       durationMs: number;
       reason: string;
-      period?: string;
+      period?: PeriodKey;
+      rawPeriod?: string;
       timeline?: string;
     }>;
+    periods?: PeriodStoppageInfo;
   };
+  periodStoppage?: PeriodStoppageInfo;
+}
+
+type PeriodKey = 'firstHalf' | 'secondHalf';
+
+interface PeriodStoppageSummary {
+  totalStoppedMs: number | null;
+  totalStoppedMinutes: number | null;
+  predictedAddedMs: number | null;
+  predictedAddedMinutes: number | null;
+  actualAddedMinutes: number | null;
+  source?: NonNullable<LiveMatch['stoppage']>['source'];
+  kind?: NonNullable<LiveMatch['stoppage']>['kind'];
+  incidents: Array<{
+    startAt: string;
+    endAt?: string;
+    durationMs: number;
+    reason: string;
+    period?: PeriodKey;
+    rawPeriod?: string;
+    timeline?: string;
+  }>;
+}
+
+interface PeriodStoppageInfo {
+  firstHalf: PeriodStoppageSummary;
+  secondHalf: PeriodStoppageSummary;
 }
 
 interface LiveStatRow {
@@ -65,33 +93,6 @@ interface LiveStatRow {
   away: string;
   category?: string;
   isMajor?: boolean;
-}
-
-interface SofascoreStatItem {
-  name: string;
-  home: string | number;
-  away: string | number;
-  homeValue?: number;
-  awayValue?: number;
-  key: string;
-}
-
-interface SofascoreStatsResponse {
-  homeCorners: number;
-  awayCorners: number;
-  totalCorners: number;
-  homeCorners1stHalf: number;
-  awayCorners1stHalf: number;
-  homeCorners2ndHalf: number;
-  awayCorners2ndHalf: number;
-  fullStatistics?: {
-    statistics?: Array<{
-      period: string;
-      groups: Array<{
-        statisticsItems: SofascoreStatItem[];
-      }>;
-    }>;
-  };
 }
 
 // Competition ID to emoji/flag mapping (365Scores IDs + API-Football IDs)
@@ -132,6 +133,112 @@ const COMPETITION_ICONS: Record<number, string> = {
 function formatMinuteValue(value: number) {
   if (value < 1) return `${Math.max(1, Math.round(value * 60))}s`;
   return `${value.toFixed(1).replace('.0', '')} min`;
+}
+
+const PERIOD_LABELS: Record<PeriodKey, string> = {
+  firstHalf: '1º tempo',
+  secondHalf: '2º tempo',
+};
+
+function periodSummaryHasData(summary?: PeriodStoppageSummary | null) {
+  if (!summary) return false;
+  return (
+    (summary.totalStoppedMinutes ?? 0) > 0 ||
+    (summary.predictedAddedMinutes ?? 0) > 0 ||
+    (summary.actualAddedMinutes ?? 0) > 0 ||
+    summary.incidents.length > 0
+  );
+}
+
+function currentPeriodFromMatch(match: LiveMatch): PeriodKey {
+  const raw = `${match.minute ?? ''} ${match.statusText ?? ''}`.toLowerCase();
+  if (raw.includes('2h') || raw.includes('2nd') || raw.includes('second') || raw.includes('segundo')) {
+    return 'secondHalf';
+  }
+  if (raw.includes('1h') || raw.includes('1st') || raw.includes('first') || raw.includes('intervalo')) {
+    return 'firstHalf';
+  }
+
+  const numeric =
+    typeof match.minute === 'number'
+      ? match.minute
+      : typeof match.minute === 'string'
+        ? Number(match.minute.match(/\d{1,3}/)?.[0])
+        : NaN;
+
+  return Number.isFinite(numeric) && numeric > 45 ? 'secondHalf' : 'firstHalf';
+}
+
+function getPeriodSummary(match: LiveMatch, period: PeriodKey): PeriodStoppageSummary | null {
+  return match.periodStoppage?.[period] ?? match.stoppage?.periods?.[period] ?? null;
+}
+
+function formatOptionalMinutes(value?: number | null, prefix = '') {
+  if (value === null || value === undefined || value <= 0) return 'não informado';
+  return `${prefix}${formatMinuteValue(value)}`;
+}
+
+function formatActualAdded(summary?: PeriodStoppageSummary | null) {
+  return formatOptionalMinutes(summary?.actualAddedMinutes, '+');
+}
+
+function formatPredictedAdded(summary?: PeriodStoppageSummary | null) {
+  return formatOptionalMinutes(summary?.predictedAddedMinutes, '+');
+}
+
+function sourceLabel(source?: NonNullable<LiveMatch['stoppage']>['source']) {
+  const sourceLabels: Record<NonNullable<LiveMatch['stoppage']>['source'], string> = {
+    '365scores-actual-play-time': 'tempo de bola rolando da 365Scores',
+    '365scores-sportradar': 'play-by-play da 365Scores/Sportradar',
+    '365scores-announced-added-time': 'acréscimo anunciado pela 365Scores',
+    'sofascore-announced-added-time': 'acréscimo anunciado pelo SofaScore',
+    'api-football-announced-added-time': 'acréscimo anunciado pela API-Football',
+  };
+  return source ? sourceLabels[source] ?? 'fonte ao vivo' : 'fonte ao vivo';
+}
+
+function getPeriodIncidents(match: LiveMatch, period: PeriodKey) {
+  const summaryIncidents = getPeriodSummary(match, period)?.incidents ?? [];
+  if (summaryIncidents.length > 0) return summaryIncidents.filter((incident) => incident.durationMs > 0);
+  if (match.stoppage?.kind !== 'calculated-stoppage') return [];
+  return match.stoppage.incidents.filter(
+    (incident) => incident.period === period && incident.durationMs > 0
+  );
+}
+
+function mergePeriodSummary(
+  base?: PeriodStoppageSummary | null,
+  incoming?: PeriodStoppageSummary | null
+): PeriodStoppageSummary | null {
+  if (!base) return incoming ?? null;
+  if (!incoming) return base;
+  if (!periodSummaryHasData(base) && periodSummaryHasData(incoming)) return incoming;
+
+  return {
+    ...base,
+    totalStoppedMs: base.totalStoppedMs ?? incoming.totalStoppedMs,
+    totalStoppedMinutes: base.totalStoppedMinutes ?? incoming.totalStoppedMinutes,
+    predictedAddedMs: base.predictedAddedMs ?? incoming.predictedAddedMs,
+    predictedAddedMinutes: base.predictedAddedMinutes ?? incoming.predictedAddedMinutes,
+    actualAddedMinutes: base.actualAddedMinutes ?? incoming.actualAddedMinutes,
+    source: base.source ?? incoming.source,
+    kind: base.kind ?? incoming.kind,
+    incidents:
+      incoming.incidents.length > base.incidents.length ? incoming.incidents : base.incidents,
+  };
+}
+
+function mergePeriodStoppage(
+  base?: PeriodStoppageInfo,
+  incoming?: PeriodStoppageInfo
+): PeriodStoppageInfo | undefined {
+  if (!base) return incoming;
+  if (!incoming) return base;
+
+  return {
+    firstHalf: mergePeriodSummary(base.firstHalf, incoming.firstHalf) ?? base.firstHalf,
+    secondHalf: mergePeriodSummary(base.secondHalf, incoming.secondHalf) ?? base.secondHalf,
+  };
 }
 
 type LiveStoppageIncident = NonNullable<LiveMatch['stoppage']>['incidents'][number];
@@ -212,96 +319,11 @@ function stoppageReasonLabel(reason: string) {
     : 'Paralisação do jogo';
 }
 
-function detailedStoppageIncidents(match: LiveMatch) {
-  if (match.stoppage?.kind !== 'calculated-stoppage') return [];
-  return match.stoppage.incidents.filter((incident) => incident.durationMs > 0);
-}
-
-function getOfficialAddedTimePrediction(
-  match: LiveMatch
-): { totalLabel?: string; addedLabel: string; sourceLabel: string; announcedOnly: boolean } | null {
-  if (!match.stoppage) return null;
-
-  const incidentCount = match.stoppage.incidents.length;
-  const announcedOnly = match.stoppage.kind === 'announced-added-time';
-  const sourceLabels: Record<NonNullable<LiveMatch['stoppage']>['source'], string> = {
-    '365scores-actual-play-time': 'tempo de bola rolando da 365Scores',
-    '365scores-sportradar': 'play-by-play da 365Scores/Sportradar',
-    '365scores-event-estimate': 'eventos reais da 365Scores',
-    '365scores-announced-added-time': 'acréscimo anunciado pela 365Scores',
-    'sofascore-announced-added-time': 'acréscimo anunciado pelo SofaScore',
-    'api-football-announced-added-time': 'acréscimo anunciado pela API-Football',
-  };
-  const sourceLabel = sourceLabels[match.stoppage.source] ?? 'fonte ao vivo';
-
-  if (announcedOnly && match.stoppage.predictedAddedMinutes > 0) {
-    return {
-      totalLabel: 'não informado',
-      addedLabel: `+${formatMinuteValue(match.stoppage.predictedAddedMinutes)}`,
-      sourceLabel: `Acréscimo informado via ${sourceLabel}`,
-      announcedOnly: true,
-    };
-  }
-
-  if (match.stoppage.totalStoppedMs <= 0) return null;
-
-  return {
-    totalLabel: formatMinuteValue(match.stoppage.totalStoppedMinutes),
-    addedLabel: `+${formatMinuteValue(match.stoppage.predictedAddedMinutes)}`,
-    sourceLabel: `${incidentCount} parada${incidentCount === 1 ? '' : 's'} detectada${
-      incidentCount === 1 ? '' : 's'
-    } via ${sourceLabel}`,
-    announcedOnly: false,
-  };
-}
-
 function normalizeStatKey(value: string) {
   return value
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
     .toLowerCase();
-}
-
-function statValue(item: SofascoreStatItem, side: 'home' | 'away') {
-  const numeric = side === 'home' ? item.homeValue : item.awayValue;
-  if (typeof numeric === 'number' && Number.isFinite(numeric)) return String(numeric);
-  const value = side === 'home' ? item.home : item.away;
-  return value === undefined || value === null || value === '' ? '-' : String(value);
-}
-
-function extractLiveStatRows(stats: SofascoreStatsResponse | null) {
-  const allPeriod = stats?.fullStatistics?.statistics?.find((period) => period.period === 'ALL');
-  const items = allPeriod?.groups?.flatMap((group) => group.statisticsItems ?? []) ?? [];
-  const priority = [
-    'ballPossession',
-    'expectedGoals',
-    'totalShotsOnGoal',
-    'shotsOnGoal',
-    'cornerKicks',
-    'yellowCards',
-    'redCards',
-    'fouls',
-    'offsides',
-    'goalkeeperSaves',
-    'bigChances',
-    'blockedScoringAttempt',
-  ];
-
-  const unique = new Map<string, SofascoreStatItem>();
-  for (const item of items) {
-    const key = item.key || normalizeStatKey(item.name);
-    if (!unique.has(key)) unique.set(key, item);
-  }
-
-  return priority
-    .map((key) => unique.get(key))
-    .filter((item): item is SofascoreStatItem => Boolean(item))
-    .map((item) => ({
-      key: item.key || item.name,
-      label: item.name,
-      home: statValue(item, 'home'),
-      away: statValue(item, 'away'),
-    }));
 }
 
 function matchKey(match: Pick<LiveMatch, 'homeTeam' | 'awayTeam'>) {
@@ -323,6 +345,7 @@ function mergeLiveMatch(base: LiveMatch, incoming: LiveMatch): LiveMatch {
     liveStats: incoming.liveStats ?? base.liveStats,
     statsSource: incoming.statsSource ?? base.statsSource,
     stoppage: base.stoppage ?? incoming.stoppage,
+    periodStoppage: mergePeriodStoppage(base.periodStoppage, incoming.periodStoppage),
     sourceIds: {
       ...base.sourceIds,
       ...incoming.sourceIds,
@@ -342,7 +365,9 @@ function LiveMatchCard({
   const icon = COMPETITION_ICONS[match.competitionId] || '⚽';
   const minuteDisplay =
     typeof match.minute === 'number' ? `${match.minute}'` : match.minute || match.statusText;
-  const addedTime = getOfficialAddedTimePrediction(match);
+  const currentPeriod = currentPeriodFromMatch(match);
+  const currentSummary = getPeriodSummary(match, currentPeriod);
+  const hasCurrentPeriodData = periodSummaryHasData(currentSummary);
   return (
     <Card
       role="button"
@@ -394,36 +419,38 @@ function LiveMatchCard({
             <Clock className="w-3 h-3 mr-1" />
             {minuteDisplay}
           </Badge>
-          {addedTime && (
+          {hasCurrentPeriodData ? (
             <div
               className="mt-2 grid gap-1 text-[11px]"
-              title={
-                addedTime.announcedOnly
-                  ? `${addedTime.sourceLabel}. A fonte informou o acréscimo, mas não enviou o tempo total de bola parada.`
-                  : `${addedTime.sourceLabel}. A previsão de acréscimo usa eventos reais do jogo: gol, substituição, VAR, atendimento médico e cartões.`
-              }
+              title={`${PERIOD_LABELS[currentPeriod]} - ${sourceLabel(currentSummary?.source)}`}
             >
               <Badge
                 variant="outline"
                 className="justify-center bg-cyan-500/10 text-cyan-300 border-cyan-500/20"
               >
-                Bola parada {addedTime.totalLabel}
+                Bola parada {PERIOD_LABELS[currentPeriod]}:{' '}
+                {formatOptionalMinutes(currentSummary?.totalStoppedMinutes)}
               </Badge>
               <Badge
                 variant="outline"
                 className="justify-center bg-amber-500/10 text-amber-300 border-amber-500/20"
               >
-                Previsão de Acréscimo {addedTime.addedLabel}
+                Previsão de Acréscimo: {formatPredictedAdded(currentSummary)}
+              </Badge>
+              <Badge
+                variant="outline"
+                className="justify-center border-border/70 bg-background/40 text-muted-foreground"
+              >
+                Acréscimo real: {formatActualAdded(currentSummary)}
               </Badge>
             </div>
-          )}
-          {!addedTime && (
+          ) : (
             <Badge
               variant="outline"
               className="mt-2 justify-center border-border/70 bg-background/40 text-[11px] text-muted-foreground"
               title="A fonte ao vivo ainda não enviou paradas, retomadas ou acréscimo anunciado para este jogo."
             >
-              Previsão de Acréscimo indisponível
+              Previsão de Acréscimo: não informado
             </Badge>
           )}
         </div>
@@ -456,6 +483,87 @@ function LiveMatchCard({
   );
 }
 
+function PeriodSummaryCard({
+  title,
+  summary,
+}: {
+  title: string;
+  summary: PeriodStoppageSummary | null;
+}) {
+  const hasData = periodSummaryHasData(summary);
+  return (
+    <div className="rounded-lg border border-border bg-background/40 p-3">
+      <p className="mb-3 text-sm font-semibold text-foreground">{title}</p>
+      <div className="grid gap-2 sm:grid-cols-3">
+        <div className="rounded-md bg-cyan-500/10 p-3">
+          <p className="text-xs text-muted-foreground">Tempo parado</p>
+          <p className="mt-1 text-lg font-bold text-cyan-300">
+            {formatOptionalMinutes(summary?.totalStoppedMinutes)}
+          </p>
+        </div>
+        <div className="rounded-md bg-amber-500/10 p-3">
+          <p className="text-xs text-muted-foreground">Previsão de Acréscimo</p>
+          <p className="mt-1 text-lg font-bold text-amber-300">
+            {formatPredictedAdded(summary)}
+          </p>
+        </div>
+        <div className="rounded-md bg-emerald-500/10 p-3">
+          <p className="text-xs text-muted-foreground">Acréscimo real do árbitro</p>
+          <p className="mt-1 text-lg font-bold text-emerald-300">
+            {formatActualAdded(summary)}
+          </p>
+        </div>
+      </div>
+      <p className="mt-3 text-xs text-muted-foreground">
+        {hasData
+          ? `Fonte: ${sourceLabel(summary?.source)}.`
+          : 'Fonte ainda não informou tempo parado, previsão ou acréscimo real para este período.'}
+      </p>
+    </div>
+  );
+}
+
+function PeriodIncidentsList({
+  title,
+  incidents,
+}: {
+  title: string;
+  incidents: LiveStoppageIncident[];
+}) {
+  return (
+    <div className="rounded-lg border border-cyan-500/20 bg-cyan-500/5 p-3">
+      <p className="mb-3 flex items-center gap-2 text-sm font-semibold text-cyan-300">
+        <Timer className="w-4 h-4" />
+        {title}
+      </p>
+      {incidents.length === 0 ? (
+        <p className="rounded-md border border-border/70 bg-background/50 p-3 text-sm text-muted-foreground">
+          Fonte ainda não informou paradas e retomadas para este período.
+        </p>
+      ) : (
+        <div className="space-y-2">
+          {incidents.map((incident, index) => (
+            <div
+              key={`${incident.startAt}-${index}`}
+              className="rounded-md border border-border/70 bg-background/50 p-3 text-sm"
+            >
+              <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+                <div className="font-medium">
+                  {stoppageReasonLabel(incident.reason)}: parou {incidentStartLabel(incident)} -
+                  jogo reiniciado {incidentEndLabel(incident)}
+                </div>
+                <Badge variant="outline" className="w-fit text-xs">
+                  {formatDurationMs(incident.durationMs)}
+                </Badge>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function LiveMatchDetails({
   match,
   competition,
@@ -465,51 +573,13 @@ function LiveMatchDetails({
   competition: string;
   onClose: () => void;
 }) {
-  const [stats, setStats] = useState<SofascoreStatsResponse | null>(null);
-  const [statsLoading, setStatsLoading] = useState(false);
-  const [statsError, setStatsError] = useState<string | null>(null);
-  const sofascoreId = match.sourceIds?.sofascore ?? (match.source === 'sofascore' ? match.id : null);
-  const addedTime = getOfficialAddedTimePrediction(match);
-  const stoppageIncidents = useMemo(() => detailedStoppageIncidents(match), [match]);
-  const hasEmbeddedStats = Boolean(match.liveStats?.length);
-  const statRows = useMemo(
-    () => (match.liveStats?.length ? match.liveStats : extractLiveStatRows(stats)),
-    [match.liveStats, stats]
-  );
-
-  useEffect(() => {
-    let cancelled = false;
-
-    if (hasEmbeddedStats || !sofascoreId) {
-      setStats(null);
-      setStatsError(null);
-      setStatsLoading(false);
-      return;
-    }
-
-    async function fetchStats() {
-      setStatsLoading(true);
-      setStatsError(null);
-      try {
-        const res = await fetch(`/api/sofascore-direct/match/${sofascoreId}/statistics`);
-        const data = (await res.json()) as SofascoreStatsResponse & { error?: string };
-        if (!res.ok) throw new Error(data.error ?? 'Estatísticas indisponíveis');
-        if (!cancelled) setStats(data);
-      } catch (error) {
-        if (!cancelled) {
-          setStats(null);
-          setStatsError(error instanceof Error ? error.message : 'Estatísticas indisponíveis');
-        }
-      } finally {
-        if (!cancelled) setStatsLoading(false);
-      }
-    }
-
-    void fetchStats();
-    return () => {
-      cancelled = true;
-    };
-  }, [hasEmbeddedStats, sofascoreId]);
+  const firstHalfSummary = getPeriodSummary(match, 'firstHalf');
+  const secondHalfSummary = getPeriodSummary(match, 'secondHalf');
+  const firstHalfIncidents = useMemo(() => getPeriodIncidents(match, 'firstHalf'), [match]);
+  const secondHalfIncidents = useMemo(() => getPeriodIncidents(match, 'secondHalf'), [match]);
+  const hasAnyPeriodData =
+    periodSummaryHasData(firstHalfSummary) || periodSummaryHasData(secondHalfSummary);
+  const statRows = match.liveStats ?? [];
 
   const statsSourceLabel =
     match.statsSource === '365scores'
@@ -557,94 +627,31 @@ function LiveMatchDetails({
         <div className="rounded-lg border border-border bg-background/40 p-3 text-center">
           <p className="text-xs text-muted-foreground">Escanteios ao vivo</p>
           <p className="text-2xl font-bold text-amber-400">
-            {match.corners
-              ? `${match.corners.home} - ${match.corners.away}`
-              : stats
-                ? `${stats.homeCorners} - ${stats.awayCorners}`
-                : '-'}
+            {match.corners ? `${match.corners.home} - ${match.corners.away}` : '-'}
           </p>
         </div>
       </div>
 
-      {addedTime ? (
-        <>
-        <div className="grid gap-3 md:grid-cols-2">
-          <div className="rounded-lg border border-cyan-500/20 bg-cyan-500/10 p-3">
-            <p className="flex items-center gap-2 text-sm font-semibold text-cyan-300">
-              <Timer className="w-4 h-4" />
-              Tempo total de bola parada
-            </p>
-            <p className="mt-1 text-2xl font-bold">{addedTime.totalLabel ?? 'não informado'}</p>
-            <p className="text-xs text-muted-foreground">
-              {addedTime.announcedOnly
-                ? 'A fonte não enviou início e fim das paradas.'
-                : addedTime.sourceLabel}
-            </p>
-          </div>
-          <div className="rounded-lg border border-amber-500/20 bg-amber-500/10 p-3">
-            <p className="flex items-center gap-2 text-sm font-semibold text-amber-300">
-              <Clock className="w-4 h-4" />
-              Previsão de Acréscimo
-            </p>
-            <p className="mt-1 text-2xl font-bold">{addedTime.addedLabel}</p>
-            <p className="text-xs text-muted-foreground">
-              {addedTime.announcedOnly
-                ? `${addedTime.sourceLabel}. A fonte não enviou o tempo total de bola parada.`
-                : '80% do tempo total parado identificado.'}
-            </p>
-          </div>
-        </div>
-        <div className="rounded-lg border border-border bg-background/40 p-3 text-sm text-muted-foreground">
-          <span className="font-semibold text-foreground">Como chegamos nesse número: </span>
-          {addedTime.announcedOnly
-            ? 'a fonte ao vivo informou apenas o acréscimo anunciado no relógio/status do jogo. Como ela não enviou paradas e retomadas, a aplicação mostra o acréscimo, mas não calcula tempo de bola parada.'
-            : stoppageIncidents.length > 0
-              ? 'somamos os eventos reais recebidos no play-by-play: gol, substituição, VAR, atendimento médico e cartões. Não usamos mais o actualPlayTime da 365Scores para evitar acréscimos absurdos.'
-              : 'a fonte não trouxe eventos suficientes para uma estimativa confiável. Por segurança, a aplicação não usa mais tempo total menos bola rolando como previsão automática.'}
-        </div>
-        </>
-      ) : (
-        <div className="rounded-lg border border-border bg-background/40 p-3 text-sm text-muted-foreground">
-          A fonte ao vivo ainda não enviou paradas e retomadas suficientes para calcular tempo de
-          bola parada e Previsão de Acréscimo neste jogo.
-        </div>
-      )}
+      <div className="grid gap-3 md:grid-cols-2">
+        <PeriodSummaryCard title="Resumo do 1º Tempo" summary={firstHalfSummary} />
+        <PeriodSummaryCard title="Resumo do 2º Tempo" summary={secondHalfSummary} />
+      </div>
 
-      {stoppageIncidents.length > 0 && (
-        <div className="rounded-lg border border-cyan-500/20 bg-cyan-500/5 p-3">
-          <p className="mb-3 flex items-center gap-2 text-sm font-semibold text-cyan-300">
-            <Timer className="w-4 h-4" />
-            Paradas detectadas
-          </p>
-          <div className="space-y-2">
-            {stoppageIncidents.map((incident, index) => (
-              <div
-                key={`${incident.startAt}-${index}`}
-                className="rounded-md border border-border/70 bg-background/50 p-3 text-sm"
-              >
-                <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-                  <div className="font-medium">
-                    {stoppageReasonLabel(incident.reason)}: parou {incidentStartLabel(incident)} - jogo reiniciado {incidentEndLabel(incident)}
-                  </div>
-                  <Badge variant="outline" className="w-fit text-xs">
-                    {formatDurationMs(incident.durationMs)}
-                  </Badge>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
+      <div className="rounded-lg border border-border bg-background/40 p-3 text-sm text-muted-foreground">
+        <span className="font-semibold text-foreground">Como chegamos nesses números: </span>
+        {hasAnyPeriodData
+          ? 'quando a fonte envia paradas e retomadas, somamos somente o período correspondente e usamos 80% desse tempo parado como Previsão de Acréscimo. O acréscimo real do árbitro só aparece quando a fonte informa o valor anunciado.'
+          : 'as fontes ao vivo ainda não enviaram tempo parado, paradas/retomadas ou acréscimo real para este jogo.'}
+      </div>
+
+      <div className="grid gap-3 md:grid-cols-2">
+        <PeriodIncidentsList title="Paradas detectadas no 1º tempo" incidents={firstHalfIncidents} />
+        <PeriodIncidentsList title="Paradas detectadas no 2º tempo" incidents={secondHalfIncidents} />
+      </div>
 
       <div className="rounded-lg border border-border bg-background/40 p-3">
         <div className="mb-3 flex items-center justify-between gap-2">
           <p className="text-sm font-semibold">Números do jogo</p>
-          {statsLoading && (
-            <span className="flex items-center gap-1 text-xs text-muted-foreground">
-              <RefreshCw className="w-3 h-3 animate-spin" />
-              buscando
-            </span>
-          )}
         </div>
 
         {statRows.length > 0 ? (
@@ -660,14 +667,10 @@ function LiveMatchDetails({
               </div>
             ))}
           </div>
-        ) : statsError ? (
-          <p className="text-sm text-muted-foreground">
-            Não consegui carregar estatísticas ao vivo do SofaScore para este jogo agora.
-          </p>
         ) : (
           <p className="text-sm text-muted-foreground">
-            A 365Scores trouxe placar e tempo, mas ainda não enviou estatísticas detalhadas deste
-            evento.
+            As fontes ao vivo trouxeram placar e tempo, mas ainda não enviaram estatísticas
+            detalhadas deste evento.
           </p>
         )}
       </div>
@@ -690,60 +693,31 @@ export function LiveMatches() {
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [selectedCompetition, setSelectedCompetition] = useState('all');
   const [selectedMatchId, setSelectedMatchId] = useState<number | null>(null);
-  // fetchTick increments each time a fetch completes — triggers the time update effect
-  const [fetchTick, setFetchTick] = useState(0);
-
-  // Update display time client-side only, triggered by fetchTick
-  useEffect(() => {
-    if (fetchTick === 0) return;
-    setLastUpdatedDisplay(
-      new Intl.DateTimeFormat('pt-BR', {
-        timeZone: 'America/Sao_Paulo',
-        hour: '2-digit',
-        minute: '2-digit',
-        second: '2-digit',
-      }).format(Date.now())
-    );
-  }, [fetchTick]);
 
   const fetchLiveMatches = useCallback(async () => {
     try {
       setError(null);
-      const [scores365Res, sofascoreRes] = await Promise.allSettled([
-        fetch('/api/365scores/live'),
-        fetch('/api/sofascore-direct/live'),
-      ]);
-
-      const allMatches: LiveMatch[] = [];
-      const indexByKey = new Map<string, number>();
-      const addOrMerge = (match: LiveMatch, fallbackSource: string) => {
-        const key = matchKey(match);
-        const incoming = { ...match, source: match.source ?? fallbackSource };
-        const existingIndex = indexByKey.get(key);
-        if (existingIndex === undefined) {
-          indexByKey.set(key, allMatches.length);
-          allMatches.push(incoming);
-        } else {
-          allMatches[existingIndex] = mergeLiveMatch(allMatches[existingIndex], incoming);
-        }
+      const response = await fetch('/api/365scores/live', { cache: 'no-store' });
+      const data = (await response.json()) as {
+        matches?: LiveMatch[];
+        lastUpdated?: string;
+        error?: string;
       };
 
-      if (scores365Res.status === 'fulfilled' && scores365Res.value.ok) {
-        const data = (await scores365Res.value.json()) as { matches?: LiveMatch[] };
-        for (const match of data.matches ?? []) {
-          addOrMerge(match, '365scores');
-        }
+      if (!response.ok) {
+        throw new Error(data.error ?? 'Erro ao carregar jogos ao vivo');
       }
 
-      if (sofascoreRes.status === 'fulfilled' && sofascoreRes.value.ok) {
-        const data = (await sofascoreRes.value.json()) as { matches?: LiveMatch[] };
-        for (const match of data.matches ?? []) {
-          addOrMerge(match, 'sofascore');
-        }
-      }
-
-      setMatches(allMatches);
-      setFetchTick((t) => t + 1);
+      setMatches(data.matches ?? []);
+      const updatedAt = data.lastUpdated ? new Date(data.lastUpdated) : new Date();
+      setLastUpdatedDisplay(
+        new Intl.DateTimeFormat('pt-BR', {
+          timeZone: 'America/Sao_Paulo',
+          hour: '2-digit',
+          minute: '2-digit',
+          second: '2-digit',
+        }).format(updatedAt)
+      );
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Erro desconhecido');
     } finally {
@@ -757,7 +731,7 @@ export function LiveMatches() {
 
   useEffect(() => {
     if (!autoRefresh) return;
-    const interval = setInterval(fetchLiveMatches, 30000);
+    const interval = setInterval(fetchLiveMatches, 25000);
     return () => clearInterval(interval);
   }, [autoRefresh, fetchLiveMatches]);
 
@@ -892,7 +866,7 @@ export function LiveMatches() {
       {lastUpdatedDisplay && (
         <p className="text-xs text-muted-foreground" suppressHydrationWarning>
           Última atualização: {lastUpdatedDisplay}
-          {autoRefresh && ' (atualiza a cada 30s)'}
+          {autoRefresh && ' (atualiza a cada 25s)'}
         </p>
       )}
 
