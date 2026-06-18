@@ -462,11 +462,34 @@ function calculateStoppageFromActualPlayTime(
 
 function parseAddedTimeMinutes(value?: string | number | null) {
   if (value === undefined || value === null) return null;
-  const normalized = String(value).replace(/\s+/g, '');
-  const match = normalized.match(/(?:45|90|105|120)\+(\d{1,2})/);
-  if (!match) return null;
-  const minutes = Number(match[1]);
-  return Number.isFinite(minutes) && minutes > 0 ? minutes : null;
+
+  const raw = String(value);
+  const normalized = raw.replace(/\s+/g, '');
+
+  // A 365Scores pode mostrar o relógio como "46:41 +6".
+  // Nesse caso o acréscimo real anunciado pelo árbitro é +6,
+  // não o tempo corrido depois dos 45.
+  const clockWithAdded = raw.match(/\d{1,3}\s*[:']\s*\d{1,2}\s*\+\s*(\d{1,2})/);
+  if (clockWithAdded) {
+    const minutes = Number(clockWithAdded[1]);
+    return Number.isFinite(minutes) && minutes > 0 ? minutes : null;
+  }
+
+  // Formatos de status: 45+4, 90+6, 105+2, 120+1.
+  const periodBase = normalized.match(/(?:45|90|105|120)\+(\d{1,2})/);
+  if (periodBase) {
+    const minutes = Number(periodBase[1]);
+    return Number.isFinite(minutes) && minutes > 0 ? minutes : null;
+  }
+
+  // Texto simples: "+6", "Acréscimo +6".
+  const standalone = raw.match(/(?:^|\s)\+\s*(\d{1,2})(?:\s|$)/);
+  if (standalone) {
+    const minutes = Number(standalone[1]);
+    return Number.isFinite(minutes) && minutes > 0 ? minutes : null;
+  }
+
+  return null;
 }
 
 function calculateAnnouncedAddedTime(
@@ -808,6 +831,9 @@ async function fetchStoppageInfo(gameId: number, currentPeriod: PeriodKey | null
     const detail = (await detailRes.json()) as {
       game?: {
         actualPlayTime?: Scores365ActualPlayTime;
+        gameTimeDisplay?: string;
+        preciseGameTime?: string;
+        statusText?: string;
         playByPlay?: {
           feedURL?: string;
         };
@@ -819,27 +845,68 @@ async function fetchStoppageInfo(gameId: number, currentPeriod: PeriodKey | null
       currentPeriod
     );
 
+    // Prioriza o relógio detalhado da 365Scores. Exemplo real: "46:41 +6".
+    const clockCandidates = [
+      detail.game?.preciseGameTime,
+      detail.game?.gameTimeDisplay,
+      detail.game?.statusText,
+    ].filter((value): value is string => Boolean(value));
+
+    const announcedFromClock = clockCandidates
+      .map((value) =>
+        calculateAnnouncedAddedTime(
+          parseAddedTimeMinutes(value),
+          '365scores-announced-added-time',
+          'Acréscimo anunciado no relógio da 365Scores.',
+          value,
+          currentPeriod
+        )
+      )
+      .find((value): value is StoppageInfo => Boolean(value));
+
     const feedURL = detail.game?.playByPlay?.feedURL;
-    if (!feedURL) return fromActualPlayTime;
+    if (!feedURL) {
+      if (fromActualPlayTime?.periods || announcedFromClock?.periods) {
+        const mergedPeriods = mergePeriodStoppage(
+          announcedFromClock?.periods,
+          fromActualPlayTime?.periods
+        );
+        return mergedPeriods
+          ? stoppageInfoFromPeriods(
+              mergedPeriods,
+              fromActualPlayTime?.source ?? announcedFromClock?.source ?? '365scores-announced-added-time',
+              fromActualPlayTime ? 'calculated-stoppage' : 'announced-added-time'
+            )
+          : fromActualPlayTime ?? announcedFromClock;
+      }
+      return fromActualPlayTime ?? announcedFromClock;
+    }
 
     const playByPlayRes = await fetchWithTimeout(feedURL, {
       headers: SCORES365_HEADERS,
       cache: 'no-store',
     });
 
-    if (!playByPlayRes.ok) return fromActualPlayTime;
+    if (!playByPlayRes.ok) return fromActualPlayTime ?? announcedFromClock;
 
     const playByPlay = (await playByPlayRes.json()) as { Messages?: PlayByPlayMessage[] };
     const fromPlayByPlay = calculateStoppageInfo(playByPlay.Messages ?? []);
 
-    if (fromPlayByPlay?.periods && fromActualPlayTime?.periods) {
-      const mergedPeriods = mergePeriodStoppage(fromPlayByPlay.periods, fromActualPlayTime.periods);
-      return mergedPeriods
-        ? stoppageInfoFromPeriods(mergedPeriods, fromPlayByPlay.source, 'calculated-stoppage')
-        : fromPlayByPlay;
+    const mergedPeriods = mergePeriodStoppage(
+      announcedFromClock?.periods,
+      mergePeriodStoppage(fromPlayByPlay?.periods, fromActualPlayTime?.periods)
+    );
+
+    if (mergedPeriods) {
+      const hasCalculated = Boolean(fromPlayByPlay || fromActualPlayTime);
+      return stoppageInfoFromPeriods(
+        mergedPeriods,
+        fromPlayByPlay?.source ?? fromActualPlayTime?.source ?? announcedFromClock?.source ?? '365scores-announced-added-time',
+        hasCalculated ? 'calculated-stoppage' : 'announced-added-time'
+      );
     }
 
-    return fromPlayByPlay ?? fromActualPlayTime;
+    return fromPlayByPlay ?? fromActualPlayTime ?? announcedFromClock;
   } catch (err) {
     console.warn('[live/365scores/stoppage] error:', err);
     return undefined;
@@ -855,11 +922,13 @@ async function enrichWithStoppage(matches: LiveMatch[]): Promise<LiveMatch[]> {
       const currentPeriod = inferPeriodFromMinute(match.minute, match.statusText);
       const stoppage = await fetchStoppageInfo(match.id, currentPeriod);
       if (stoppage) {
-        const preferFetched = stoppage.kind === 'calculated-stoppage' || !match.stoppage;
+        // O detalhe do jogo é mais confiável que a lista ao vivo.
+        // Isso evita usar "45+2" como acréscimo real quando o detalhe mostra "46:41 +6".
+        const periodStoppage = mergePeriodStoppage(stoppage.periods, match.periodStoppage);
         enrichedMatches[index] = {
           ...match,
-          stoppage: preferFetched ? stoppage : match.stoppage,
-          periodStoppage: mergePeriodStoppage(match.periodStoppage, stoppage.periods),
+          stoppage,
+          periodStoppage,
         };
       }
     })
@@ -887,7 +956,7 @@ async function fetchFrom365Scores(): Promise<LiveMatch[]> {
         return isFootball && game.statusGroup === 3 && game.homeCompetitor && game.awayCompetitor;
       })
       .map((game) => {
-        const displayMinute = game.gameTimeDisplay ?? game.preciseGameTime ?? game.statusText;
+        const displayMinute = game.preciseGameTime ?? game.gameTimeDisplay ?? game.statusText;
         const currentPeriod = inferPeriodFromMinute(game.gameTime ?? displayMinute, game.statusText);
         const addedTimeMinutes = parseAddedTimeMinutes(displayMinute);
         const calculatedStoppage = calculateStoppageFromActualPlayTime(game.actualPlayTime, currentPeriod);
