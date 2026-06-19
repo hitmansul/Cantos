@@ -467,9 +467,9 @@ function parseAddedTimeMinutes(value?: string | number | null) {
   const normalized = raw.replace(/\s+/g, '');
 
   // A 365Scores pode mostrar o relógio como "46:41 +6".
-  // Nesse caso o acréscimo real anunciado pelo árbitro é +6,
-  // não o tempo corrido depois dos 45.
-  const clockWithAdded = raw.match(/\d{1,3}\s*[:']\s*\d{1,2}\s*\+\s*(\d{1,2})/);
+  // Nesse caso o acréscimo sinalizado pelo árbitro é +6,
+  // não o tempo já corrido dentro do acréscimo depois dos 45.
+  const clockWithAdded = raw.match(/\b\d{1,3}\s*[:']\s*\d{1,2}\s*\+\s*(\d{1,2})\b/);
   if (clockWithAdded) {
     const minutes = Number(clockWithAdded[1]);
     return Number.isFinite(minutes) && minutes > 0 ? minutes : null;
@@ -482,8 +482,8 @@ function parseAddedTimeMinutes(value?: string | number | null) {
     return Number.isFinite(minutes) && minutes > 0 ? minutes : null;
   }
 
-  // Texto simples: "+6", "Acréscimo +6".
-  const standalone = raw.match(/(?:^|\s)\+\s*(\d{1,2})(?:\s|$)/);
+  // Texto simples: "+6", "Acréscimo +6", "added time +6".
+  const standalone = raw.match(/(?:^|[^0-9])\+\s*(\d{1,2})(?:[^0-9]|$)/);
   if (standalone) {
     const minutes = Number(standalone[1]);
     return Number.isFinite(minutes) && minutes > 0 ? minutes : null;
@@ -857,7 +857,7 @@ async function fetchStoppageInfo(gameId: number, currentPeriod: PeriodKey | null
         calculateAnnouncedAddedTime(
           parseAddedTimeMinutes(value),
           '365scores-announced-added-time',
-          'Acréscimo anunciado no relógio da 365Scores.',
+          'Acréscimo sinalizado no relógio da 365Scores.',
           value,
           currentPeriod
         )
@@ -963,7 +963,7 @@ async function fetchFrom365Scores(): Promise<LiveMatch[]> {
         const announcedAddedTime = calculateAnnouncedAddedTime(
           addedTimeMinutes,
           '365scores-announced-added-time',
-          'Acréscimo anunciado no relógio da 365Scores.',
+          'Acréscimo sinalizado no relógio da 365Scores.',
           displayMinute,
           currentPeriod
         );
@@ -1069,7 +1069,7 @@ async function fetchFromSofascore(): Promise<LiveMatch[]> {
           ? ev.time.extra
           : parseAddedTimeMinutes(ev.status?.description),
         'sofascore-announced-added-time',
-        'Acréscimo anunciado pelo relógio/status do SofaScore.',
+        'Acréscimo sinalizado pelo relógio/status do SofaScore.',
         ev.status?.description,
         currentPeriod
       );
@@ -1124,7 +1124,7 @@ async function fetchFromApiFootball(): Promise<LiveMatch[]> {
           ? item.fixture.status.extra
           : parseAddedTimeMinutes(item.fixture.status.short ?? item.fixture.status.long),
         'api-football-announced-added-time',
-        'Acréscimo anunciado pela API-Football.',
+        'Acréscimo sinalizado pela API-Football.',
         item.fixture.status.short ?? item.fixture.status.long,
         currentPeriod
       );
