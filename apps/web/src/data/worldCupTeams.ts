@@ -3,6 +3,16 @@
  * Regra: quando a pergunta/tela for Copa do Mundo, usar somente dados desta competição.
  */
 
+import { getFifaWorldCupSquadsSnapshot } from './fifaWorldCupSquadsSnapshot';
+import type { FifaSquadsData } from '@/lib/fifaWorldCup';
+
+declare global {
+  var fifaWorldCupSquadsSnapshot: FifaSquadsData | undefined;
+}
+
+globalThis.fifaWorldCupSquadsSnapshot ??=
+  getFifaWorldCupSquadsSnapshot() as FifaSquadsData;
+
 export type WorldCupTeam = {
   team: string;
   fifaName?: string;

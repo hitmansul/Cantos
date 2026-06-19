@@ -113,7 +113,7 @@ export function AIChat() {
       .catch(() => setFaqsLoaded(true));
   }, []);
 
-  const suggestions: FaqItem[] | null = null;
+  const suggestions: FaqItem[] | null = faqs.length > 0 ? faqs : null;
   const fallbackSuggestions = faqsLoaded ? FALLBACK_QUESTIONS : null;
 
   const sendMessage = useCallback(

@@ -45,6 +45,20 @@ export type FifaSquadsData = {
 
 import { getFifaWorldCupSquadsSnapshot } from '@/data/fifaWorldCupSquadsSnapshot';
 
+declare global {
+  // Backward-compatible global used by the current AI route while the persistent
+  // World Cup repository becomes the primary source.
+  var fifaWorldCupSquadsSnapshot: FifaSquadsData | undefined;
+}
+
+function ensureFifaSquadsSnapshotGlobal(): void {
+  globalThis.fifaWorldCupSquadsSnapshot ??= structuredClone(
+    getFifaWorldCupSquadsSnapshot() as FifaSquadsData
+  );
+}
+
+ensureFifaSquadsSnapshotGlobal();
+
 type PdfTextItem = {
   str: string;
   transform: number[];
@@ -77,9 +91,9 @@ const TEAM_ALIASES: Record<string, string[]> = {
   Canada: ['canada'],
   Colombia: ['colombia'],
   'Congo DR': ['congo', 'republica democratica do congo'],
-  "Côte D'Ivoire": ['costa do marfim'],
+  "CÃ´te D'Ivoire": ['costa do marfim'],
   Croatia: ['croacia'],
-  Curaçao: ['curacao'],
+  CuraÃ§ao: ['curacao'],
   Czechia: ['republica tcheca', 'tchequia'],
   Ecuador: ['equador'],
   Egypt: ['egito'],
@@ -110,7 +124,7 @@ const TEAM_ALIASES: Record<string, string[]> = {
   Sweden: ['suecia'],
   Switzerland: ['suica'],
   Tunisia: ['tunisia'],
-  Türkiye: ['turquia'],
+  TÃ¼rkiye: ['turquia'],
   Uruguay: ['uruguai'],
   USA: ['eua', 'estados unidos'],
   Uzbekistan: ['uzbequistao'],

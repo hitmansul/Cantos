@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getFifaWorldCupSquads } from '@/lib/fifaWorldCup';
+import { runPostGamePipeline } from '@/lib/pipeline/postGamePipeline';
 
 // Auth
 function isAuthorized(request: NextRequest): boolean {
@@ -55,6 +56,11 @@ export async function GET(request: NextRequest) {
       );
     }
 
+    const postGamePipeline = await runPostGamePipeline().catch((error) => ({
+      success: false,
+      error: error instanceof Error ? error.message : 'Erro ao executar pipeline persistente.',
+    }));
+
     const res = await fetch(`${baseUrl}/api/admin/sync-all`, {
       method: 'POST',
       headers: {
@@ -74,7 +80,13 @@ export async function GET(request: NextRequest) {
     }
 
     const data = await res.json();
-    return NextResponse.json({ success: true, fifa: fifaRefresh, ...data, timestamp: new Date().toISOString() });
+    return NextResponse.json({
+      success: true,
+      fifa: fifaRefresh,
+      persistentPipeline: postGamePipeline,
+      ...data,
+      timestamp: new Date().toISOString(),
+    });
   } catch (error) {
     console.error('[CRON] Erro:', error);
     return NextResponse.json(

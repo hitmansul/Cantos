@@ -7,6 +7,8 @@ export type WorldCupPlayerStats = {
   assists?: number | null;
   yellowCards?: number | null;
   redCards?: number | null;
+  source?: string | null;
+  updatedAt?: string | null;
 };
 
 export const worldCupPlayerStats: WorldCupPlayerStats[] = [];
