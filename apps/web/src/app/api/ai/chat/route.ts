@@ -124,6 +124,13 @@ type AiOddsAlertsResponse = {
   alerts?: AiOddsAlert[];
 };
 
+type AiLiveStatRow = {
+  key: string;
+  label: string;
+  home: string;
+  away: string;
+};
+
 type AiLiveMatch = {
   id: number;
   minute: number | string;
@@ -131,10 +138,18 @@ type AiLiveMatch = {
   competition?: string;
   homeTeam: { name: string; score: number };
   awayTeam: { name: string; score: number };
+  corners?: { home: number; away: number; total: number };
+  liveStats?: AiLiveStatRow[];
+  statsSource?: '365scores' | 'sofascore' | 'api-football';
+  periodStoppage?: {
+    firstHalf?: { actualAddedMinutes?: number | null; predictedAddedMinutes?: number | null; totalStoppedMinutes?: number | null };
+    secondHalf?: { actualAddedMinutes?: number | null; predictedAddedMinutes?: number | null; totalStoppedMinutes?: number | null };
+  };
   stoppage?: {
     totalStoppedMs: number;
     totalStoppedMinutes: number;
     predictedAddedMinutes: number;
+    actualAddedMinutes?: number | null;
     kind?: 'calculated-stoppage' | 'announced-added-time';
     source:
       | '365scores-actual-play-time'
@@ -420,95 +435,83 @@ function worldCupCoverageReply(): string {
   ].join('\n');
 }
 
-function worldCupStatsReply(question: string): string | null {
+async function worldCupStatsReply(question: string): Promise<string | null> {
   if (!isWorldCupQuestion(question)) return null;
 
   const q = normalize(question);
 
-  if (askedWorldCupCoverage(question)) {
-    return worldCupCoverageReply();
-  }
-
-  // Seleções com estatísticas de escanteios
-  if (
-    q.includes('quantas selecoes') &&
-    q.includes('escanteios')
-  ) {
-    const cornerTeams = unique(
-      worldCupCornerStats.map((stats) => stats.team)
-    );
-
+  // Seleções com estatísticas de escanteios.
+  if (q.includes('quantas selecoes') && q.includes('escanteios')) {
+    const cornerTeams = unique(worldCupCornerStats.map((stats) => stats.team));
     return `${cornerTeams.length} seleções da Copa possuem estatísticas de escanteios carregadas na base local.`;
   }
 
-  // Seleções com estatísticas de cartões
-  if (
-    q.includes('quantas selecoes') &&
-    q.includes('cartoes')
-  ) {
-    const cardTeams = unique(
-      worldCupCardStats.map((stats) => stats.team)
-    );
-
+  // Seleções com estatísticas de cartões.
+  if (q.includes('quantas selecoes') && q.includes('cartoes')) {
+    const cardTeams = unique(worldCupCardStats.map((stats) => stats.team));
     return `${cardTeams.length} seleções da Copa possuem estatísticas de cartões carregadas na base local.`;
   }
 
-  // Total de jogadores
+  // Quantidade de seleções cadastradas na base FIFA/local da Copa.
   if (
+    q.includes('quantas selecoes') ||
+    q.includes('quantos times') ||
+    q.includes('total de selecoes') ||
+    q.includes('selecoes existem')
+  ) {
+    const data = await getFifaWorldCupSquads().catch(() => null);
+    const totalTeams = data?.totalTeams ?? worldCupTeams.length;
+    return `Existem ${totalTeams} seleções cadastradas na base da Copa do Mundo.`;
+  }
+
+  const asksPlayersCount =
     q.includes('quantos jogadores') ||
-    q.includes('total de jogadores')
-  ) {
-    const totalPlayers = fifaWorldCupSquadsSnapshot.totalPlayers;
+    q.includes('total de jogadores') ||
+    q.includes('jogadores cadastrados');
+  const asksGoalkeepersCount = q.includes('quantos goleiros');
+  const asksDefendersCount = q.includes('quantos defensores');
+  const asksMidfieldersCount = q.includes('quantos meias');
+  const asksForwardsCount = q.includes('quantos atacantes');
 
-    return `Existem ${totalPlayers} jogadores cadastrados na base oficial da Copa do Mundo.`;
+  if (
+    asksPlayersCount ||
+    asksGoalkeepersCount ||
+    asksDefendersCount ||
+    asksMidfieldersCount ||
+    asksForwardsCount
+  ) {
+    const data = await getFifaWorldCupSquads().catch(() => null);
+    if (!data) {
+      return 'Nao consegui carregar a base oficial FIFA da Copa agora. Tente novamente em instantes.';
+    }
+
+    const players = data.teams.flatMap((team) => team.players);
+
+    if (asksGoalkeepersCount) {
+      const total = players.filter((player) => player.position === 'GK').length;
+      return `Existem ${total} goleiros cadastrados na base oficial FIFA da Copa do Mundo.`;
+    }
+
+    if (asksDefendersCount) {
+      const total = players.filter((player) => player.position === 'DF').length;
+      return `Existem ${total} defensores cadastrados na base oficial FIFA da Copa do Mundo.`;
+    }
+
+    if (asksMidfieldersCount) {
+      const total = players.filter((player) => player.position === 'MF').length;
+      return `Existem ${total} meias cadastrados na base oficial FIFA da Copa do Mundo.`;
+    }
+
+    if (asksForwardsCount) {
+      const total = players.filter((player) => player.position === 'FW').length;
+      return `Existem ${total} atacantes cadastrados na base oficial FIFA da Copa do Mundo.`;
+    }
+
+    return `Existem ${data.totalPlayers} jogadores cadastrados na base oficial FIFA da Copa do Mundo.`;
   }
 
-  // Goleiros
-  if (
-    q.includes('quantos goleiros')
-  ) {
-    const total = fifaWorldCupSquadsSnapshot.teams
-      .flatMap(team => team.players)
-      .filter(player => player.position === 'GK')
-      .length;
-
-    return `Existem ${total} goleiros cadastrados na base oficial da Copa do Mundo.`;
-  }
-
-  // Defensores
-  if (
-    q.includes('quantos defensores')
-  ) {
-    const total = fifaWorldCupSquadsSnapshot.teams
-      .flatMap(team => team.players)
-      .filter(player => player.position === 'DF')
-      .length;
-
-    return `Existem ${total} defensores cadastrados na base oficial da Copa do Mundo.`;
-  }
-
-  // Meias
-  if (
-    q.includes('quantos meias')
-  ) {
-    const total = fifaWorldCupSquadsSnapshot.teams
-      .flatMap(team => team.players)
-      .filter(player => player.position === 'MF')
-      .length;
-
-    return `Existem ${total} meias cadastrados na base oficial da Copa do Mundo.`;
-  }
-
-  // Atacantes
-  if (
-    q.includes('quantos atacantes')
-  ) {
-    const total = fifaWorldCupSquadsSnapshot.teams
-      .flatMap(team => team.players)
-      .filter(player => player.position === 'FW')
-      .length;
-
-    return `Existem ${total} atacantes cadastrados na base oficial da Copa do Mundo.`;
+  if (askedWorldCupCoverage(question)) {
+    return worldCupCoverageReply();
   }
 
   if (askedCards(question)) {
@@ -1671,15 +1674,33 @@ function liveAddedTimeText(match: AiLiveMatch): string {
   const title = `${match.homeTeam.name} ${match.homeTeam.score} x ${match.awayTeam.score} ${match.awayTeam.name} (${match.competition ?? 'ao vivo'}, ${minute})`;
 
   if (!match.stoppage) {
-    return `${title}:\n\n- A fonte trouxe placar e tempo, mas nao enviou tempo de bola parada, paradas/retomadas ou acrescimo anunciado para esse evento agora.\n- Por isso eu nao mostro Previsao de Acrescimo para esse jogo em vez de inventar um numero.`;
+    return `${title}:
+
+- A fonte trouxe placar e tempo, mas nao enviou tempo de bola parada, paradas/retomadas ou acrescimo sinalizado para esse evento agora.
+- Por isso eu nao mostro Previsao de Acrescimo para esse jogo em vez de inventar um numero.`;
   }
 
   if (match.stoppage.kind === 'announced-added-time') {
-    return `${title}:\n\n- Previsao de Acrescimo: +${formatAiMinute(match.stoppage.predictedAddedMinutes)}.\n- Fonte: acrescimo anunciado pela fonte ao vivo.\n- Tempo total de bola parada: nao informado pela API.`;
+    const announced = match.stoppage.actualAddedMinutes ?? match.stoppage.predictedAddedMinutes;
+    return `${title}:
+
+- Acrescimo sinalizado pelo arbitro/fonte: +${formatAiMinute(announced)}.
+- Fonte: acrescimo sinalizado pela fonte ao vivo.
+- Tempo total de bola parada: nao informado pela API.`;
   }
 
-  return `${title}:\n\n- Tempo total de bola parada: ${formatAiMinute(match.stoppage.totalStoppedMinutes)}.\n- Previsao de Acrescimo: +${formatAiMinute(match.stoppage.predictedAddedMinutes)}.\n- Regra: 80% do tempo total parado identificado pela fonte ao vivo.`;
+  const actual = match.stoppage.actualAddedMinutes
+    ? `+${formatAiMinute(match.stoppage.actualAddedMinutes)}`
+    : 'nao informado';
+
+  return `${title}:
+
+- Tempo total de bola parada: ${formatAiMinute(match.stoppage.totalStoppedMinutes)}.
+- Previsao de Acrescimo: +${formatAiMinute(match.stoppage.predictedAddedMinutes)}.
+- Acrescimo sinalizado pelo arbitro/fonte: ${actual}.
+- Regra: 80% do tempo total parado identificado pela fonte ao vivo.`;
 }
+
 
 async function liveAddedTimeReply(question: string, ctx: string, origin: string): Promise<string | null> {
   if (!askedAddedTime(question)) return null;
@@ -1712,10 +1733,140 @@ async function liveAddedTimeReply(question: string, ctx: string, origin: string)
   }
 }
 
+function askedLiveMatchStats(text: string): boolean {
+  const normalized = normalize(text);
+  const asksLive = [
+    'ao vivo',
+    'live',
+    'agora',
+    'em andamento',
+    'tempo real',
+    'neste momento',
+  ].some((term) => normalized.includes(term));
+
+  const asksMatchNumber = [
+    'quantos escanteios',
+    'escanteios tem',
+    'tem quantos escanteios',
+    'quantos corners',
+    'corners tem',
+    'quantos cartoes',
+    'cartoes tem',
+    'estatisticas do jogo',
+    'estatisticas da partida',
+    'numeros do jogo',
+    'placar',
+  ].some((term) => normalized.includes(term));
+
+  return asksLive || asksMatchNumber;
+}
+
+function findLiveStatValue(match: AiLiveMatch, terms: string[]): { home: string; away: string; label: string } | null {
+  const rows = match.liveStats ?? [];
+  const wanted = terms.map(normalize);
+  const row = rows.find((item) => {
+    const key = normalize(`${item.key} ${item.label}`);
+    return wanted.some((term) => key.includes(term));
+  });
+
+  return row ? { home: row.home, away: row.away, label: row.label } : null;
+}
+
+function formatLiveMinute(match: AiLiveMatch): string {
+  return typeof match.minute === 'number' ? `${match.minute}'` : match.minute || match.statusText || 'ao vivo';
+}
+
+function liveMatchStatsText(question: string, match: AiLiveMatch): string {
+  const normalized = normalize(question);
+  const minute = formatLiveMinute(match);
+  const title = `${match.homeTeam.name} ${match.homeTeam.score} x ${match.awayTeam.score} ${match.awayTeam.name} (${match.competition ?? 'ao vivo'}, ${minute})`;
+
+  if (normalized.includes('escanteio') || normalized.includes('corner')) {
+    if (match.corners) {
+      return `${title}:
+
+- Escanteios ao vivo: ${match.homeTeam.name} ${match.corners.home} x ${match.corners.away} ${match.awayTeam.name}.
+- Total de escanteios: ${match.corners.total}.
+- Fonte: ${match.statsSource ?? match.competition ?? 'fonte ao vivo'}.`;
+    }
+
+    const corners = findLiveStatValue(match, ['corner', 'escanteio', 'cornerkicks']);
+    if (corners) {
+      return `${title}:
+
+- ${corners.label}: ${match.homeTeam.name} ${corners.home} x ${corners.away} ${match.awayTeam.name}.
+- Fonte: ${match.statsSource ?? 'fonte ao vivo'}.`;
+    }
+
+    return `${title}:
+
+A fonte ao vivo trouxe placar e tempo, mas ainda não enviou escanteios detalhados deste evento.`;
+  }
+
+  if (normalized.includes('cartao') || normalized.includes('cartoes')) {
+    const yellow = findLiveStatValue(match, ['yellowcards', 'yellow cards', 'cartoes amarelos', 'cartao amarelo']);
+    const red = findLiveStatValue(match, ['redcards', 'red cards', 'cartoes vermelhos', 'cartao vermelho']);
+    if (yellow || red) {
+      return `${title}:
+
+${yellow ? `- Cartões amarelos: ${match.homeTeam.name} ${yellow.home} x ${yellow.away} ${match.awayTeam.name}.` : '- Cartões amarelos: não informado.'}
+${red ? `- Cartões vermelhos: ${match.homeTeam.name} ${red.home} x ${red.away} ${match.awayTeam.name}.` : '- Cartões vermelhos: não informado.'}
+- Fonte: ${match.statsSource ?? 'fonte ao vivo'}.`;
+    }
+
+    return `${title}:
+
+A fonte ao vivo trouxe placar e tempo, mas ainda não enviou cartões detalhados deste evento.`;
+  }
+
+  const mainRows = (match.liveStats ?? []).slice(0, 8);
+  const rowsText = mainRows.length
+    ? mainRows
+        .map((row) => `- ${row.label}: ${match.homeTeam.name} ${row.home} x ${row.away} ${match.awayTeam.name}`)
+        .join('\n')
+    : '- Estatísticas detalhadas ainda não informadas pela fonte.';
+
+  return `${title}:
+
+${rowsText}\n\n${match.corners ? `Escanteios: ${match.homeTeam.name} ${match.corners.home} x ${match.corners.away} ${match.awayTeam.name} (total ${match.corners.total}).` : 'Escanteios: não informado.'}`;
+}
+
+async function liveMatchStatsReply(question: string, ctx: string, origin: string): Promise<string | null> {
+  if (!askedLiveMatchStats(question)) return null;
+
+  try {
+    const response = await fetch(`${origin}/api/365scores/live`, { cache: 'no-store' });
+    if (!response.ok) return null;
+
+    const data = (await response.json()) as AiLiveResponse;
+    const matches = data.matches ?? [];
+    if (matches.length === 0) return 'Não encontrei jogos ao vivo retornados pela fonte neste momento.';
+
+    const scoped = scopeForQuestion(question, ctx);
+    const scored = matches
+      .map((match) => ({ match, score: liveMatchQuestionScore(scoped, match) }))
+      .sort((a, b) => b.score - a.score);
+
+    const selected = scored.find((item) => item.score > 0)?.match;
+    if (!selected) {
+      const sample = matches
+        .slice(0, 5)
+        .map((match) => `${match.homeTeam.name} x ${match.awayTeam.name}`)
+        .join(', ');
+      return `Consultei a fonte ao vivo, mas não localizei esse jogo pelo nome informado. Jogos encontrados agora: ${sample || 'nenhum jogo identificado'}.`;
+    }
+
+    return liveMatchStatsText(question, selected);
+  } catch (error) {
+    console.error('AI live match stats error:', error);
+    return null;
+  }
+}
+
 async function localReply(question: string, ctx: string, origin: string): Promise<string | null> {
   if (askedDataUpdate(question)) return dataUpdateReply();
 
-  const worldCupStats = worldCupStatsReply(question);
+  const worldCupStats = await worldCupStatsReply(question);
   if (worldCupStats) return worldCupStats;
 
   if (askedCoverage(question)) return coverageReply();
@@ -1725,6 +1876,9 @@ async function localReply(question: string, ctx: string, origin: string): Promis
 
   const odds = await oddsAlertsReply(question, origin);
   if (odds) return odds;
+
+  const liveStats = await liveMatchStatsReply(question, ctx, origin);
+  if (liveStats) return liveStats;
   const liveAdded = await liveAddedTimeReply(question, ctx, origin);
   if (liveAdded) return liveAdded;
   if (askedAddedTime(question)) return addedTimeReply(question, ctx);
@@ -1737,7 +1891,7 @@ async function localReply(question: string, ctx: string, origin: string): Promis
   if (isFollowUpQuestion(question) && ctx) {
     const contextualQuestion = `${ctx} ${question}`;
     if (askedDataUpdate(ctx)) return dataUpdateReply();
-    const contextualWorldCupStats = worldCupStatsReply(contextualQuestion);
+    const contextualWorldCupStats = await worldCupStatsReply(contextualQuestion);
     if (contextualWorldCupStats) return contextualWorldCupStats;
 
     const contextualSquad = await worldCupSquadReply(contextualQuestion, '');
@@ -1746,6 +1900,8 @@ async function localReply(question: string, ctx: string, origin: string): Promis
       const contextualOdds = await oddsAlertsReply(contextualQuestion, origin);
       if (contextualOdds) return contextualOdds;
     }
+    const contextualLiveStats = await liveMatchStatsReply(contextualQuestion, '', origin);
+    if (contextualLiveStats) return contextualLiveStats;
     if (askedAddedTime(ctx)) {
       const contextualLiveAdded = await liveAddedTimeReply(contextualQuestion, '', origin);
       if (contextualLiveAdded) return contextualLiveAdded;
