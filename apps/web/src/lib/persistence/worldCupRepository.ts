@@ -125,8 +125,10 @@ function nullableDate(value: string | null | undefined): string | null {
 function nullableTimestamp(value: string | null | undefined): string | null {
   const text = cleanText(value);
   if (!text) return null;
+
   const timestamp = Date.parse(text);
   if (!Number.isFinite(timestamp)) return null;
+
   return new Date(timestamp).toISOString();
 }
 
@@ -151,23 +153,25 @@ function cleanJson<T>(value: T): T {
 }
 
 function normalizeText(value: unknown): string {
-  return cleanText(value)
-    ?.toLowerCase()
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[^a-z0-9]+/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim() ?? '';
+  return (
+    cleanText(value)
+      ?.toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^a-z0-9]+/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim() ?? ''
+  );
 }
 
 const TEAM_ALIAS_TO_FIFA_NAME: Record<string, string> = {
   brasil: 'brazil',
-  estados unidos: 'usa',
+  'estados unidos': 'usa',
   eua: 'usa',
   mexico: 'mexico',
-  coreia do sul: 'korea republic',
+  'coreia do sul': 'korea republic',
   coreia: 'korea republic',
-  africa do sul: 'south africa',
+  'africa do sul': 'south africa',
   alemanha: 'germany',
   espanha: 'spain',
   franca: 'france',
@@ -183,12 +187,12 @@ const TEAM_ALIAS_TO_FIFA_NAME: Record<string, string> = {
   ira: 'ir iran',
   iran: 'ir iran',
   catar: 'qatar',
-  arabia saudita: 'saudi arabia',
-  costa do marfim: "cote d'ivoire",
+  'arabia saudita': 'saudi arabia',
+  'costa do marfim': "cote d'ivoire",
   congo: 'congo dr',
-  republica democratica do congo: 'congo dr',
+  'republica democratica do congo': 'congo dr',
   holanda: 'netherlands',
-  paises baixos: 'netherlands',
+  'paises baixos': 'netherlands',
   turquia: 'turkiye',
   egito: 'egypt',
   uruguai: 'uruguay',
@@ -198,7 +202,7 @@ const TEAM_ALIAS_TO_FIFA_NAME: Record<string, string> = {
   panama: 'panama',
   canada: 'canada',
   australia: 'australia',
-  nova zelandia: 'new zealand',
+  'nova zelandia': 'new zealand',
   uzbequistao: 'uzbekistan',
   tunisia: 'tunisia',
   argelia: 'algeria',
@@ -212,10 +216,10 @@ const TEAM_ALIAS_TO_FIFA_NAME: Record<string, string> = {
   jordania: 'jordan',
   curacao: 'curacao',
   tchequia: 'czechia',
-  republica tcheca: 'czechia',
-  cabo verde: 'cabo verde',
+  'republica tcheca': 'czechia',
+  'cabo verde': 'cabo verde',
   bosnia: 'bosnia and herzegovina',
-  bosnia e herzegovina: 'bosnia and herzegovina',
+  'bosnia e herzegovina': 'bosnia and herzegovina',
 };
 
 function canonicalTeamKey(value: unknown): string {
@@ -361,7 +365,7 @@ async function resolveWorldCupTeamId(
   const targetKey = canonicalTeamKey(teamName);
 
   const teams = await sql`
-    SELECT id, name, fifa_code, source_payload
+    SELECT id, name, fifa_code
     FROM world_cup_teams
     WHERE competition_key = ${WORLD_CUP_2026_KEY}
   `;
@@ -466,6 +470,7 @@ export async function upsertWorldCupMatch(input: WorldCupMatchInput): Promise<nu
   const homeTeamId = await resolveWorldCupTeamId(input.homeTeamName, input.sourceKey, input.homeExternalId);
   const awayTeamId = await resolveWorldCupTeamId(input.awayTeamName, input.sourceKey, input.awayExternalId);
   const payload = cleanJson(input.sourcePayload ?? input);
+  const sourceUpdatedAt = nullableTimestamp(input.sourceUpdatedAt) ?? new Date().toISOString();
 
   const existing = await sql`
     SELECT id
@@ -497,7 +502,7 @@ export async function upsertWorldCupMatch(input: WorldCupMatchInput): Promise<nu
         away_score = ${cleanInteger(input.awayScore)},
         source_key = ${input.sourceKey},
         source_payload = ${JSON.stringify(payload)}::jsonb,
-        source_updated_at = ${nullableTimestamp(input.sourceUpdatedAt) ?? new Date().toISOString()},
+        source_updated_at = ${sourceUpdatedAt},
         updated_at = NOW()
       WHERE id = ${Number(existing[0].id)}
       RETURNING id
@@ -551,7 +556,7 @@ export async function upsertWorldCupMatch(input: WorldCupMatchInput): Promise<nu
       ${cleanInteger(input.awayScore)},
       ${input.sourceKey},
       ${JSON.stringify(payload)}::jsonb,
-      ${nullableTimestamp(input.sourceUpdatedAt) ?? new Date().toISOString()}
+      ${sourceUpdatedAt}
     )
     RETURNING id
   `;
@@ -573,11 +578,16 @@ export async function replaceWorldCupMatchStatistics(
   `;
 
   let inserted = 0;
+
   for (const stat of statistics) {
-    const teamId = stat.teamId ?? (stat.teamName ? await resolveWorldCupTeamId(stat.teamName, stat.sourceKey, stat.teamExternalId) : null);
+    const teamId =
+      stat.teamId ??
+      (stat.teamName ? await resolveWorldCupTeamId(stat.teamName, stat.sourceKey, stat.teamExternalId) : null);
+
     if (!teamId) continue;
 
     const payload = cleanJson(stat.sourcePayload ?? stat);
+
     await sql`
       INSERT INTO world_cup_match_statistics (
         match_id,
@@ -604,6 +614,7 @@ export async function replaceWorldCupMatchStatistics(
         ${nullableTimestamp(stat.sourceUpdatedAt) ?? new Date().toISOString()}
       )
     `;
+
     inserted += 1;
   }
 
@@ -624,11 +635,13 @@ export async function replaceWorldCupPlayerStatistics(
   `;
 
   let inserted = 0;
+
   for (const stat of statistics) {
     const playerId = await findWorldCupPlayerId(stat.playerName, stat.teamName, stat.shirtNumber);
     if (!playerId) continue;
 
     const payload = cleanJson(stat.sourcePayload ?? stat);
+
     await sql`
       INSERT INTO world_cup_player_statistics (
         match_id,
@@ -655,6 +668,7 @@ export async function replaceWorldCupPlayerStatistics(
         ${nullableTimestamp(stat.sourceUpdatedAt) ?? new Date().toISOString()}
       )
     `;
+
     inserted += 1;
   }
 
@@ -675,6 +689,7 @@ export async function replaceWorldCupStandings(
   `;
 
   let inserted = 0;
+
   for (const standing of standings) {
     const teamId = await resolveWorldCupTeamId(standing.teamName, standing.sourceKey, standing.teamExternalId);
     const payload = cleanJson(standing.sourcePayload ?? standing);
@@ -722,6 +737,7 @@ export async function replaceWorldCupStandings(
         ${nullableTimestamp(standing.sourceUpdatedAt) ?? new Date().toISOString()}
       )
     `;
+
     inserted += 1;
   }
 
