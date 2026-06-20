@@ -11,30 +11,51 @@ export type WorldCupImportResult = {
   sourceUpdatedAt: string | null;
 };
 
-function nullableText(value: string | null | undefined): string | null {
-  if (!value) return null;
-  const trimmed = value.trim();
-  return trimmed.length > 0 ? trimmed : null;
+function cleanText(value: unknown): string | null {
+  if (value === null || value === undefined) return null;
+
+  const cleaned = String(value)
+    .replace(/\u0000/g, '')
+    .normalize('NFC')
+    .trim();
+
+  return cleaned.length > 0 ? cleaned : null;
+}
+
+function cleanNumber(value: unknown): number | null {
+  if (value === null || value === undefined || value === '') return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
 }
 
 function nullableDate(value: string | null | undefined): string | null {
-  const text = nullableText(value);
+  const text = cleanText(value);
   if (!text) return null;
+
   const timestamp = Date.parse(text);
   if (!Number.isFinite(timestamp)) return null;
+
   return new Date(timestamp).toISOString().slice(0, 10);
 }
 
 function calculateAge(dateOfBirth: string | null, now = new Date()): number | null {
   if (!dateOfBirth) return null;
+
   const birth = new Date(`${dateOfBirth}T00:00:00Z`);
   if (!Number.isFinite(birth.getTime())) return null;
+
   let age = now.getUTCFullYear() - birth.getUTCFullYear();
   const monthDiff = now.getUTCMonth() - birth.getUTCMonth();
+
   if (monthDiff < 0 || (monthDiff === 0 && now.getUTCDate() < birth.getUTCDate())) {
     age -= 1;
   }
+
   return age >= 0 ? age : null;
+}
+
+function cleanJson<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value).replace(/\\u0000|\u0000/g, '')) as T;
 }
 
 async function ensureWorldCupCompetition(): Promise<void> {
@@ -76,10 +97,10 @@ async function ensureWorldCupCompetition(): Promise<void> {
 }
 
 async function upsertTeam(team: FifaSquad, sourceUpdatedAt: string | null): Promise<number> {
-  const payload = JSON.stringify({
-    code: team.code,
-    page: team.page,
-    coach: team.coach ?? null,
+  const payload = cleanJson({
+    code: cleanText(team.code),
+    page: cleanText(team.page),
+    coach: cleanText(team.coach),
   });
 
   const rows = await sql`
@@ -93,10 +114,10 @@ async function upsertTeam(team: FifaSquad, sourceUpdatedAt: string | null): Prom
     )
     VALUES (
       ${WORLD_CUP_2026_KEY},
-      ${nullableText(team.code)},
-      ${team.team},
+      ${cleanText(team.code)},
+      ${cleanText(team.team) ?? 'Selecao sem nome'},
       'fifa',
-      ${payload}::jsonb,
+      ${JSON.stringify(payload)}::jsonb,
       ${sourceUpdatedAt}
     )
     ON CONFLICT (competition_key, fifa_code) DO UPDATE SET
@@ -116,11 +137,12 @@ async function upsertPlayer(
   sourceUpdatedAt: string | null
 ): Promise<void> {
   const dateOfBirth = nullableDate(player.dateOfBirth);
-  const payload = JSON.stringify({
-    firstName: player.firstName,
-    lastName: player.lastName,
-    shirtName: player.shirtName,
-    rawDateOfBirth: player.dateOfBirth,
+
+  const payload = cleanJson({
+    firstName: cleanText(player.firstName),
+    lastName: cleanText(player.lastName),
+    shirtName: cleanText(player.shirtName),
+    rawDateOfBirth: cleanText(player.dateOfBirth),
   });
 
   await sql`
@@ -139,15 +161,15 @@ async function upsertPlayer(
     )
     VALUES (
       ${teamId},
-      ${player.number},
-      ${player.playerName},
-      ${player.position},
-      ${nullableText(player.club)},
-      ${player.heightCm},
+      ${cleanNumber(player.number)},
+      ${cleanText(player.playerName) ?? 'Jogador sem nome'},
+      ${cleanText(player.position)},
+      ${cleanText(player.club)},
+      ${cleanNumber(player.heightCm)},
       ${dateOfBirth},
       ${calculateAge(dateOfBirth)},
       'fifa',
-      ${payload}::jsonb,
+      ${JSON.stringify(payload)}::jsonb,
       ${sourceUpdatedAt}
     )
     ON CONFLICT (team_id, shirt_number, name) DO UPDATE SET
@@ -175,6 +197,7 @@ export async function upsertFifaWorldCupSquads(
   for (const team of teams) {
     const teamId = await upsertTeam(team, sourceUpdatedAt);
     teamsUpserted += 1;
+
     for (const player of team.players) {
       await upsertPlayer(teamId, player, sourceUpdatedAt);
       playersUpserted += 1;
@@ -191,6 +214,7 @@ export async function upsertFifaWorldCupSquads(
 
 export async function getWorldCupDatabaseSummary() {
   assertPersistentDatabaseConfigured();
+
   const rows = await sql`
     SELECT
       COUNT(DISTINCT t.id)::int AS teams,
@@ -203,5 +227,6 @@ export async function getWorldCupDatabaseSummary() {
     LEFT JOIN world_cup_players p ON p.team_id = t.id
     WHERE t.competition_key = ${WORLD_CUP_2026_KEY}
   `;
+
   return rows[0] ?? null;
 }
