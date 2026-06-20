@@ -11,6 +11,85 @@ export type WorldCupImportResult = {
   sourceUpdatedAt: string | null;
 };
 
+export type WorldCupMatchInput = {
+  fixtureKey: string;
+  fifaMatchId?: string | null;
+  scores365EventId?: string | number | null;
+  apiFootballFixtureId?: string | number | null;
+  homeTeamName: string;
+  awayTeamName: string;
+  homeExternalId?: string | number | null;
+  awayExternalId?: string | number | null;
+  stage?: string | null;
+  groupName?: string | null;
+  roundName?: string | null;
+  status?: string | null;
+  kickoffAt?: string | null;
+  venue?: string | null;
+  referee?: string | null;
+  homeScore?: number | null;
+  awayScore?: number | null;
+  sourceKey: string;
+  sourcePayload?: unknown;
+  sourceUpdatedAt?: string | null;
+};
+
+export type WorldCupStandingInput = {
+  teamName: string;
+  teamExternalId?: string | number | null;
+  groupName?: string | null;
+  position?: number | null;
+  played?: number | null;
+  won?: number | null;
+  drawn?: number | null;
+  lost?: number | null;
+  goalsFor?: number | null;
+  goalsAgainst?: number | null;
+  goalDifference?: number | null;
+  points?: number | null;
+  livePoints?: number | null;
+  liveGoalDifference?: number | null;
+  sourceKey: string;
+  sourcePayload?: unknown;
+  sourceUpdatedAt?: string | null;
+};
+
+export type WorldCupStatisticInput = {
+  teamName?: string | null;
+  teamExternalId?: string | number | null;
+  teamSide?: 'home' | 'away' | null;
+  teamId?: number | null;
+  period?: string | null;
+  metricKey: string;
+  metricName: string;
+  valueNumeric?: number | null;
+  valueText?: string | null;
+  sourceKey: string;
+  sourcePayload?: unknown;
+  sourceUpdatedAt?: string | null;
+};
+
+export type WorldCupPlayerStatisticInput = {
+  playerName: string;
+  teamName?: string | null;
+  shirtNumber?: number | null;
+  period?: string | null;
+  metricKey: string;
+  metricName: string;
+  valueNumeric?: number | null;
+  valueText?: string | null;
+  sourceKey: string;
+  sourcePayload?: unknown;
+  sourceUpdatedAt?: string | null;
+};
+
+export type WorldCupPersistentImportResult = {
+  matchesUpserted: number;
+  matchStatisticsInserted: number;
+  playerStatisticsInserted: number;
+  standingsUpserted: number;
+};
+
 function cleanText(value: unknown): string | null {
   if (value === null || value === undefined) return null;
 
@@ -24,8 +103,13 @@ function cleanText(value: unknown): string | null {
 
 function cleanNumber(value: unknown): number | null {
   if (value === null || value === undefined || value === '') return null;
-  const number = Number(value);
+  const number = Number(String(value).replace('%', '').replace(',', '.').trim());
   return Number.isFinite(number) ? number : null;
+}
+
+function cleanInteger(value: unknown): number | null {
+  const number = cleanNumber(value);
+  return number === null ? null : Math.trunc(number);
 }
 
 function nullableDate(value: string | null | undefined): string | null {
@@ -36,6 +120,14 @@ function nullableDate(value: string | null | undefined): string | null {
   if (!Number.isFinite(timestamp)) return null;
 
   return new Date(timestamp).toISOString().slice(0, 10);
+}
+
+function nullableTimestamp(value: string | null | undefined): string | null {
+  const text = cleanText(value);
+  if (!text) return null;
+  const timestamp = Date.parse(text);
+  if (!Number.isFinite(timestamp)) return null;
+  return new Date(timestamp).toISOString();
 }
 
 function calculateAge(dateOfBirth: string | null, now = new Date()): number | null {
@@ -55,7 +147,84 @@ function calculateAge(dateOfBirth: string | null, now = new Date()): number | nu
 }
 
 function cleanJson<T>(value: T): T {
-  return JSON.parse(JSON.stringify(value).replace(/\\u0000|\u0000/g, '')) as T;
+  return JSON.parse(JSON.stringify(value ?? null).replace(/\\u0000|\u0000/g, '')) as T;
+}
+
+function normalizeText(value: unknown): string {
+  return cleanText(value)
+    ?.toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim() ?? '';
+}
+
+const TEAM_ALIAS_TO_FIFA_NAME: Record<string, string> = {
+  brasil: 'brazil',
+  estados unidos: 'usa',
+  eua: 'usa',
+  mexico: 'mexico',
+  coreia do sul: 'korea republic',
+  coreia: 'korea republic',
+  africa do sul: 'south africa',
+  alemanha: 'germany',
+  espanha: 'spain',
+  franca: 'france',
+  inglaterra: 'england',
+  argentina: 'argentina',
+  portugal: 'portugal',
+  marrocos: 'morocco',
+  haiti: 'haiti',
+  escocia: 'scotland',
+  suica: 'switzerland',
+  suecia: 'sweden',
+  japao: 'japan',
+  ira: 'ir iran',
+  iran: 'ir iran',
+  catar: 'qatar',
+  arabia saudita: 'saudi arabia',
+  costa do marfim: "cote d'ivoire",
+  congo: 'congo dr',
+  republica democratica do congo: 'congo dr',
+  holanda: 'netherlands',
+  paises baixos: 'netherlands',
+  turquia: 'turkiye',
+  egito: 'egypt',
+  uruguai: 'uruguay',
+  paraguai: 'paraguay',
+  colombia: 'colombia',
+  equador: 'ecuador',
+  panama: 'panama',
+  canada: 'canada',
+  australia: 'australia',
+  nova zelandia: 'new zealand',
+  uzbequistao: 'uzbekistan',
+  tunisia: 'tunisia',
+  argelia: 'algeria',
+  gana: 'ghana',
+  senegal: 'senegal',
+  noruega: 'norway',
+  belgica: 'belgium',
+  croacia: 'croatia',
+  austria: 'austria',
+  iraque: 'iraq',
+  jordania: 'jordan',
+  curacao: 'curacao',
+  tchequia: 'czechia',
+  republica tcheca: 'czechia',
+  cabo verde: 'cabo verde',
+  bosnia: 'bosnia and herzegovina',
+  bosnia e herzegovina: 'bosnia and herzegovina',
+};
+
+function canonicalTeamKey(value: unknown): string {
+  const normalized = normalizeText(value);
+  return TEAM_ALIAS_TO_FIFA_NAME[normalized] ?? normalized;
+}
+
+function slug(value: unknown): string {
+  return normalizeText(value).replace(/\s+/g, '_') || 'unknown';
 }
 
 async function ensureWorldCupCompetition(): Promise<void> {
@@ -99,8 +268,8 @@ async function ensureWorldCupCompetition(): Promise<void> {
 async function upsertTeam(team: FifaSquad, sourceUpdatedAt: string | null): Promise<number> {
   const payload = cleanJson({
     code: cleanText(team.code),
-    page: cleanText(team.page),
-    coach: cleanText(team.coach),
+    page: team.page,
+    coach: team.coach ?? null,
   });
 
   const rows = await sql`
@@ -118,7 +287,7 @@ async function upsertTeam(team: FifaSquad, sourceUpdatedAt: string | null): Prom
       ${cleanText(team.team) ?? 'Selecao sem nome'},
       'fifa',
       ${JSON.stringify(payload)}::jsonb,
-      ${sourceUpdatedAt}
+      ${nullableTimestamp(sourceUpdatedAt)}
     )
     ON CONFLICT (competition_key, fifa_code) DO UPDATE SET
       name = EXCLUDED.name,
@@ -161,16 +330,16 @@ async function upsertPlayer(
     )
     VALUES (
       ${teamId},
-      ${cleanNumber(player.number)},
+      ${cleanInteger(player.number)},
       ${cleanText(player.playerName) ?? 'Jogador sem nome'},
       ${cleanText(player.position)},
       ${cleanText(player.club)},
-      ${cleanNumber(player.heightCm)},
+      ${cleanInteger(player.heightCm)},
       ${dateOfBirth},
       ${calculateAge(dateOfBirth)},
       'fifa',
       ${JSON.stringify(payload)}::jsonb,
-      ${sourceUpdatedAt}
+      ${nullableTimestamp(sourceUpdatedAt)}
     )
     ON CONFLICT (team_id, shirt_number, name) DO UPDATE SET
       position = EXCLUDED.position,
@@ -182,6 +351,83 @@ async function upsertPlayer(
       source_updated_at = EXCLUDED.source_updated_at,
       updated_at = NOW()
   `;
+}
+
+async function resolveWorldCupTeamId(
+  teamName: string,
+  sourceKey: string,
+  externalId?: string | number | null
+): Promise<number> {
+  const targetKey = canonicalTeamKey(teamName);
+
+  const teams = await sql`
+    SELECT id, name, fifa_code, source_payload
+    FROM world_cup_teams
+    WHERE competition_key = ${WORLD_CUP_2026_KEY}
+  `;
+
+  const matched = teams.find((row) => {
+    const nameKey = canonicalTeamKey(row.name);
+    const codeKey = normalizeText(row.fifa_code);
+    return nameKey === targetKey || codeKey === targetKey || nameKey.includes(targetKey) || targetKey.includes(nameKey);
+  });
+
+  if (matched?.id) return Number(matched.id);
+
+  const fallbackCode = `${sourceKey.toUpperCase().replace(/[^A-Z0-9]/g, '')}_${externalId ?? slug(teamName)}`;
+  const payload = cleanJson({ externalId: externalId ?? null, originalName: teamName });
+
+  const rows = await sql`
+    INSERT INTO world_cup_teams (
+      competition_key,
+      fifa_code,
+      name,
+      source_key,
+      source_payload,
+      source_updated_at
+    )
+    VALUES (
+      ${WORLD_CUP_2026_KEY},
+      ${fallbackCode},
+      ${cleanText(teamName) ?? 'Selecao sem nome'},
+      ${sourceKey},
+      ${JSON.stringify(payload)}::jsonb,
+      NOW()
+    )
+    ON CONFLICT (competition_key, fifa_code) DO UPDATE SET
+      name = EXCLUDED.name,
+      source_payload = EXCLUDED.source_payload,
+      source_updated_at = EXCLUDED.source_updated_at,
+      updated_at = NOW()
+    RETURNING id
+  `;
+
+  return Number(rows[0]?.id);
+}
+
+async function findWorldCupPlayerId(
+  playerName: string,
+  teamName?: string | null,
+  shirtNumber?: number | null
+): Promise<number | null> {
+  const targetPlayer = normalizeText(playerName);
+  const targetTeam = teamName ? canonicalTeamKey(teamName) : null;
+
+  const rows = await sql`
+    SELECT p.id, p.name, p.shirt_number, t.name AS team_name
+    FROM world_cup_players p
+    JOIN world_cup_teams t ON t.id = p.team_id
+    WHERE t.competition_key = ${WORLD_CUP_2026_KEY}
+  `;
+
+  const matched = rows.find((row) => {
+    const samePlayer = normalizeText(row.name) === targetPlayer;
+    const sameNumber = shirtNumber ? Number(row.shirt_number) === shirtNumber : true;
+    const sameTeam = targetTeam ? canonicalTeamKey(row.team_name) === targetTeam : true;
+    return samePlayer && sameNumber && sameTeam;
+  });
+
+  return matched?.id ? Number(matched.id) : null;
 }
 
 export async function upsertFifaWorldCupSquads(
@@ -212,6 +458,276 @@ export async function upsertFifaWorldCupSquads(
   };
 }
 
+export async function upsertWorldCupMatch(input: WorldCupMatchInput): Promise<number> {
+  assertPersistentDatabaseConfigured();
+  await ensureWorldCupCompetition();
+
+  const fixtureKey = cleanText(input.fixtureKey) ?? `${slug(input.homeTeamName)}_${slug(input.awayTeamName)}_${Date.now()}`;
+  const homeTeamId = await resolveWorldCupTeamId(input.homeTeamName, input.sourceKey, input.homeExternalId);
+  const awayTeamId = await resolveWorldCupTeamId(input.awayTeamName, input.sourceKey, input.awayExternalId);
+  const payload = cleanJson(input.sourcePayload ?? input);
+
+  const existing = await sql`
+    SELECT id
+    FROM world_cup_matches
+    WHERE competition_key = ${WORLD_CUP_2026_KEY}
+      AND fixture_key = ${fixtureKey}
+    LIMIT 1
+  `;
+
+  if (existing[0]?.id) {
+    const rows = await sql`
+      UPDATE world_cup_matches
+      SET
+        fifa_match_id = COALESCE(${cleanText(input.fifaMatchId)}, fifa_match_id),
+        scores365_event_id = COALESCE(${cleanText(input.scores365EventId)}, scores365_event_id),
+        api_football_fixture_id = COALESCE(${cleanText(input.apiFootballFixtureId)}, api_football_fixture_id),
+        home_team_id = ${homeTeamId},
+        away_team_id = ${awayTeamId},
+        home_team_name = ${cleanText(input.homeTeamName) ?? 'Mandante'},
+        away_team_name = ${cleanText(input.awayTeamName) ?? 'Visitante'},
+        stage = ${cleanText(input.stage)},
+        group_name = ${cleanText(input.groupName)},
+        round_name = ${cleanText(input.roundName)},
+        status = ${cleanText(input.status) ?? 'unknown'},
+        kickoff_at = ${nullableTimestamp(input.kickoffAt)},
+        venue = ${cleanText(input.venue)},
+        referee = ${cleanText(input.referee)},
+        home_score = ${cleanInteger(input.homeScore)},
+        away_score = ${cleanInteger(input.awayScore)},
+        source_key = ${input.sourceKey},
+        source_payload = ${JSON.stringify(payload)}::jsonb,
+        source_updated_at = ${nullableTimestamp(input.sourceUpdatedAt) ?? new Date().toISOString()},
+        updated_at = NOW()
+      WHERE id = ${Number(existing[0].id)}
+      RETURNING id
+    `;
+
+    return Number(rows[0]?.id);
+  }
+
+  const rows = await sql`
+    INSERT INTO world_cup_matches (
+      competition_key,
+      fixture_key,
+      fifa_match_id,
+      scores365_event_id,
+      api_football_fixture_id,
+      home_team_id,
+      away_team_id,
+      home_team_name,
+      away_team_name,
+      stage,
+      group_name,
+      round_name,
+      status,
+      kickoff_at,
+      venue,
+      referee,
+      home_score,
+      away_score,
+      source_key,
+      source_payload,
+      source_updated_at
+    )
+    VALUES (
+      ${WORLD_CUP_2026_KEY},
+      ${fixtureKey},
+      ${cleanText(input.fifaMatchId)},
+      ${cleanText(input.scores365EventId)},
+      ${cleanText(input.apiFootballFixtureId)},
+      ${homeTeamId},
+      ${awayTeamId},
+      ${cleanText(input.homeTeamName) ?? 'Mandante'},
+      ${cleanText(input.awayTeamName) ?? 'Visitante'},
+      ${cleanText(input.stage)},
+      ${cleanText(input.groupName)},
+      ${cleanText(input.roundName)},
+      ${cleanText(input.status) ?? 'unknown'},
+      ${nullableTimestamp(input.kickoffAt)},
+      ${cleanText(input.venue)},
+      ${cleanText(input.referee)},
+      ${cleanInteger(input.homeScore)},
+      ${cleanInteger(input.awayScore)},
+      ${input.sourceKey},
+      ${JSON.stringify(payload)}::jsonb,
+      ${nullableTimestamp(input.sourceUpdatedAt) ?? new Date().toISOString()}
+    )
+    RETURNING id
+  `;
+
+  return Number(rows[0]?.id);
+}
+
+export async function replaceWorldCupMatchStatistics(
+  matchId: number,
+  statistics: WorldCupStatisticInput[],
+  sourceKey = '365scores'
+): Promise<number> {
+  assertPersistentDatabaseConfigured();
+
+  await sql`
+    DELETE FROM world_cup_match_statistics
+    WHERE match_id = ${matchId}
+      AND source_key = ${sourceKey}
+  `;
+
+  let inserted = 0;
+  for (const stat of statistics) {
+    const teamId = stat.teamId ?? (stat.teamName ? await resolveWorldCupTeamId(stat.teamName, stat.sourceKey, stat.teamExternalId) : null);
+    if (!teamId) continue;
+
+    const payload = cleanJson(stat.sourcePayload ?? stat);
+    await sql`
+      INSERT INTO world_cup_match_statistics (
+        match_id,
+        team_id,
+        period,
+        metric_key,
+        metric_name,
+        value_numeric,
+        value_text,
+        source_key,
+        source_payload,
+        source_updated_at
+      )
+      VALUES (
+        ${matchId},
+        ${teamId},
+        ${cleanText(stat.period) ?? 'match'},
+        ${cleanText(stat.metricKey) ?? 'unknown'},
+        ${cleanText(stat.metricName) ?? 'Estatística'},
+        ${cleanNumber(stat.valueNumeric)},
+        ${cleanText(stat.valueText)},
+        ${stat.sourceKey},
+        ${JSON.stringify(payload)}::jsonb,
+        ${nullableTimestamp(stat.sourceUpdatedAt) ?? new Date().toISOString()}
+      )
+    `;
+    inserted += 1;
+  }
+
+  return inserted;
+}
+
+export async function replaceWorldCupPlayerStatistics(
+  matchId: number,
+  statistics: WorldCupPlayerStatisticInput[],
+  sourceKey = '365scores'
+): Promise<number> {
+  assertPersistentDatabaseConfigured();
+
+  await sql`
+    DELETE FROM world_cup_player_statistics
+    WHERE match_id = ${matchId}
+      AND source_key = ${sourceKey}
+  `;
+
+  let inserted = 0;
+  for (const stat of statistics) {
+    const playerId = await findWorldCupPlayerId(stat.playerName, stat.teamName, stat.shirtNumber);
+    if (!playerId) continue;
+
+    const payload = cleanJson(stat.sourcePayload ?? stat);
+    await sql`
+      INSERT INTO world_cup_player_statistics (
+        match_id,
+        player_id,
+        period,
+        metric_key,
+        metric_name,
+        value_numeric,
+        value_text,
+        source_key,
+        source_payload,
+        source_updated_at
+      )
+      VALUES (
+        ${matchId},
+        ${playerId},
+        ${cleanText(stat.period) ?? 'match'},
+        ${cleanText(stat.metricKey) ?? 'unknown'},
+        ${cleanText(stat.metricName) ?? 'Estatística'},
+        ${cleanNumber(stat.valueNumeric)},
+        ${cleanText(stat.valueText)},
+        ${stat.sourceKey},
+        ${JSON.stringify(payload)}::jsonb,
+        ${nullableTimestamp(stat.sourceUpdatedAt) ?? new Date().toISOString()}
+      )
+    `;
+    inserted += 1;
+  }
+
+  return inserted;
+}
+
+export async function replaceWorldCupStandings(
+  standings: WorldCupStandingInput[],
+  sourceKey = '365scores'
+): Promise<number> {
+  assertPersistentDatabaseConfigured();
+  await ensureWorldCupCompetition();
+
+  await sql`
+    DELETE FROM world_cup_standings
+    WHERE competition_key = ${WORLD_CUP_2026_KEY}
+      AND source_key = ${sourceKey}
+  `;
+
+  let inserted = 0;
+  for (const standing of standings) {
+    const teamId = await resolveWorldCupTeamId(standing.teamName, standing.sourceKey, standing.teamExternalId);
+    const payload = cleanJson(standing.sourcePayload ?? standing);
+    const goalsFor = cleanInteger(standing.goalsFor) ?? 0;
+    const goalsAgainst = cleanInteger(standing.goalsAgainst) ?? 0;
+    const goalDifference = cleanInteger(standing.goalDifference) ?? goalsFor - goalsAgainst;
+
+    await sql`
+      INSERT INTO world_cup_standings (
+        competition_key,
+        team_id,
+        group_name,
+        position,
+        played,
+        won,
+        drawn,
+        lost,
+        goals_for,
+        goals_against,
+        goal_difference,
+        points,
+        live_points,
+        live_goal_difference,
+        source_key,
+        source_payload,
+        source_updated_at
+      )
+      VALUES (
+        ${WORLD_CUP_2026_KEY},
+        ${teamId},
+        ${cleanText(standing.groupName)},
+        ${cleanInteger(standing.position) ?? 0},
+        ${cleanInteger(standing.played) ?? 0},
+        ${cleanInteger(standing.won) ?? 0},
+        ${cleanInteger(standing.drawn) ?? 0},
+        ${cleanInteger(standing.lost) ?? 0},
+        ${goalsFor},
+        ${goalsAgainst},
+        ${goalDifference},
+        ${cleanInteger(standing.points) ?? 0},
+        ${cleanInteger(standing.livePoints) ?? cleanInteger(standing.points) ?? 0},
+        ${cleanInteger(standing.liveGoalDifference) ?? goalDifference},
+        ${standing.sourceKey},
+        ${JSON.stringify(payload)}::jsonb,
+        ${nullableTimestamp(standing.sourceUpdatedAt) ?? new Date().toISOString()}
+      )
+    `;
+    inserted += 1;
+  }
+
+  return inserted;
+}
+
 export async function getWorldCupDatabaseSummary() {
   assertPersistentDatabaseConfigured();
 
@@ -222,7 +738,11 @@ export async function getWorldCupDatabaseSummary() {
       COUNT(*) FILTER (WHERE p.position = 'GK')::int AS goalkeepers,
       COUNT(*) FILTER (WHERE p.position = 'DF')::int AS defenders,
       COUNT(*) FILTER (WHERE p.position = 'MF')::int AS midfielders,
-      COUNT(*) FILTER (WHERE p.position = 'FW')::int AS forwards
+      COUNT(*) FILTER (WHERE p.position = 'FW')::int AS forwards,
+      (SELECT COUNT(*)::int FROM world_cup_matches WHERE competition_key = ${WORLD_CUP_2026_KEY}) AS matches,
+      (SELECT COUNT(*)::int FROM world_cup_match_statistics ms JOIN world_cup_matches m ON m.id = ms.match_id WHERE m.competition_key = ${WORLD_CUP_2026_KEY}) AS match_statistics,
+      (SELECT COUNT(*)::int FROM world_cup_player_statistics ps JOIN world_cup_matches m ON m.id = ps.match_id WHERE m.competition_key = ${WORLD_CUP_2026_KEY}) AS player_statistics,
+      (SELECT COUNT(*)::int FROM world_cup_standings WHERE competition_key = ${WORLD_CUP_2026_KEY}) AS standings
     FROM world_cup_teams t
     LEFT JOIN world_cup_players p ON p.team_id = t.id
     WHERE t.competition_key = ${WORLD_CUP_2026_KEY}
