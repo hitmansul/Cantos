@@ -587,6 +587,10 @@ export async function replaceWorldCupMatchStatistics(
     if (!teamId) continue;
 
     const payload = cleanJson(stat.sourcePayload ?? stat);
+    const period = cleanText(stat.period) ?? 'match';
+    const metricKey = cleanText(stat.metricKey) ?? 'unknown';
+    const metricName = cleanText(stat.metricName) ?? 'Estatística';
+    const updatedAt = nullableTimestamp(stat.sourceUpdatedAt) ?? new Date().toISOString();
 
     await sql`
       INSERT INTO world_cup_match_statistics (
@@ -604,15 +608,23 @@ export async function replaceWorldCupMatchStatistics(
       VALUES (
         ${matchId},
         ${teamId},
-        ${cleanText(stat.period) ?? 'match'},
-        ${cleanText(stat.metricKey) ?? 'unknown'},
-        ${cleanText(stat.metricName) ?? 'Estatística'},
+        ${period},
+        ${metricKey},
+        ${metricName},
         ${cleanNumber(stat.valueNumeric)},
         ${cleanText(stat.valueText)},
         ${stat.sourceKey},
         ${JSON.stringify(payload)}::jsonb,
-        ${nullableTimestamp(stat.sourceUpdatedAt) ?? new Date().toISOString()}
+        ${updatedAt}
       )
+      ON CONFLICT (match_id, team_id, period, metric_key) DO UPDATE SET
+        metric_name = EXCLUDED.metric_name,
+        value_numeric = EXCLUDED.value_numeric,
+        value_text = EXCLUDED.value_text,
+        source_key = EXCLUDED.source_key,
+        source_payload = EXCLUDED.source_payload,
+        source_updated_at = EXCLUDED.source_updated_at,
+        updated_at = NOW()
     `;
 
     inserted += 1;
@@ -667,6 +679,7 @@ export async function replaceWorldCupPlayerStatistics(
         ${JSON.stringify(payload)}::jsonb,
         ${nullableTimestamp(stat.sourceUpdatedAt) ?? new Date().toISOString()}
       )
+      ON CONFLICT DO NOTHING
     `;
 
     inserted += 1;
