@@ -15,6 +15,7 @@ import { findFifaSquad, getFifaWorldCupSquads, type FifaSquad, type FifaSquadPla
 import { isWorldCupQuestion, worldCupTeams } from '@/data/worldCupTeams';
 import { emptyWorldCupCornersReply, worldCupCornerStats, worldCupCornersSummary } from '@/data/worldCupCornerStats';
 import { emptyWorldCupCardsReply, worldCupCardStats, worldCupCardsSummary } from '@/data/worldCupCardStats';
+import { answerWorldCupFromDatabase } from '@/lib/persistence/worldCupAiRepository';
 
 export const maxDuration = 60;
 
@@ -1866,6 +1867,9 @@ async function liveMatchStatsReply(question: string, ctx: string, origin: string
 async function localReply(question: string, ctx: string, origin: string): Promise<string | null> {
   if (askedDataUpdate(question)) return dataUpdateReply();
 
+  const worldCupDatabaseReply = await answerWorldCupFromDatabase(question);
+  if (worldCupDatabaseReply) return worldCupDatabaseReply;
+  
   const worldCupStats = await worldCupStatsReply(question);
   if (worldCupStats) return worldCupStats;
 
