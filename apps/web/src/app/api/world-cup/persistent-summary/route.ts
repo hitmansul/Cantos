@@ -21,32 +21,58 @@ function normalize(value: unknown): string {
     .trim();
 }
 
-function statValue(stats: StatRow[], includes: string[]): string | null {
-  const found = stats.find((stat) => {
-    const text = normalize(`${stat.metric_key ?? ''} ${stat.metric_name ?? ''}`);
-    return includes.some((part) => text.includes(part));
-  });
+function metricText(stat: StatRow): string {
+  return normalize(`${stat.metric_key ?? ''} ${stat.metric_name ?? ''}`);
+}
 
+function hasAny(text: string, terms: string[]): boolean {
+  return terms.some((term) => text.includes(term));
+}
+
+function statValue(stats: StatRow[], includes: string[]): string | null {
+  const found = stats.find((stat) => hasAny(metricText(stat), includes));
   if (!found) return null;
   if (found.value_numeric !== null && found.value_numeric !== undefined) return String(found.value_numeric);
   return found.value_text ? String(found.value_text) : null;
 }
 
+function statDisplayValue(stat?: StatRow | null): string | number | null {
+  if (!stat) return null;
+  if (stat.value_numeric !== null && stat.value_numeric !== undefined) return stat.value_numeric;
+  if (stat.value_text !== null && stat.value_text !== undefined && stat.value_text !== '') return stat.value_text;
+  return null;
+}
+
+function sameTeam(left: unknown, right: unknown): boolean {
+  const a = normalize(left);
+  const b = normalize(right);
+  if (!a || !b) return false;
+  return a === b || a.includes(b) || b.includes(a);
+}
+
 function teamStatPair(stats: StatRow[], includes: string[], homeName: string, awayName: string) {
-  const matched = stats.filter((stat) => {
-    const text = normalize(`${stat.metric_key ?? ''} ${stat.metric_name ?? ''}`);
-    return includes.some((part) => text.includes(part));
-  });
+  const matched = stats.filter((stat) => hasAny(metricText(stat), includes));
+  const home = matched.find((stat) => sameTeam(stat.team_name, homeName));
+  const away = matched.find((stat) => sameTeam(stat.team_name, awayName));
 
-  const homeKey = normalize(homeName);
-  const awayKey = normalize(awayName);
-  const home = matched.find((stat) => normalize(stat.team_name) === homeKey);
-  const away = matched.find((stat) => normalize(stat.team_name) === awayKey);
+  if (home || away) {
+    return {
+      home: statDisplayValue(home),
+      away: statDisplayValue(away),
+    };
+  }
 
-  return {
-    home: home?.value_numeric ?? home?.value_text ?? null,
-    away: away?.value_numeric ?? away?.value_text ?? null,
-  };
+  // Fallback: algumas fontes gravam a estatística sem nome de equipe confiável,
+  // mas enviam duas linhas na ordem mandante/visitante. Mantemos esse fallback
+  // para não esconder dados já importados no banco.
+  if (matched.length >= 2) {
+    return {
+      home: statDisplayValue(matched[0]),
+      away: statDisplayValue(matched[1]),
+    };
+  }
+
+  return { home: null, away: null };
 }
 
 export async function GET() {
@@ -89,14 +115,14 @@ export async function GET() {
 
     const formattedMatches = matches.map((match) => {
       const stats = Array.isArray(match.stats) ? (match.stats as StatRow[]) : [];
-      const corners = teamStatPair(stats, ['corner', 'escanteio'], match.home_team_name, match.away_team_name);
-      const yellowCards = teamStatPair(stats, ['yellow card', 'cartao amarelo', 'cartoes amarelos'], match.home_team_name, match.away_team_name);
-      const redCards = teamStatPair(stats, ['red card', 'cartao vermelho', 'cartoes vermelhos'], match.home_team_name, match.away_team_name);
-      const shots = teamStatPair(stats, ['shot', 'finalizacao', 'finalizacoes'], match.home_team_name, match.away_team_name);
-      const shotsOnGoal = teamStatPair(stats, ['shot on goal', 'chute no gol', 'chutes no gol'], match.home_team_name, match.away_team_name);
-      const possession = teamStatPair(stats, ['possession', 'posse'], match.home_team_name, match.away_team_name);
-      const fouls = teamStatPair(stats, ['foul', 'falta'], match.home_team_name, match.away_team_name);
-      const offsides = teamStatPair(stats, ['offside', 'impedimento'], match.home_team_name, match.away_team_name);
+      const corners = teamStatPair(stats, ['corner', 'corners', 'escanteio', 'escanteios'], match.home_team_name, match.away_team_name);
+      const yellowCards = teamStatPair(stats, ['yellow card', 'yellow cards', 'cartao amarelo', 'cartoes amarelos'], match.home_team_name, match.away_team_name);
+      const redCards = teamStatPair(stats, ['red card', 'red cards', 'cartao vermelho', 'cartoes vermelhos'], match.home_team_name, match.away_team_name);
+      const shotsOnGoal = teamStatPair(stats, ['shots on target', 'shots_on_target', 'shot on goal', 'chute no gol', 'chutes no gol', 'finalizacoes no gol'], match.home_team_name, match.away_team_name);
+      const shots = teamStatPair(stats, ['total shots', 'shots', 'shot attempts', 'finalizacao', 'finalizacoes', 'chutes'], match.home_team_name, match.away_team_name);
+      const possession = teamStatPair(stats, ['possession', 'posse', 'ball possession'], match.home_team_name, match.away_team_name);
+      const fouls = teamStatPair(stats, ['fouls', 'foul', 'falta', 'faltas'], match.home_team_name, match.away_team_name);
+      const offsides = teamStatPair(stats, ['offsides', 'offside', 'impedimento', 'impedimentos'], match.home_team_name, match.away_team_name);
 
       return {
         id: match.id,
@@ -130,6 +156,7 @@ export async function GET() {
 
     return NextResponse.json({
       competition: WORLD_CUP_2026_KEY,
+      priority: 'FIFA first. Persistent table currently stores imported match statistics when the pipeline has already collected them.',
       matches: formattedMatches,
       lastUpdated: new Date().toISOString(),
     });
