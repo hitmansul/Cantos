@@ -31,6 +31,8 @@ type Summary = {
   xg: StatPair;
 };
 
+type PairKind = 'possession' | 'passes' | 'percent' | 'generic';
+
 function normalize(value: unknown): string {
   return String(value ?? '')
     .toLowerCase()
@@ -53,7 +55,11 @@ function payloadText(value: unknown): string {
   }
 }
 
-function metricText(stat: StatRow): string {
+function metricLabelText(stat: StatRow): string {
+  return normalize(`${stat.metric_key ?? ''} ${stat.metric_name ?? ''}`);
+}
+
+function metricFullText(stat: StatRow): string {
   return normalize(`${stat.metric_key ?? ''} ${stat.metric_name ?? ''} ${payloadText(stat.source_payload)}`);
 }
 
@@ -122,8 +128,8 @@ function payloadSideValue(payload: unknown, side: 'home' | 'away'): string | num
   const record = asRecord(payload);
   if (!record) return null;
   const keys = side === 'home'
-    ? ['homeValue', 'home', 'homeTeamValue', 'valueHome', 'home_value']
-    : ['awayValue', 'away', 'awayTeamValue', 'valueAway', 'away_value'];
+    ? ['homeValue', 'home', 'homeTeamValue', 'valueHome', 'home_value', 'homePercent', 'homePercentage']
+    : ['awayValue', 'away', 'awayTeamValue', 'valueAway', 'away_value', 'awayPercent', 'awayPercentage'];
 
   for (const key of keys) {
     const value = cleanScalar(record[key]);
@@ -133,21 +139,24 @@ function payloadSideValue(payload: unknown, side: 'home' | 'away'): string | num
   return null;
 }
 
-function validatePair(pair: StatPair, kind: 'possession' | 'passes' | 'percent' | 'generic'): StatPair {
-  const home = toNumber(pair.home);
-  const away = toNumber(pair.away);
+function validatePair(pair: StatPair, kind: PairKind): StatPair {
+  let home = toNumber(pair.home);
+  let away = toNumber(pair.away);
 
   if (kind === 'possession') {
     if (home === null || away === null) return { home: null, away: null };
-    const total = home + away;
-    if (home < 0 || away < 0 || home > 100 || away > 100 || total < 95 || total > 105) {
-      return { home: null, away: null };
+    if (home >= 0 && away >= 0 && home <= 1 && away <= 1 && home + away >= 0.95 && home + away <= 1.05) {
+      home *= 100;
+      away *= 100;
     }
+    const total = home + away;
+    if (home < 0 || away < 0 || home > 100 || away > 100 || total < 95 || total > 105) return { home: null, away: null };
     return { home: Math.round(home), away: Math.round(away) };
   }
 
   if (kind === 'percent') {
     if (home === null || away === null) return pair;
+    if (home >= 0 && away >= 0 && home <= 1 && away <= 1) return { home: Math.round(home * 100), away: Math.round(away * 100) };
     if (home < 0 || away < 0 || home > 100 || away > 100) return { home: null, away: null };
   }
 
@@ -158,28 +167,25 @@ function validatePair(pair: StatPair, kind: 'possession' | 'passes' | 'percent' 
   return pair;
 }
 
-function teamStatPair(stats: StatRow[], includes: string[], homeName: string, awayName: string, kind: 'possession' | 'passes' | 'percent' | 'generic' = 'generic', excludes: string[] = []): StatPair {
+function teamStatPair(stats: StatRow[], includes: string[], homeName: string, awayName: string, kind: PairKind = 'generic', excludes: string[] = [], strictLabelOnly = false): StatPair {
   const matched = stats
     .filter((stat) => {
-      const text = metricText(stat);
-      return hasAny(text, includes) && !hasAny(text, excludes);
+      const label = metricLabelText(stat);
+      const text = strictLabelOnly ? label : metricFullText(stat);
+      return hasAny(text, includes) && !hasAny(label, excludes) && !hasAny(payloadText(stat.source_payload), excludes);
     })
     .sort((a, b) => sourceRank(a.source_key) - sourceRank(b.source_key));
 
-  const pairedPayload = matched.find((stat) => payloadSideValue(stat.source_payload, 'home') !== null || payloadSideValue(stat.source_payload, 'away') !== null);
-  if (pairedPayload) {
-    return validatePair({ home: payloadSideValue(pairedPayload.source_payload, 'home'), away: payloadSideValue(pairedPayload.source_payload, 'away') }, kind);
-  }
+  const preferredSource = matched[0]?.source_key;
+  const preferred = preferredSource ? matched.filter((stat) => stat.source_key === preferredSource) : matched;
+  const pairedPayload = preferred.find((stat) => payloadSideValue(stat.source_payload, 'home') !== null || payloadSideValue(stat.source_payload, 'away') !== null);
+  if (pairedPayload) return validatePair({ home: payloadSideValue(pairedPayload.source_payload, 'home'), away: payloadSideValue(pairedPayload.source_payload, 'away') }, kind);
 
-  const home = matched.find((stat) => sameTeam(stat.team_name, homeName));
-  const away = matched.find((stat) => sameTeam(stat.team_name, awayName));
+  const home = preferred.find((stat) => sameTeam(stat.team_name, homeName));
+  const away = preferred.find((stat) => sameTeam(stat.team_name, awayName));
   if (home || away) return validatePair({ home: statDisplayValue(home), away: statDisplayValue(away) }, kind);
-
-  const firstSource = matched[0]?.source_key;
-  const sameSource = matched.filter((stat) => stat.source_key === firstSource);
-  if (sameSource.length >= 2) return validatePair({ home: statDisplayValue(sameSource[0]), away: statDisplayValue(sameSource[1]) }, kind);
+  if (preferred.length >= 2) return validatePair({ home: statDisplayValue(preferred[0]), away: statDisplayValue(preferred[1]) }, kind);
   if (matched.length >= 2) return validatePair({ home: statDisplayValue(matched[0]), away: statDisplayValue(matched[1]) }, kind);
-
   return { home: null, away: null };
 }
 
@@ -232,7 +238,7 @@ export async function GET() {
     const formattedMatches = matches.map((match) => {
       const stats = Array.isArray(match.stats) ? (match.stats as StatRow[]) : [];
       const summary: Summary = {
-        possession: teamStatPair(stats, ['possession', 'ball possession', 'possession percent', 'possession percentage', 'posse de bola'], match.home_team_name, match.away_team_name, 'possession', ['average possession', 'territory', 'field tilt']),
+        possession: teamStatPair(stats, ['possession', 'ball possession', 'possession percent', 'possession percentage', 'posse de bola'], match.home_team_name, match.away_team_name, 'possession', ['average possession', 'territory', 'field tilt'], true),
         shots: teamStatPair(stats, ['total shots', 'total attempts', 'goal attempts', 'attempts', 'shots', 'shot attempts', 'finalizacao', 'finalizacoes', 'chutes'], match.home_team_name, match.away_team_name),
         shotsOnGoal: teamStatPair(stats, ['shots on target', 'attempts on target', 'on target', 'shot on goal', 'chute no gol', 'chutes no gol', 'finalizacoes no gol'], match.home_team_name, match.away_team_name),
         corners: teamStatPair(stats, ['corner', 'corners', 'corner kick', 'corner kicks', 'escanteio', 'escanteios'], match.home_team_name, match.away_team_name),
@@ -240,10 +246,10 @@ export async function GET() {
         redCards: teamStatPair(stats, ['red card', 'red cards', 'send off', 'cartao vermelho', 'cartoes vermelhos'], match.home_team_name, match.away_team_name),
         fouls: teamStatPair(stats, ['fouls committed', 'fouls', 'foul', 'falta', 'faltas'], match.home_team_name, match.away_team_name),
         offsides: teamStatPair(stats, ['offsides', 'offside', 'impedimento', 'impedimentos'], match.home_team_name, match.away_team_name),
-        passes: teamStatPair(stats, ['passes completed', 'total passes', 'passes attempted', 'passes'], match.home_team_name, match.away_team_name, 'passes', ['accuracy', 'completion', 'percent', 'percentage', 'precisao']),
-        passAccuracy: teamStatPair(stats, ['pass accuracy', 'pass completion', 'precisao passe'], match.home_team_name, match.away_team_name, 'percent'),
-        goalkeeperSaves: teamStatPair(stats, ['goalkeeper saves', 'keeper saves', 'saves by goalkeeper', 'save by goalkeeper', 'defesas do goleiro'], match.home_team_name, match.away_team_name, 'generic', ['tackle', 'tackles', 'desarme', 'desarmes', 'interception', 'interceptions', 'clearance', 'clearances', 'duel', 'duels', 'blocked shot', 'defensive action']),
-        xg: teamStatPair(stats, ['expected goals', 'xg'], match.home_team_name, match.away_team_name),
+        passes: teamStatPair(stats, ['passes completed', 'total passes', 'passes attempted', 'passes'], match.home_team_name, match.away_team_name, 'passes', ['accuracy', 'completion', 'percent', 'percentage', 'precisao'], true),
+        passAccuracy: teamStatPair(stats, ['pass accuracy', 'pass completion', 'precisao passe'], match.home_team_name, match.away_team_name, 'percent', [], true),
+        goalkeeperSaves: teamStatPair(stats, ['goalkeeper saves', 'keeper saves', 'saves by goalkeeper', 'save by goalkeeper', 'defesas do goleiro'], match.home_team_name, match.away_team_name, 'generic', ['tackle', 'tackles', 'desarme', 'desarmes', 'interception', 'interceptions', 'clearance', 'clearances', 'duel', 'duels', 'blocked shot', 'defensive action'], true),
+        xg: teamStatPair(stats, ['expected goals', 'xg'], match.home_team_name, match.away_team_name, 'generic', [], true),
       };
 
       return {
@@ -270,7 +276,7 @@ export async function GET() {
 
     return NextResponse.json({
       competition: WORLD_CUP_2026_KEY,
-      priority: 'FIFA first, then 365Scores, then API-Football when the same metric exists from more than one source.',
+      priority: 'FIFA first. 365Scores and API-Football only fill metrics missing from FIFA.',
       matches: formattedMatches,
       lastUpdated: new Date().toISOString(),
     });
