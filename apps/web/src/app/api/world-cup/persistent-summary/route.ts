@@ -28,7 +28,7 @@ type Summary = {
   passes: StatPair;
   passAccuracy: StatPair;
   goalkeeperSaves: StatPair;
-  xg: string | null;
+  xg: StatPair;
 };
 
 function normalize(value: unknown): string {
@@ -75,19 +75,7 @@ function findValueInPayload(payload: unknown): string | number | null {
   const record = asRecord(payload);
   if (!record) return cleanScalar(payload);
 
-  const directKeys = [
-    'value',
-    'statValue',
-    'amount',
-    'total',
-    'displayValue',
-    'formattedValue',
-    'numericValue',
-    'percentage',
-    'percent',
-  ];
-
-  for (const key of directKeys) {
+  for (const key of ['value', 'statValue', 'amount', 'total', 'displayValue', 'formattedValue', 'numericValue', 'percentage', 'percent']) {
     const value = cleanScalar(record[key]);
     if (value !== null) return value;
   }
@@ -105,6 +93,15 @@ function statDisplayValue(stat?: StatRow | null): string | number | null {
   const stored = cleanScalar(stat.value_numeric ?? stat.value_text);
   if (stored !== null) return stored;
   return findValueInPayload(stat.source_payload);
+}
+
+function toNumber(value: string | number | null | undefined): number | null {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string') {
+    const parsed = Number(value.replace('%', '').replace(',', '.'));
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
 }
 
 function sourceRank(source?: string): number {
@@ -136,45 +133,58 @@ function payloadSideValue(payload: unknown, side: 'home' | 'away'): string | num
   return null;
 }
 
-function statValue(stats: StatRow[], includes: string[]): string | null {
-  const found = [...stats]
-    .sort((a, b) => sourceRank(a.source_key) - sourceRank(b.source_key))
-    .find((stat) => hasAny(metricText(stat), includes));
-  const value = statDisplayValue(found);
-  return value === null ? null : String(value);
+function validatePair(pair: StatPair, kind: 'possession' | 'passes' | 'percent' | 'generic'): StatPair {
+  const home = toNumber(pair.home);
+  const away = toNumber(pair.away);
+
+  if (kind === 'possession') {
+    if (home === null || away === null) return { home: null, away: null };
+    const total = home + away;
+    if (home < 0 || away < 0 || home > 100 || away > 100 || total < 95 || total > 105) {
+      return { home: null, away: null };
+    }
+    return { home: Math.round(home), away: Math.round(away) };
+  }
+
+  if (kind === 'percent') {
+    if (home === null || away === null) return pair;
+    if (home < 0 || away < 0 || home > 100 || away > 100) return { home: null, away: null };
+  }
+
+  if (kind === 'passes') {
+    if (home !== null && away !== null && home <= 5 && away <= 5) return { home: null, away: null };
+  }
+
+  return pair;
 }
 
-function teamStatPair(stats: StatRow[], includes: string[], homeName: string, awayName: string): StatPair {
+function teamStatPair(stats: StatRow[], includes: string[], homeName: string, awayName: string, kind: 'possession' | 'passes' | 'percent' | 'generic' = 'generic', excludes: string[] = []): StatPair {
   const matched = stats
-    .filter((stat) => hasAny(metricText(stat), includes))
+    .filter((stat) => {
+      const text = metricText(stat);
+      return hasAny(text, includes) && !hasAny(text, excludes);
+    })
     .sort((a, b) => sourceRank(a.source_key) - sourceRank(b.source_key));
 
   const pairedPayload = matched.find((stat) => payloadSideValue(stat.source_payload, 'home') !== null || payloadSideValue(stat.source_payload, 'away') !== null);
   if (pairedPayload) {
-    return {
-      home: payloadSideValue(pairedPayload.source_payload, 'home'),
-      away: payloadSideValue(pairedPayload.source_payload, 'away'),
-    };
+    return validatePair({ home: payloadSideValue(pairedPayload.source_payload, 'home'), away: payloadSideValue(pairedPayload.source_payload, 'away') }, kind);
   }
 
   const home = matched.find((stat) => sameTeam(stat.team_name, homeName));
   const away = matched.find((stat) => sameTeam(stat.team_name, awayName));
-
-  if (home || away) return { home: statDisplayValue(home), away: statDisplayValue(away) };
+  if (home || away) return validatePair({ home: statDisplayValue(home), away: statDisplayValue(away) }, kind);
 
   const firstSource = matched[0]?.source_key;
   const sameSource = matched.filter((stat) => stat.source_key === firstSource);
-  if (sameSource.length >= 2) return { home: statDisplayValue(sameSource[0]), away: statDisplayValue(sameSource[1]) };
-  if (matched.length >= 2) return { home: statDisplayValue(matched[0]), away: statDisplayValue(matched[1]) };
+  if (sameSource.length >= 2) return validatePair({ home: statDisplayValue(sameSource[0]), away: statDisplayValue(sameSource[1]) }, kind);
+  if (matched.length >= 2) return validatePair({ home: statDisplayValue(matched[0]), away: statDisplayValue(matched[1]) }, kind);
 
   return { home: null, away: null };
 }
 
 function countMappedValues(summary: Summary): number {
-  return Object.values(summary).flatMap((value) => {
-    if (value && typeof value === 'object' && 'home' in value && 'away' in value) return [value.home, value.away];
-    return [value];
-  }).filter((value) => value !== null && value !== undefined && value !== '').length;
+  return Object.values(summary).flatMap((value) => [value.home, value.away]).filter((value) => value !== null && value !== undefined && value !== '').length;
 }
 
 export async function GET() {
@@ -222,7 +232,7 @@ export async function GET() {
     const formattedMatches = matches.map((match) => {
       const stats = Array.isArray(match.stats) ? (match.stats as StatRow[]) : [];
       const summary: Summary = {
-        possession: teamStatPair(stats, ['possession', 'ball possession', 'posse'], match.home_team_name, match.away_team_name),
+        possession: teamStatPair(stats, ['possession', 'ball possession', 'posse'], match.home_team_name, match.away_team_name, 'possession'),
         shots: teamStatPair(stats, ['total shots', 'total attempts', 'goal attempts', 'attempts', 'shots', 'shot attempts', 'finalizacao', 'finalizacoes', 'chutes'], match.home_team_name, match.away_team_name),
         shotsOnGoal: teamStatPair(stats, ['shots on target', 'attempts on target', 'on target', 'shot on goal', 'chute no gol', 'chutes no gol', 'finalizacoes no gol'], match.home_team_name, match.away_team_name),
         corners: teamStatPair(stats, ['corner', 'corners', 'corner kick', 'corner kicks', 'escanteio', 'escanteios'], match.home_team_name, match.away_team_name),
@@ -230,10 +240,10 @@ export async function GET() {
         redCards: teamStatPair(stats, ['red card', 'red cards', 'send off', 'cartao vermelho', 'cartoes vermelhos'], match.home_team_name, match.away_team_name),
         fouls: teamStatPair(stats, ['fouls committed', 'fouls', 'foul', 'falta', 'faltas'], match.home_team_name, match.away_team_name),
         offsides: teamStatPair(stats, ['offsides', 'offside', 'impedimento', 'impedimentos'], match.home_team_name, match.away_team_name),
-        passes: teamStatPair(stats, ['passes completed', 'passes', 'passes attempted'], match.home_team_name, match.away_team_name),
-        passAccuracy: teamStatPair(stats, ['pass accuracy', 'pass completion', 'precisao passe'], match.home_team_name, match.away_team_name),
-        goalkeeperSaves: teamStatPair(stats, ['goalkeeper saves', 'saves', 'defesas'], match.home_team_name, match.away_team_name),
-        xg: statValue(stats, ['expected goals', 'xg']),
+        passes: teamStatPair(stats, ['passes completed', 'total passes', 'passes attempted', 'passes'], match.home_team_name, match.away_team_name, 'passes', ['accuracy', 'completion', 'percent', 'percentage', 'precisao']),
+        passAccuracy: teamStatPair(stats, ['pass accuracy', 'pass completion', 'precisao passe'], match.home_team_name, match.away_team_name, 'percent'),
+        goalkeeperSaves: teamStatPair(stats, ['goalkeeper saves', 'keeper saves', 'saves', 'defesas'], match.home_team_name, match.away_team_name),
+        xg: teamStatPair(stats, ['expected goals', 'xg'], match.home_team_name, match.away_team_name),
       };
 
       return {
