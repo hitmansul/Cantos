@@ -14,6 +14,23 @@ type StatRow = {
   source_payload?: unknown;
 };
 
+type StatPair = { home: string | number | null; away: string | number | null };
+
+type Summary = {
+  possession: StatPair;
+  shots: StatPair;
+  shotsOnGoal: StatPair;
+  corners: StatPair;
+  yellowCards: StatPair;
+  redCards: StatPair;
+  fouls: StatPair;
+  offsides: StatPair;
+  passes: StatPair;
+  passAccuracy: StatPair;
+  goalkeeperSaves: StatPair;
+  xg: string | null;
+};
+
 function normalize(value: unknown): string {
   return String(value ?? '')
     .toLowerCase()
@@ -22,6 +39,10 @@ function normalize(value: unknown): string {
     .replace(/[^a-z0-9]+/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
 }
 
 function payloadText(value: unknown): string {
@@ -40,11 +61,50 @@ function hasAny(text: string, terms: string[]): boolean {
   return terms.some((term) => text.includes(normalize(term)));
 }
 
+function cleanScalar(value: unknown): string | number | null {
+  if (value === null || value === undefined || value === '') return null;
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  const text = String(value).replace('%', '').trim();
+  if (!text) return null;
+  const number = Number(text.replace(',', '.'));
+  if (Number.isFinite(number)) return number;
+  return String(value).trim();
+}
+
+function findValueInPayload(payload: unknown): string | number | null {
+  const record = asRecord(payload);
+  if (!record) return cleanScalar(payload);
+
+  const directKeys = [
+    'value',
+    'statValue',
+    'amount',
+    'total',
+    'displayValue',
+    'formattedValue',
+    'numericValue',
+    'percentage',
+    'percent',
+  ];
+
+  for (const key of directKeys) {
+    const value = cleanScalar(record[key]);
+    if (value !== null) return value;
+  }
+
+  for (const nestedKey of ['stat', 'statistics', 'data', 'payload', 'item']) {
+    const value = findValueInPayload(record[nestedKey]);
+    if (value !== null) return value;
+  }
+
+  return null;
+}
+
 function statDisplayValue(stat?: StatRow | null): string | number | null {
   if (!stat) return null;
-  if (stat.value_numeric !== null && stat.value_numeric !== undefined) return stat.value_numeric;
-  if (stat.value_text !== null && stat.value_text !== undefined && stat.value_text !== '') return stat.value_text;
-  return null;
+  const stored = cleanScalar(stat.value_numeric ?? stat.value_text);
+  if (stored !== null) return stored;
+  return findValueInPayload(stat.source_payload);
 }
 
 function sourceRank(source?: string): number {
@@ -61,6 +121,21 @@ function sameTeam(left: unknown, right: unknown): boolean {
   return a === b || a.includes(b) || b.includes(a);
 }
 
+function payloadSideValue(payload: unknown, side: 'home' | 'away'): string | number | null {
+  const record = asRecord(payload);
+  if (!record) return null;
+  const keys = side === 'home'
+    ? ['homeValue', 'home', 'homeTeamValue', 'valueHome', 'home_value']
+    : ['awayValue', 'away', 'awayTeamValue', 'valueAway', 'away_value'];
+
+  for (const key of keys) {
+    const value = cleanScalar(record[key]);
+    if (value !== null) return value;
+  }
+
+  return null;
+}
+
 function statValue(stats: StatRow[], includes: string[]): string | null {
   const found = [...stats]
     .sort((a, b) => sourceRank(a.source_key) - sourceRank(b.source_key))
@@ -69,37 +144,35 @@ function statValue(stats: StatRow[], includes: string[]): string | null {
   return value === null ? null : String(value);
 }
 
-function teamStatPair(stats: StatRow[], includes: string[], homeName: string, awayName: string) {
+function teamStatPair(stats: StatRow[], includes: string[], homeName: string, awayName: string): StatPair {
   const matched = stats
     .filter((stat) => hasAny(metricText(stat), includes))
     .sort((a, b) => sourceRank(a.source_key) - sourceRank(b.source_key));
 
+  const pairedPayload = matched.find((stat) => payloadSideValue(stat.source_payload, 'home') !== null || payloadSideValue(stat.source_payload, 'away') !== null);
+  if (pairedPayload) {
+    return {
+      home: payloadSideValue(pairedPayload.source_payload, 'home'),
+      away: payloadSideValue(pairedPayload.source_payload, 'away'),
+    };
+  }
+
   const home = matched.find((stat) => sameTeam(stat.team_name, homeName));
   const away = matched.find((stat) => sameTeam(stat.team_name, awayName));
 
-  if (home || away) {
-    return { home: statDisplayValue(home), away: statDisplayValue(away) };
-  }
+  if (home || away) return { home: statDisplayValue(home), away: statDisplayValue(away) };
 
   const firstSource = matched[0]?.source_key;
   const sameSource = matched.filter((stat) => stat.source_key === firstSource);
-  if (sameSource.length >= 2) {
-    return { home: statDisplayValue(sameSource[0]), away: statDisplayValue(sameSource[1]) };
-  }
-
-  if (matched.length >= 2) {
-    return { home: statDisplayValue(matched[0]), away: statDisplayValue(matched[1]) };
-  }
+  if (sameSource.length >= 2) return { home: statDisplayValue(sameSource[0]), away: statDisplayValue(sameSource[1]) };
+  if (matched.length >= 2) return { home: statDisplayValue(matched[0]), away: statDisplayValue(matched[1]) };
 
   return { home: null, away: null };
 }
 
-function countMappedValues(summary: Record<string, unknown>): number {
+function countMappedValues(summary: Summary): number {
   return Object.values(summary).flatMap((value) => {
-    if (value && typeof value === 'object' && 'home' in value && 'away' in value) {
-      const pair = value as { home?: unknown; away?: unknown };
-      return [pair.home, pair.away];
-    }
+    if (value && typeof value === 'object' && 'home' in value && 'away' in value) return [value.home, value.away];
     return [value];
   }).filter((value) => value !== null && value !== undefined && value !== '').length;
 }
@@ -148,27 +221,18 @@ export async function GET() {
 
     const formattedMatches = matches.map((match) => {
       const stats = Array.isArray(match.stats) ? (match.stats as StatRow[]) : [];
-      const corners = teamStatPair(stats, ['corner', 'corners', 'corner kick', 'corner kicks', 'escanteio', 'escanteios'], match.home_team_name, match.away_team_name);
-      const yellowCards = teamStatPair(stats, ['yellow card', 'yellow cards', 'cautions', 'cartao amarelo', 'cartoes amarelos'], match.home_team_name, match.away_team_name);
-      const redCards = teamStatPair(stats, ['red card', 'red cards', 'send off', 'cartao vermelho', 'cartoes vermelhos'], match.home_team_name, match.away_team_name);
-      const shotsOnGoal = teamStatPair(stats, ['shots on target', 'attempts on target', 'on target', 'shot on goal', 'chute no gol', 'chutes no gol', 'finalizacoes no gol'], match.home_team_name, match.away_team_name);
-      const shots = teamStatPair(stats, ['total shots', 'total attempts', 'goal attempts', 'attempts', 'shots', 'shot attempts', 'finalizacao', 'finalizacoes', 'chutes'], match.home_team_name, match.away_team_name);
-      const possession = teamStatPair(stats, ['possession', 'ball possession', 'posse'], match.home_team_name, match.away_team_name);
-      const fouls = teamStatPair(stats, ['fouls committed', 'fouls', 'foul', 'falta', 'faltas'], match.home_team_name, match.away_team_name);
-      const offsides = teamStatPair(stats, ['offsides', 'offside', 'impedimento', 'impedimentos'], match.home_team_name, match.away_team_name);
-      const passes = teamStatPair(stats, ['passes completed', 'passes', 'passes attempted', 'pass accuracy', 'pass completion'], match.home_team_name, match.away_team_name);
-      const goalkeeperSaves = teamStatPair(stats, ['goalkeeper saves', 'saves', 'defesas'], match.home_team_name, match.away_team_name);
-      const summary = {
-        possession,
-        shots,
-        shotsOnGoal,
-        corners,
-        yellowCards,
-        redCards,
-        fouls,
-        offsides,
-        passes,
-        goalkeeperSaves,
+      const summary: Summary = {
+        possession: teamStatPair(stats, ['possession', 'ball possession', 'posse'], match.home_team_name, match.away_team_name),
+        shots: teamStatPair(stats, ['total shots', 'total attempts', 'goal attempts', 'attempts', 'shots', 'shot attempts', 'finalizacao', 'finalizacoes', 'chutes'], match.home_team_name, match.away_team_name),
+        shotsOnGoal: teamStatPair(stats, ['shots on target', 'attempts on target', 'on target', 'shot on goal', 'chute no gol', 'chutes no gol', 'finalizacoes no gol'], match.home_team_name, match.away_team_name),
+        corners: teamStatPair(stats, ['corner', 'corners', 'corner kick', 'corner kicks', 'escanteio', 'escanteios'], match.home_team_name, match.away_team_name),
+        yellowCards: teamStatPair(stats, ['yellow card', 'yellow cards', 'cautions', 'cartao amarelo', 'cartoes amarelos'], match.home_team_name, match.away_team_name),
+        redCards: teamStatPair(stats, ['red card', 'red cards', 'send off', 'cartao vermelho', 'cartoes vermelhos'], match.home_team_name, match.away_team_name),
+        fouls: teamStatPair(stats, ['fouls committed', 'fouls', 'foul', 'falta', 'faltas'], match.home_team_name, match.away_team_name),
+        offsides: teamStatPair(stats, ['offsides', 'offside', 'impedimento', 'impedimentos'], match.home_team_name, match.away_team_name),
+        passes: teamStatPair(stats, ['passes completed', 'passes', 'passes attempted'], match.home_team_name, match.away_team_name),
+        passAccuracy: teamStatPair(stats, ['pass accuracy', 'pass completion', 'precisao passe'], match.home_team_name, match.away_team_name),
+        goalkeeperSaves: teamStatPair(stats, ['goalkeeper saves', 'saves', 'defesas'], match.home_team_name, match.away_team_name),
         xg: statValue(stats, ['expected goals', 'xg']),
       };
 
