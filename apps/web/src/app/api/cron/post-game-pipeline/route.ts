@@ -10,13 +10,25 @@ function isAuthorized(request: NextRequest): boolean {
   return searchParams.get('secret') === cronSecret;
 }
 
+function optionalInteger(value: string | null): number | undefined {
+  if (!value) return undefined;
+  const number = Number(value);
+  return Number.isFinite(number) ? Math.trunc(number) : undefined;
+}
+
 export async function GET(request: NextRequest) {
   if (!isAuthorized(request)) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
   try {
-    const result = await runPostGamePipeline();
+    const { searchParams } = new URL(request.url);
+    const result = await runPostGamePipeline({
+      fifaStats: {
+        pdfLimit: optionalInteger(searchParams.get('fifaLimit')),
+        pdfOffset: optionalInteger(searchParams.get('fifaOffset')),
+      },
+    });
     return NextResponse.json(result);
   } catch (error) {
     return NextResponse.json(
