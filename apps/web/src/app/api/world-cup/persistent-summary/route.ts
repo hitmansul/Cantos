@@ -232,7 +232,7 @@ export async function GET() {
     const formattedMatches = matches.map((match) => {
       const stats = Array.isArray(match.stats) ? (match.stats as StatRow[]) : [];
       const summary: Summary = {
-        possession: teamStatPair(stats, ['possession', 'ball possession', 'posse'], match.home_team_name, match.away_team_name, 'possession'),
+        possession: teamStatPair(stats, ['possession', 'ball possession', 'possession percent', 'possession percentage', 'posse de bola'], match.home_team_name, match.away_team_name, 'possession', ['average possession', 'territory', 'field tilt']),
         shots: teamStatPair(stats, ['total shots', 'total attempts', 'goal attempts', 'attempts', 'shots', 'shot attempts', 'finalizacao', 'finalizacoes', 'chutes'], match.home_team_name, match.away_team_name),
         shotsOnGoal: teamStatPair(stats, ['shots on target', 'attempts on target', 'on target', 'shot on goal', 'chute no gol', 'chutes no gol', 'finalizacoes no gol'], match.home_team_name, match.away_team_name),
         corners: teamStatPair(stats, ['corner', 'corners', 'corner kick', 'corner kicks', 'escanteio', 'escanteios'], match.home_team_name, match.away_team_name),
@@ -242,7 +242,7 @@ export async function GET() {
         offsides: teamStatPair(stats, ['offsides', 'offside', 'impedimento', 'impedimentos'], match.home_team_name, match.away_team_name),
         passes: teamStatPair(stats, ['passes completed', 'total passes', 'passes attempted', 'passes'], match.home_team_name, match.away_team_name, 'passes', ['accuracy', 'completion', 'percent', 'percentage', 'precisao']),
         passAccuracy: teamStatPair(stats, ['pass accuracy', 'pass completion', 'precisao passe'], match.home_team_name, match.away_team_name, 'percent'),
-        goalkeeperSaves: teamStatPair(stats, ['goalkeeper saves', 'keeper saves', 'saves', 'defesas'], match.home_team_name, match.away_team_name),
+        goalkeeperSaves: teamStatPair(stats, ['goalkeeper saves', 'keeper saves', 'saves by goalkeeper', 'save by goalkeeper', 'defesas do goleiro'], match.home_team_name, match.away_team_name, 'generic', ['tackle', 'tackles', 'desarme', 'desarmes', 'interception', 'interceptions', 'clearance', 'clearances', 'duel', 'duels', 'blocked shot', 'defensive action']),
         xg: teamStatPair(stats, ['expected goals', 'xg'], match.home_team_name, match.away_team_name),
       };
 
