@@ -3,6 +3,8 @@ import {
   upsertWorldCupMatch,
   type WorldCupStatisticInput,
 } from '@/lib/persistence/worldCupRepository';
+// @ts-expect-error pdfjs-dist exposes this ESM build, but some TS configs do not ship its declaration path.
+import * as pdfjsLib from 'pdfjs-dist/legacy/build/pdf.mjs';
 
 const SOURCE_KEY = 'fifa';
 const FIFA_REPORT_HUB_URL = 'https://www.fifatrainingcentre.com/en/fifa-world-cup-2026/match-report-hub.php';
@@ -51,52 +53,13 @@ type FifaPdfReport = {
 };
 
 const FIFA_CODE_TO_TEAM: Record<string, string> = {
-  ARG: 'Argentina',
-  AUS: 'Austrália',
-  AUT: 'Áustria',
-  BEL: 'Bélgica',
-  BIH: 'Bósnia e Herzegovina',
-  BRA: 'Brasil',
-  CAN: 'Canadá',
-  CIV: 'Costa do Marfim',
-  COL: 'Colômbia',
-  CPV: 'Cabo Verde',
-  CRO: 'Croácia',
-  CZE: 'Tchéquia',
-  ECU: 'Equador',
-  EGY: 'Egito',
-  ENG: 'Inglaterra',
-  ESP: 'Espanha',
-  FRA: 'França',
-  GER: 'Alemanha',
-  GHA: 'Gana',
-  HAI: 'Haiti',
-  IRN: 'Irã',
-  IRQ: 'Iraque',
-  JOR: 'Jordânia',
-  JPN: 'Japão',
-  KOR: 'Coreia do Sul',
-  MAR: 'Marrocos',
-  MEX: 'México',
-  NED: 'Holanda',
-  NOR: 'Noruega',
-  NZL: 'Nova Zelândia',
-  PAN: 'Panamá',
-  PAR: 'Paraguai',
-  POR: 'Portugal',
-  QAT: 'Catar',
-  KSA: 'Arábia Saudita',
-  SCO: 'Escócia',
-  SEN: 'Senegal',
-  RSA: 'África do Sul',
-  SUI: 'Suíça',
-  SWE: 'Suécia',
-  TUN: 'Tunísia',
-  TUR: 'Turquia',
-  UKR: 'Ucrânia',
-  URU: 'Uruguai',
-  USA: 'EUA',
-  UZB: 'Uzbequistão',
+  ARG: 'Argentina', AUS: 'Austrália', AUT: 'Áustria', BEL: 'Bélgica', BIH: 'Bósnia e Herzegovina', BRA: 'Brasil',
+  CAN: 'Canadá', CIV: 'Costa do Marfim', COL: 'Colômbia', CPV: 'Cabo Verde', CRO: 'Croácia', CZE: 'Tchéquia',
+  ECU: 'Equador', EGY: 'Egito', ENG: 'Inglaterra', ESP: 'Espanha', FRA: 'França', GER: 'Alemanha', GHA: 'Gana',
+  HAI: 'Haiti', IRN: 'Irã', IRQ: 'Iraque', JOR: 'Jordânia', JPN: 'Japão', KOR: 'Coreia do Sul', MAR: 'Marrocos',
+  MEX: 'México', NED: 'Holanda', NOR: 'Noruega', NZL: 'Nova Zelândia', PAN: 'Panamá', PAR: 'Paraguai', POR: 'Portugal',
+  QAT: 'Catar', KSA: 'Arábia Saudita', SCO: 'Escócia', SEN: 'Senegal', RSA: 'África do Sul', SUI: 'Suíça', SWE: 'Suécia',
+  TUN: 'Tunísia', TUR: 'Turquia', UKR: 'Ucrânia', URU: 'Uruguai', USA: 'EUA', UZB: 'Uzbequistão',
 };
 
 const METRICS = [
@@ -160,17 +123,14 @@ function findArrayDeep(value: unknown, names: string[], depth = 0): unknown[] {
   if (Array.isArray(value)) return value;
   const record = asRecord(value);
   if (!record) return [];
-
   for (const name of names) {
     const found = record[name];
     if (Array.isArray(found)) return found;
   }
-
   for (const item of Object.values(record)) {
     const found = findArrayDeep(item, names, depth + 1);
     if (found.length > 0) return found;
   }
-
   return [];
 }
 
@@ -180,7 +140,7 @@ function metricKey(name?: string | null): string {
   if (key.includes('corner')) return 'corners';
   if (key.includes('yellow')) return 'yellow_cards';
   if (key.includes('red')) return 'red_cards';
-  if (key.includes('possession') || key.includes('ball possession')) return 'possession';
+  if (key.includes('possession')) return 'possession';
   if (key.includes('on target') || key.includes('target')) return 'shots_on_target';
   if (key.includes('attempt') || key.includes('shot')) return 'shots';
   if (key.includes('foul')) return 'fouls';
@@ -201,10 +161,7 @@ function extractTeamName(team: unknown): string | null {
 function extractMatchTeams(match: AnyRecord): { home: string | null; away: string | null } {
   const home = asRecord(match.homeTeam) ?? asRecord(match.home) ?? asRecord(match.homeCompetitor) ?? asRecord(match.home_team);
   const away = asRecord(match.awayTeam) ?? asRecord(match.away) ?? asRecord(match.awayCompetitor) ?? asRecord(match.away_team);
-  return {
-    home: extractTeamName(home) ?? textValue(match.homeTeamName, match.home_team_name),
-    away: extractTeamName(away) ?? textValue(match.awayTeamName, match.away_team_name),
-  };
+  return { home: extractTeamName(home) ?? textValue(match.homeTeamName, match.home_team_name), away: extractTeamName(away) ?? textValue(match.awayTeamName, match.away_team_name) };
 }
 
 function extractScore(match: AnyRecord, side: 'home' | 'away'): number | null {
@@ -216,18 +173,7 @@ function extractScore(match: AnyRecord, side: 'home' | 'away'): number | null {
 
 function buildStatistic(teamName: string, side: 'home' | 'away' | null, key: string, name: string, value: unknown, period: string, sourcePayload: unknown): WorldCupStatisticInput {
   const numeric = cleanNumber(value);
-  return {
-    teamName,
-    teamSide: side,
-    period,
-    metricKey: key,
-    metricName: name,
-    valueNumeric: numeric,
-    valueText: numeric === null ? textValue(value) : null,
-    sourceKey: SOURCE_KEY,
-    sourcePayload,
-    sourceUpdatedAt: new Date().toISOString(),
-  };
+  return { teamName, teamSide: side, period, metricKey: key, metricName: name, valueNumeric: numeric, valueText: numeric === null ? textValue(value) : null, sourceKey: SOURCE_KEY, sourcePayload, sourceUpdatedAt: new Date().toISOString() };
 }
 
 function rowToStatistic(row: unknown, homeName: string, awayName: string, matchRaw: unknown): WorldCupStatisticInput[] {
@@ -238,31 +184,17 @@ function rowToStatistic(row: unknown, homeName: string, awayName: string, matchR
   const period = textValue(record.period, record.phase) ?? 'match';
   const homeValue = record.homeValue ?? record.home ?? record.homeTeamValue ?? record.valueHome ?? record.home_value;
   const awayValue = record.awayValue ?? record.away ?? record.awayTeamValue ?? record.valueAway ?? record.away_value;
-
-  if (homeValue !== undefined || awayValue !== undefined) {
-    return [buildStatistic(homeName, 'home', key, name, homeValue, period, row), buildStatistic(awayName, 'away', key, name, awayValue, period, row)];
-  }
-
+  if (homeValue !== undefined || awayValue !== undefined) return [buildStatistic(homeName, 'home', key, name, homeValue, period, row), buildStatistic(awayName, 'away', key, name, awayValue, period, row)];
   const teamName = extractTeamName(record.team ?? record.competitor) ?? textValue(record.teamName, record.competitorName);
   const side = normalize(teamName) === normalize(homeName) ? 'home' : normalize(teamName) === normalize(awayName) ? 'away' : null;
   const value = record.value ?? record.statValue ?? record.amount ?? record.total;
   if (teamName && value !== undefined) return [buildStatistic(teamName, side, key, name, value, period, row)];
-
   const values = asArray(record.values ?? record.teams ?? record.competitors);
-  if (values.length >= 2) {
-    return [
-      buildStatistic(homeName, 'home', key, name, asRecord(values[0])?.value ?? values[0], period, row),
-      buildStatistic(awayName, 'away', key, name, asRecord(values[1])?.value ?? values[1], period, row),
-    ];
-  }
-
+  if (values.length >= 2) return [buildStatistic(homeName, 'home', key, name, asRecord(values[0])?.value ?? values[0], period, row), buildStatistic(awayName, 'away', key, name, asRecord(values[1])?.value ?? values[1], period, row)];
   const payloadRecord = asRecord(matchRaw);
   const homeFromPayload = payloadRecord ? payloadRecord[key + 'Home'] ?? payloadRecord[`home_${key}`] : undefined;
   const awayFromPayload = payloadRecord ? payloadRecord[key + 'Away'] ?? payloadRecord[`away_${key}`] : undefined;
-  if (homeFromPayload !== undefined || awayFromPayload !== undefined) {
-    return [buildStatistic(homeName, 'home', key, name, homeFromPayload, period, row), buildStatistic(awayName, 'away', key, name, awayFromPayload, period, row)];
-  }
-
+  if (homeFromPayload !== undefined || awayFromPayload !== undefined) return [buildStatistic(homeName, 'home', key, name, homeFromPayload, period, row), buildStatistic(awayName, 'away', key, name, awayFromPayload, period, row)];
   return [];
 }
 
@@ -274,23 +206,7 @@ function normalizeMatch(raw: unknown): NormalizedFifaMatch | null {
   const id = textValue(match.id, match.matchId, match.fifaMatchId, match.fixtureId, match.matchNumber) ?? `${teams.home}-${teams.away}`;
   const rawStats = findArrayDeep(match, ['statistics', 'stats', 'teamStatistics', 'matchStatistics']);
   const statistics = rawStats.flatMap((row) => rowToStatistic(row, teams.home!, teams.away!, raw));
-
-  return {
-    fifaMatchId: id,
-    fixtureKey: `fifa:${id}:${normalize(teams.home).replace(/\s+/g, '_')}:${normalize(teams.away).replace(/\s+/g, '_')}`,
-    homeTeamName: teams.home,
-    awayTeamName: teams.away,
-    homeScore: extractScore(match, 'home'),
-    awayScore: extractScore(match, 'away'),
-    kickoffAt: textValue(match.kickoffAt, match.startTime, match.date, match.datetime),
-    status: textValue(match.status, match.statusText) ?? 'finished',
-    groupName: textValue(match.groupName, match.group, match.group_name),
-    roundName: textValue(match.roundName, match.stage, match.round, match.phase) ?? 'Rodada',
-    venue: textValue(match.venue, asRecord(match.stadium)?.name),
-    referee: textValue(match.referee, asRecord(match.referee)?.name),
-    raw,
-    statistics,
-  };
+  return { fifaMatchId: id, fixtureKey: `fifa:${id}:${normalize(teams.home).replace(/\s+/g, '_')}:${normalize(teams.away).replace(/\s+/g, '_')}`, homeTeamName: teams.home, awayTeamName: teams.away, homeScore: extractScore(match, 'home'), awayScore: extractScore(match, 'away'), kickoffAt: textValue(match.kickoffAt, match.startTime, match.date, match.datetime), status: textValue(match.status, match.statusText) ?? 'finished', groupName: textValue(match.groupName, match.group, match.group_name), roundName: textValue(match.roundName, match.stage, match.round, match.phase) ?? 'Rodada', venue: textValue(match.venue, asRecord(match.stadium)?.name), referee: textValue(match.referee, asRecord(match.referee)?.name), raw, statistics };
 }
 
 async function fetchConfiguredFifaPayload(): Promise<unknown | null> {
@@ -301,11 +217,7 @@ async function fetchConfiguredFifaPayload(): Promise<unknown | null> {
   const contentType = response.headers.get('content-type') ?? '';
   if (contentType.includes('application/json')) return response.json();
   const text = await response.text();
-  try {
-    return JSON.parse(text);
-  } catch {
-    throw new Error('FIFA stats source did not return valid JSON.');
-  }
+  try { return JSON.parse(text); } catch { throw new Error('FIFA stats source did not return valid JSON.'); }
 }
 
 function parseConfiguredPdfUrls(): string[] {
@@ -316,7 +228,6 @@ function parseConfiguredPdfUrls(): string[] {
 async function fetchFifaReportUrls(): Promise<string[]> {
   const urls = new Set<string>(parseConfiguredPdfUrls());
   const hubUrl = process.env.FIFA_WORLD_CUP_MATCH_REPORT_HUB_URL ?? FIFA_REPORT_HUB_URL;
-
   try {
     const response = await fetch(hubUrl, { headers: { accept: 'text/html,*/*' }, next: { revalidate: 300 } });
     if (response.ok) {
@@ -324,14 +235,12 @@ async function fetchFifaReportUrls(): Promise<string[]> {
       const matches = html.match(/(?:https?:\/\/[^"'\s]+|\/[^"'\s]+)?PMSR-M\d+[-A-Z]+\.pdf/gi) ?? [];
       for (const item of matches) {
         const clean = item.replace(/&amp;/g, '&');
-        if (clean.startsWith('http')) urls.add(clean);
-        else urls.add(`${FIFA_MEDIA_BASE_URL}${clean.startsWith('/') ? clean : `/${clean}`}`);
+        urls.add(clean.startsWith('http') ? clean : `${FIFA_MEDIA_BASE_URL}${clean.startsWith('/') ? clean : `/${clean}`}`);
       }
     }
   } catch {
-    // Se o hub falhar, ainda usa URLs configuradas manualmente.
+    // URLs manuais ainda podem funcionar.
   }
-
   return [...urls];
 }
 
@@ -405,11 +314,11 @@ function parseScoreFromText(text: string): { home: number | null; away: number |
 }
 
 async function extractPdfText(url: string): Promise<{ text: string; lines: string[] }> {
-  const pdfjs = await (new Function('specifier', 'return import(specifier)'))('pdfjs-dist/legacy/build/pdf.mjs') as { getDocument: (options: AnyRecord) => { promise: Promise<any> } };
+  const getDocument = (pdfjsLib as AnyRecord).getDocument as (options: AnyRecord) => { promise: Promise<any> };
   const response = await fetch(url, { headers: { accept: 'application/pdf,*/*' }, next: { revalidate: 3600 } });
   if (!response.ok) throw new Error(`FIFA PDF ${url} retornou ${response.status}`);
   const data = new Uint8Array(await response.arrayBuffer());
-  const document = await pdfjs.getDocument({ data, disableWorker: true, useWorkerFetch: false, isEvalSupported: false }).promise;
+  const document = await getDocument({ data, disableWorker: true, useWorkerFetch: false, isEvalSupported: false }).promise;
   const lines: string[] = [];
 
   for (let pageNumber = 1; pageNumber <= document.numPages; pageNumber += 1) {
@@ -427,11 +336,7 @@ async function extractPdfText(url: string): Promise<{ text: string; lines: strin
       row.push({ x, text });
       grouped.set(y, row);
     }
-    const pageLines = [...grouped.entries()]
-      .sort((a, b) => b[0] - a[0])
-      .map(([, row]) => row.sort((a, b) => a.x - b.x).map((item) => item.text).join(' ').replace(/\s+/g, ' ').trim())
-      .filter(Boolean);
-    lines.push(...pageLines);
+    lines.push(...[...grouped.entries()].sort((a, b) => b[0] - a[0]).map(([, row]) => row.sort((a, b) => a.x - b.x).map((item) => item.text).join(' ').replace(/\s+/g, ' ').trim()).filter(Boolean));
   }
 
   return { text: lines.join('\n'), lines };
@@ -452,30 +357,16 @@ async function fetchFifaPdfReports(notes: string[]): Promise<NormalizedFifaMatch
   const urls = await fetchFifaReportUrls();
   const matches: NormalizedFifaMatch[] = [];
   let failed = 0;
-
   for (const url of urls.slice(0, 80)) {
     try {
       const report = await parseFifaPdfReport(url);
       if (!report) continue;
-      matches.push({
-        fifaMatchId: `M${report.matchNumber}`,
-        fixtureKey: `fifa:pdf:M${report.matchNumber}:${normalize(report.homeTeamName).replace(/\s+/g, '_')}:${normalize(report.awayTeamName).replace(/\s+/g, '_')}`,
-        homeTeamName: report.homeTeamName,
-        awayTeamName: report.awayTeamName,
-        homeScore: report.homeScore,
-        awayScore: report.awayScore,
-        status: 'finished',
-        groupName: null,
-        roundName: 'Rodada',
-        raw: { url: report.url, matchNumber: report.matchNumber, homeCode: report.homeCode, awayCode: report.awayCode },
-        statistics: report.statistics,
-      });
+      matches.push({ fifaMatchId: `M${report.matchNumber}`, fixtureKey: `fifa:pdf:M${report.matchNumber}:${normalize(report.homeTeamName).replace(/\s+/g, '_')}:${normalize(report.awayTeamName).replace(/\s+/g, '_')}`, homeTeamName: report.homeTeamName, awayTeamName: report.awayTeamName, homeScore: report.homeScore, awayScore: report.awayScore, status: 'finished', groupName: null, roundName: 'Rodada', raw: { url: report.url, matchNumber: report.matchNumber, homeCode: report.homeCode, awayCode: report.awayCode }, statistics: report.statistics });
     } catch (error) {
       failed += 1;
       if (failed <= 3) notes.push(error instanceof Error ? error.message : `Falha ao processar PDF FIFA ${url}.`);
     }
   }
-
   notes.push(`FIFA Match Report Hub: ${urls.length} PDFs localizados, ${matches.length} processados, ${failed} falhas.`);
   return matches;
 }
@@ -487,39 +378,18 @@ export async function importWorldCupFromFifaStats(): Promise<FifaWorldCupStatsIm
   const jsonMatches = jsonPayload ? findArrayDeep(jsonPayload, ['matches', 'games', 'fixtures', 'data']).map(normalizeMatch).filter((match): match is NormalizedFifaMatch => Boolean(match)) : [];
   const pdfMatches = await fetchFifaPdfReports(notes);
   const matchesByKey = new Map<string, NormalizedFifaMatch>();
-
   for (const match of [...jsonMatches, ...pdfMatches]) {
     const key = `${normalize(match.homeTeamName)}__${normalize(match.awayTeamName)}`;
     const existing = matchesByKey.get(key);
     if (!existing || match.statistics.length > existing.statistics.length) matchesByKey.set(key, match);
   }
-
   const matches = [...matchesByKey.values()];
   result.matchesFetched = matches.length;
-
   for (const match of matches) {
-    const matchId = await upsertWorldCupMatch({
-      fixtureKey: match.fixtureKey,
-      fifaMatchId: match.fifaMatchId,
-      homeTeamName: match.homeTeamName,
-      awayTeamName: match.awayTeamName,
-      stage: 'Copa do Mundo 2026',
-      groupName: match.groupName,
-      roundName: match.roundName,
-      status: match.status,
-      kickoffAt: match.kickoffAt,
-      venue: match.venue,
-      referee: match.referee,
-      homeScore: match.homeScore,
-      awayScore: match.awayScore,
-      sourceKey: SOURCE_KEY,
-      sourcePayload: match.raw,
-      sourceUpdatedAt: new Date().toISOString(),
-    });
+    const matchId = await upsertWorldCupMatch({ fixtureKey: match.fixtureKey, fifaMatchId: match.fifaMatchId, homeTeamName: match.homeTeamName, awayTeamName: match.awayTeamName, stage: 'Copa do Mundo 2026', groupName: match.groupName, roundName: match.roundName, status: match.status, kickoffAt: match.kickoffAt, venue: match.venue, referee: match.referee, homeScore: match.homeScore, awayScore: match.awayScore, sourceKey: SOURCE_KEY, sourcePayload: match.raw, sourceUpdatedAt: new Date().toISOString() });
     result.matchesUpserted += 1;
     if (match.statistics.length > 0) result.matchStatisticsInserted += await replaceWorldCupMatchStatistics(matchId, match.statistics, SOURCE_KEY);
   }
-
   if (matches.length === 0) notes.push('Nenhum jogo FIFA reconhecível foi encontrado no JSON ou nos PDFs oficiais.');
   if (matches.length > 0 && result.matchStatisticsInserted === 0) notes.push('Jogos FIFA reconhecidos, mas nenhuma estatística de equipe foi mapeada.');
   return result;
