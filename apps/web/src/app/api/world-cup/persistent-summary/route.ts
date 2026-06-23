@@ -4,11 +4,14 @@ import sql from '@/app/api/utils/sql';
 const WORLD_CUP_2026_KEY = 'world_cup_2026';
 
 type StatRow = {
+  source_key?: string;
+  period?: string | null;
   metric_key?: string;
   metric_name?: string;
   value_numeric?: number | null;
   value_text?: string | null;
   team_name?: string | null;
+  source_payload?: unknown;
 };
 
 function normalize(value: unknown): string {
@@ -21,19 +24,20 @@ function normalize(value: unknown): string {
     .trim();
 }
 
+function payloadText(value: unknown): string {
+  try {
+    return normalize(JSON.stringify(value ?? ''));
+  } catch {
+    return '';
+  }
+}
+
 function metricText(stat: StatRow): string {
-  return normalize(`${stat.metric_key ?? ''} ${stat.metric_name ?? ''}`);
+  return normalize(`${stat.metric_key ?? ''} ${stat.metric_name ?? ''} ${payloadText(stat.source_payload)}`);
 }
 
 function hasAny(text: string, terms: string[]): boolean {
-  return terms.some((term) => text.includes(term));
-}
-
-function statValue(stats: StatRow[], includes: string[]): string | null {
-  const found = stats.find((stat) => hasAny(metricText(stat), includes));
-  if (!found) return null;
-  if (found.value_numeric !== null && found.value_numeric !== undefined) return String(found.value_numeric);
-  return found.value_text ? String(found.value_text) : null;
+  return terms.some((term) => text.includes(normalize(term)));
 }
 
 function statDisplayValue(stat?: StatRow | null): string | number | null {
@@ -43,6 +47,13 @@ function statDisplayValue(stat?: StatRow | null): string | number | null {
   return null;
 }
 
+function sourceRank(source?: string): number {
+  if (source === 'fifa') return 1;
+  if (source === '365scores') return 2;
+  if (source === 'api-football') return 3;
+  return 9;
+}
+
 function sameTeam(left: unknown, right: unknown): boolean {
   const a = normalize(left);
   const b = normalize(right);
@@ -50,29 +61,47 @@ function sameTeam(left: unknown, right: unknown): boolean {
   return a === b || a.includes(b) || b.includes(a);
 }
 
+function statValue(stats: StatRow[], includes: string[]): string | null {
+  const found = [...stats]
+    .sort((a, b) => sourceRank(a.source_key) - sourceRank(b.source_key))
+    .find((stat) => hasAny(metricText(stat), includes));
+  const value = statDisplayValue(found);
+  return value === null ? null : String(value);
+}
+
 function teamStatPair(stats: StatRow[], includes: string[], homeName: string, awayName: string) {
-  const matched = stats.filter((stat) => hasAny(metricText(stat), includes));
+  const matched = stats
+    .filter((stat) => hasAny(metricText(stat), includes))
+    .sort((a, b) => sourceRank(a.source_key) - sourceRank(b.source_key));
+
   const home = matched.find((stat) => sameTeam(stat.team_name, homeName));
   const away = matched.find((stat) => sameTeam(stat.team_name, awayName));
 
   if (home || away) {
-    return {
-      home: statDisplayValue(home),
-      away: statDisplayValue(away),
-    };
+    return { home: statDisplayValue(home), away: statDisplayValue(away) };
   }
 
-  // Fallback: algumas fontes gravam a estatística sem nome de equipe confiável,
-  // mas enviam duas linhas na ordem mandante/visitante. Mantemos esse fallback
-  // para não esconder dados já importados no banco.
+  const firstSource = matched[0]?.source_key;
+  const sameSource = matched.filter((stat) => stat.source_key === firstSource);
+  if (sameSource.length >= 2) {
+    return { home: statDisplayValue(sameSource[0]), away: statDisplayValue(sameSource[1]) };
+  }
+
   if (matched.length >= 2) {
-    return {
-      home: statDisplayValue(matched[0]),
-      away: statDisplayValue(matched[1]),
-    };
+    return { home: statDisplayValue(matched[0]), away: statDisplayValue(matched[1]) };
   }
 
   return { home: null, away: null };
+}
+
+function countMappedValues(summary: Record<string, unknown>): number {
+  return Object.values(summary).flatMap((value) => {
+    if (value && typeof value === 'object' && 'home' in value && 'away' in value) {
+      const pair = value as { home?: unknown; away?: unknown };
+      return [pair.home, pair.away];
+    }
+    return [value];
+  }).filter((value) => value !== null && value !== undefined && value !== '').length;
 }
 
 export async function GET() {
@@ -96,11 +125,15 @@ export async function GET() {
           json_agg(
             json_build_object(
               'team_name', t.name,
+              'source_key', ms.source_key,
+              'period', ms.period,
               'metric_key', ms.metric_key,
               'metric_name', ms.metric_name,
               'value_numeric', ms.value_numeric,
-              'value_text', ms.value_text
+              'value_text', ms.value_text,
+              'source_payload', ms.source_payload
             )
+            ORDER BY CASE ms.source_key WHEN 'fifa' THEN 1 WHEN '365scores' THEN 2 WHEN 'api-football' THEN 3 ELSE 9 END, ms.metric_key, t.name
           ) FILTER (WHERE ms.id IS NOT NULL),
           '[]'::json
         ) AS stats
@@ -115,14 +148,29 @@ export async function GET() {
 
     const formattedMatches = matches.map((match) => {
       const stats = Array.isArray(match.stats) ? (match.stats as StatRow[]) : [];
-      const corners = teamStatPair(stats, ['corner', 'corners', 'escanteio', 'escanteios'], match.home_team_name, match.away_team_name);
-      const yellowCards = teamStatPair(stats, ['yellow card', 'yellow cards', 'cartao amarelo', 'cartoes amarelos'], match.home_team_name, match.away_team_name);
-      const redCards = teamStatPair(stats, ['red card', 'red cards', 'cartao vermelho', 'cartoes vermelhos'], match.home_team_name, match.away_team_name);
-      const shotsOnGoal = teamStatPair(stats, ['shots on target', 'shots_on_target', 'shot on goal', 'chute no gol', 'chutes no gol', 'finalizacoes no gol'], match.home_team_name, match.away_team_name);
-      const shots = teamStatPair(stats, ['total shots', 'shots', 'shot attempts', 'finalizacao', 'finalizacoes', 'chutes'], match.home_team_name, match.away_team_name);
-      const possession = teamStatPair(stats, ['possession', 'posse', 'ball possession'], match.home_team_name, match.away_team_name);
-      const fouls = teamStatPair(stats, ['fouls', 'foul', 'falta', 'faltas'], match.home_team_name, match.away_team_name);
+      const corners = teamStatPair(stats, ['corner', 'corners', 'corner kick', 'corner kicks', 'escanteio', 'escanteios'], match.home_team_name, match.away_team_name);
+      const yellowCards = teamStatPair(stats, ['yellow card', 'yellow cards', 'cautions', 'cartao amarelo', 'cartoes amarelos'], match.home_team_name, match.away_team_name);
+      const redCards = teamStatPair(stats, ['red card', 'red cards', 'send off', 'cartao vermelho', 'cartoes vermelhos'], match.home_team_name, match.away_team_name);
+      const shotsOnGoal = teamStatPair(stats, ['shots on target', 'attempts on target', 'on target', 'shot on goal', 'chute no gol', 'chutes no gol', 'finalizacoes no gol'], match.home_team_name, match.away_team_name);
+      const shots = teamStatPair(stats, ['total shots', 'total attempts', 'goal attempts', 'attempts', 'shots', 'shot attempts', 'finalizacao', 'finalizacoes', 'chutes'], match.home_team_name, match.away_team_name);
+      const possession = teamStatPair(stats, ['possession', 'ball possession', 'posse'], match.home_team_name, match.away_team_name);
+      const fouls = teamStatPair(stats, ['fouls committed', 'fouls', 'foul', 'falta', 'faltas'], match.home_team_name, match.away_team_name);
       const offsides = teamStatPair(stats, ['offsides', 'offside', 'impedimento', 'impedimentos'], match.home_team_name, match.away_team_name);
+      const passes = teamStatPair(stats, ['passes completed', 'passes', 'passes attempted', 'pass accuracy', 'pass completion'], match.home_team_name, match.away_team_name);
+      const goalkeeperSaves = teamStatPair(stats, ['goalkeeper saves', 'saves', 'defesas'], match.home_team_name, match.away_team_name);
+      const summary = {
+        possession,
+        shots,
+        shotsOnGoal,
+        corners,
+        yellowCards,
+        redCards,
+        fouls,
+        offsides,
+        passes,
+        goalkeeperSaves,
+        xg: statValue(stats, ['expected goals', 'xg']),
+      };
 
       return {
         id: match.id,
@@ -139,32 +187,21 @@ export async function GET() {
         venue: match.venue,
         referee: match.referee,
         statsCount: stats.length,
-        summary: {
-          possession,
-          shots,
-          shotsOnGoal,
-          corners,
-          yellowCards,
-          redCards,
-          fouls,
-          offsides,
-          xg: statValue(stats, ['expected goals', 'xg']),
-        },
+        mappedStatsCount: countMappedValues(summary),
+        sources: [...new Set(stats.map((stat) => stat.source_key).filter(Boolean))],
+        summary,
         rawStats: stats,
       };
     });
 
     return NextResponse.json({
       competition: WORLD_CUP_2026_KEY,
-      priority: 'FIFA first. Persistent table currently stores imported match statistics when the pipeline has already collected them.',
+      priority: 'FIFA first, then 365Scores, then API-Football when the same metric exists from more than one source.',
       matches: formattedMatches,
       lastUpdated: new Date().toISOString(),
     });
   } catch (error) {
     console.error('world cup persistent summary error:', error);
-    return NextResponse.json(
-      { error: 'Failed to load persistent World Cup data', matches: [] },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: 'Failed to load persistent World Cup data', matches: [] }, { status: 500 });
   }
 }
