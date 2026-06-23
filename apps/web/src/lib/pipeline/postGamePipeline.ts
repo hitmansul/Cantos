@@ -2,9 +2,13 @@ import { upsertAiKnowledgeDocument } from '@/lib/persistence/aiRepository';
 import { touchDataSource } from '@/lib/persistence/database';
 import { getWorldCupDatabaseSummary } from '@/lib/persistence/worldCupRepository';
 import { importWorldCupFrom365Scores } from './worldCupScores365Importer';
-import { importWorldCupFromFifaStats } from './worldCupFifaMatchStatsImporter';
+import { importWorldCupFromFifaStats, type FifaStatsImportOptions } from './worldCupFifaMatchStatsImporter';
 import { runWorldCupPipeline } from './worldCupPipeline';
 import { SOURCE_AUDIT } from './sourceAudit';
+
+export type PostGamePipelineOptions = {
+  fifaStats?: FifaStatsImportOptions;
+};
 
 export type PostGamePipelineResult = {
   success: boolean;
@@ -53,7 +57,7 @@ function buildPersistentKnowledge(
   ].join('\n');
 }
 
-export async function runPostGamePipeline(): Promise<PostGamePipelineResult> {
+export async function runPostGamePipeline(options: PostGamePipelineOptions = {}): Promise<PostGamePipelineResult> {
   const ranAt = new Date().toISOString();
   const steps: PostGamePipelineResult['steps'] = [];
   const imports: PostGamePipelineResult['imports'] = {};
@@ -68,27 +72,13 @@ export async function runPostGamePipeline(): Promise<PostGamePipelineResult> {
   });
 
   if (worldCup.skipped) {
-    steps.push({
-      name: 'Importar estatisticas FIFA pos-jogo',
-      status: 'skipped',
-      detail: 'Banco indisponivel; importação FIFA pós-jogo não foi executada.',
-    });
-    steps.push({
-      name: 'Complementar com 365Scores',
-      status: 'skipped',
-      detail: 'Banco indisponivel; importação de resultados e classificação não foi executada.',
-    });
-
-    return {
-      success: true,
-      ranAt,
-      steps,
-      audit: SOURCE_AUDIT,
-    };
+    steps.push({ name: 'Importar estatisticas FIFA pos-jogo', status: 'skipped', detail: 'Banco indisponivel; importação FIFA pós-jogo não foi executada.' });
+    steps.push({ name: 'Complementar com 365Scores', status: 'skipped', detail: 'Banco indisponivel; importação de resultados e classificação não foi executada.' });
+    return { success: true, ranAt, steps, audit: SOURCE_AUDIT };
   }
 
   try {
-    const fifaStats = await importWorldCupFromFifaStats();
+    const fifaStats = await importWorldCupFromFifaStats(options.fifaStats);
     imports.fifaStats = fifaStats;
     await touchDataSource('fifa');
     steps.push({
@@ -101,18 +91,13 @@ export async function runPostGamePipeline(): Promise<PostGamePipelineResult> {
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Erro desconhecido ao importar estatísticas FIFA.';
     await touchDataSource('fifa', message).catch(() => undefined);
-    steps.push({
-      name: 'Importar estatisticas FIFA pos-jogo',
-      status: 'skipped',
-      detail: `Falha na importação FIFA pós-jogo: ${message}`,
-    });
+    steps.push({ name: 'Importar estatisticas FIFA pos-jogo', status: 'skipped', detail: `Falha na importação FIFA pós-jogo: ${message}` });
   }
 
   try {
     const scores365 = await importWorldCupFrom365Scores();
     imports.scores365 = scores365;
     await touchDataSource('365scores');
-
     steps.push({
       name: 'Complementar com 365Scores',
       status: 'completed',
@@ -121,18 +106,10 @@ export async function runPostGamePipeline(): Promise<PostGamePipelineResult> {
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Erro desconhecido ao importar 365Scores.';
     await touchDataSource('365scores', message).catch(() => undefined);
-    steps.push({
-      name: 'Complementar com 365Scores',
-      status: 'skipped',
-      detail: `Falha na importação 365Scores: ${message}`,
-    });
+    steps.push({ name: 'Complementar com 365Scores', status: 'skipped', detail: `Falha na importação 365Scores: ${message}` });
   }
 
-  steps.push({
-    name: 'Complementar com API-Football',
-    status: 'skipped',
-    detail: 'API-Football permanece como fallback para próxima etapa. Nenhum dado fictício foi criado.',
-  });
+  steps.push({ name: 'Complementar com API-Football', status: 'skipped', detail: 'API-Football permanece como fallback para próxima etapa. Nenhum dado fictício foi criado.' });
 
   const summary = (await getWorldCupDatabaseSummary()) as Record<string, unknown>;
 
@@ -141,27 +118,12 @@ export async function runPostGamePipeline(): Promise<PostGamePipelineResult> {
     key: 'world-cup-persistent-summary-2026',
     title: 'Resumo persistente da Copa do Mundo 2026',
     content: buildPersistentKnowledge(summary, imports.fifaStats, imports.scores365),
-    metadata: {
-      summary,
-      imports,
-      ranAt,
-    },
+    metadata: { summary, imports, ranAt },
     sourceKey: imports.fifaStats?.configured ? 'fifa' : '365scores',
     sourceUpdatedAt: ranAt,
   });
 
-  steps.push({
-    name: 'Atualizar IA',
-    status: 'completed',
-    detail: 'Documento consultável da Copa foi atualizado com o resumo persistente do banco.',
-  });
+  steps.push({ name: 'Atualizar IA', status: 'completed', detail: 'Documento consultável da Copa foi atualizado com o resumo persistente do banco.' });
 
-  return {
-    success: true,
-    ranAt,
-    steps,
-    audit: SOURCE_AUDIT,
-    summary,
-    imports,
-  };
+  return { success: true, ranAt, steps, audit: SOURCE_AUDIT, summary, imports };
 }
