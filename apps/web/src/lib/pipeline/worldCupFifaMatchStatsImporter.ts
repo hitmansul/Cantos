@@ -57,22 +57,33 @@ const FIFA_CODE_TO_TEAM: Record<string, string> = {
   HAI: 'Haiti', IRN: 'Irã', IRQ: 'Iraque', JOR: 'Jordânia', JPN: 'Japão', KOR: 'Coreia do Sul', MAR: 'Marrocos',
   MEX: 'México', NED: 'Holanda', NOR: 'Noruega', NZL: 'Nova Zelândia', PAN: 'Panamá', PAR: 'Paraguai', POR: 'Portugal',
   QAT: 'Catar', KSA: 'Arábia Saudita', SCO: 'Escócia', SEN: 'Senegal', RSA: 'África do Sul', SUI: 'Suíça', SWE: 'Suécia',
-  TUN: 'Tunísia', TUR: 'Turquia', UKR: 'Ucrânia', URU: 'Uruguai', USA: 'EUA', UZB: 'Uzbequistão',
+  TUN: 'Tunísia', TUR: 'Turquia', UKR: 'Ucrânia', URU: 'Uruguai', USA: 'EUA', UZB: 'Uzbequistão', ALG: 'Argélia',
 };
 
 const METRICS: MetricDefinition[] = [
   { key: 'possession', name: 'Posse de bola', labels: ['possession', 'ball possession', 'posse de bola'], kind: 'percent' },
-  { key: 'expected_goals', name: 'Gols esperados (xG)', labels: ['expected goals', 'xg', 'gols esperados'], kind: 'decimal' },
-  { key: 'shots', name: 'Finalizações', labels: ['total shots', 'goal attempts', 'attempts at goal', 'shots', 'finalizacoes', 'finalizações'], kind: 'number' },
-  { key: 'shots_on_target', name: 'Chutes no gol', labels: ['shots on target', 'on target', 'chutes no gol'], kind: 'number' },
+  { key: 'expected_goals', name: 'Gols esperados (xG)', labels: ['expected goals', 'expected goals xg', 'xg', 'gols esperados'], kind: 'decimal' },
+  { key: 'shots', name: 'Finalizações', labels: ['total shots', 'goal attempts', 'attempts at goal', 'attempts', 'shots', 'finalizacoes', 'finalizações'], kind: 'number', exclude: ['on target', 'no gol'] },
+  { key: 'shots_on_target', name: 'Chutes no gol', labels: ['shots on target', 'attempts on target', 'on target', 'chutes no gol'], kind: 'number' },
   { key: 'corners', name: 'Escanteios', labels: ['corner kicks', 'corners', 'escanteios'], kind: 'number' },
   { key: 'yellow_cards', name: 'Cartões amarelos', labels: ['yellow cards', 'cartoes amarelos', 'cartões amarelos'], kind: 'number' },
   { key: 'red_cards', name: 'Cartões vermelhos', labels: ['red cards', 'cartoes vermelhos', 'cartões vermelhos'], kind: 'number' },
-  { key: 'fouls', name: 'Faltas', labels: ['fouls', 'faltas'], kind: 'number' },
+  { key: 'fouls', name: 'Faltas', labels: ['fouls committed', 'fouls', 'faltas'], kind: 'number' },
   { key: 'offsides', name: 'Impedimentos', labels: ['offsides', 'impedimentos'], kind: 'number' },
-  { key: 'passes', name: 'Passes totais', labels: ['total passes', 'passes attempted', 'passes'], kind: 'number', exclude: ['accuracy', 'accurate', 'completion', 'precisao', 'precisão'] },
+  { key: 'passes', name: 'Passes totais', labels: ['total passes', 'passes attempted', 'passes'], kind: 'number', exclude: ['accuracy', 'accurate', 'completion', 'completed', 'precisao', 'precisão'] },
+  { key: 'completed_passes', name: 'Passes certos', labels: ['completed passes', 'successful passes', 'accurate passes', 'passes completed'], kind: 'number', exclude: ['accuracy', 'percent', '%'] },
   { key: 'pass_accuracy', name: 'Precisão de passes', labels: ['pass accuracy', 'passing accuracy', 'pass completion', 'precisao de passes', 'precisão de passes'], kind: 'percent' },
-  { key: 'goalkeeper_saves', name: 'Defesas do goleiro', labels: ['goalkeeper saves', 'keeper saves', 'defesas do goleiro'], kind: 'number', exclude: ['tackles', 'desarmes', 'clearances', 'interceptions'] },
+  { key: 'goalkeeper_saves', name: 'Defesas do goleiro', labels: ['goalkeeper saves', 'keeper saves', 'saves by goalkeeper', 'defesas do goleiro'], kind: 'number', exclude: ['tackles', 'desarmes', 'clearances', 'interceptions'] },
+  { key: 'tackles', name: 'Desarmes', labels: ['tackles', 'desarmes'], kind: 'number', exclude: ['won %', 'accuracy'] },
+  { key: 'clearances', name: 'Cortes', labels: ['clearances', 'cortes'], kind: 'number' },
+  { key: 'interceptions', name: 'Interceptações', labels: ['interceptions', 'interceptacoes', 'interceptações'], kind: 'number' },
+  { key: 'blocks', name: 'Bloqueios', labels: ['blocks', 'blocked shots', 'bloqueios'], kind: 'number' },
+  { key: 'crosses', name: 'Cruzamentos', labels: ['crosses', 'cruzamentos'], kind: 'number', exclude: ['accuracy', 'successful'] },
+  { key: 'successful_crosses', name: 'Cruzamentos certos', labels: ['successful crosses', 'accurate crosses', 'completed crosses'], kind: 'number' },
+  { key: 'duels_won', name: 'Duelos ganhos', labels: ['duels won', 'duelos ganhos'], kind: 'number' },
+  { key: 'aerial_duels_won', name: 'Duelos aéreos ganhos', labels: ['aerial duels won', 'duelos aereos ganhos', 'duelos aéreos ganhos'], kind: 'number' },
+  { key: 'recoveries', name: 'Bolas recuperadas', labels: ['recoveries', 'ball recoveries', 'bolas recuperadas'], kind: 'number' },
+  { key: 'total_distance', name: 'Distância percorrida', labels: ['total distance covered', 'distance covered', 'distancia percorrida', 'distância percorrida'], kind: 'decimal' },
 ];
 
 function normalize(value: unknown): string {
@@ -88,7 +99,9 @@ function normalize(value: unknown): string {
 function cleanNumber(value: unknown): number | null {
   if (value === null || value === undefined || value === '') return null;
   const text = String(value).replace('%', '').replace(',', '.').trim();
-  const number = Number(text);
+  const match = text.match(/-?\d+(?:\.\d+)?/);
+  if (!match) return null;
+  const number = Number(match[0]);
   return Number.isFinite(number) ? number : null;
 }
 
@@ -187,7 +200,7 @@ function extractPairFromLine(line: string, metric: MetricDefinition): { home: nu
 }
 
 function extractPairNearMetric(lines: string[], index: number, metric: MetricDefinition): { home: number | string | null; away: number | string | null } | null {
-  for (const offset of [0, 1, -1, 2, -2, 3, -3]) {
+  for (const offset of [0, 1, -1, 2, -2, 3, -3, 4, -4]) {
     const line = lines[index + offset];
     if (!line) continue;
     const pair = extractPairFromLine(line, metric);
@@ -203,14 +216,20 @@ function parseScore(text: string): { home: number | null; away: number | null } 
 
 function parseStatistics(lines: string[], homeTeamName: string, awayTeamName: string, sourcePayload: AnyRecord): WorldCupStatisticInput[] {
   const stats: WorldCupStatisticInput[] = [];
+  const seen = new Set<string>();
 
   for (const metric of METRICS) {
-    const index = lines.findIndex((line) => looksLikeMetric(line, metric));
-    if (index < 0) continue;
-    const pair = extractPairNearMetric(lines, index, metric);
-    if (!pair) continue;
-    stats.push(buildStatistic(homeTeamName, 'home', metric, pair.home, { ...sourcePayload, line: lines[index] }));
-    stats.push(buildStatistic(awayTeamName, 'away', metric, pair.away, { ...sourcePayload, line: lines[index] }));
+    const indexes = lines.map((line, index) => ({ line, index })).filter((item) => looksLikeMetric(item.line, metric)).map((item) => item.index);
+    for (const index of indexes) {
+      const pair = extractPairNearMetric(lines, index, metric);
+      if (!pair) continue;
+      const key = `${metric.key}:${String(pair.home)}:${String(pair.away)}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      stats.push(buildStatistic(homeTeamName, 'home', metric, pair.home, { ...sourcePayload, line: lines[index] }));
+      stats.push(buildStatistic(awayTeamName, 'away', metric, pair.away, { ...sourcePayload, line: lines[index] }));
+      break;
+    }
   }
 
   return stats;
@@ -289,25 +308,102 @@ async function fetchConfiguredFifaPayload(): Promise<unknown | null> {
   }
 }
 
+function valueFromRecord(record: AnyRecord, keys: string[]): unknown {
+  for (const key of keys) {
+    if (record[key] !== undefined && record[key] !== null && record[key] !== '') return record[key];
+  }
+  return null;
+}
+
+function metricFromName(name: unknown): MetricDefinition | null {
+  const text = normalize(name);
+  if (!text) return null;
+  return METRICS.find((metric) => looksLikeMetric(text, metric)) ?? METRICS.find((metric) => metric.key === text.replace(/\s+/g, '_')) ?? null;
+}
+
+function extractJsonPair(raw: unknown, metric: MetricDefinition): { home: unknown; away: unknown } | null {
+  const record = asRecord(raw);
+  if (!record) return null;
+
+  const directHome = valueFromRecord(record, ['home', 'homeValue', 'home_value', 'homeTeamValue', 'home_team_value', 'homeStat', 'home_stat']);
+  const directAway = valueFromRecord(record, ['away', 'awayValue', 'away_value', 'awayTeamValue', 'away_team_value', 'awayStat', 'away_stat']);
+  if (directHome !== null || directAway !== null) return { home: directHome, away: directAway };
+
+  const values = findArrayDeep(record, ['values', 'items', 'competitors', 'teams'], 0);
+  if (values.length >= 2) {
+    const first = asRecord(values[0]);
+    const second = asRecord(values[1]);
+    const home = first ? valueFromRecord(first, ['value', 'statValue', 'numericValue', 'displayValue', 'score']) : values[0];
+    const away = second ? valueFromRecord(second, ['value', 'statValue', 'numericValue', 'displayValue', 'score']) : values[1];
+    return { home, away };
+  }
+
+  const pair = extractPairFromLine(JSON.stringify(raw), metric);
+  return pair ? { home: pair.home, away: pair.away } : null;
+}
+
+function parseJsonStatistics(raw: AnyRecord, homeTeamName: string, awayTeamName: string): WorldCupStatisticInput[] {
+  const stats: WorldCupStatisticInput[] = [];
+  const seen = new Set<string>();
+  const candidates = [raw.statistics, raw.stats, raw.matchStatistics, raw.teamStatistics, raw.match_stats, raw.team_stats].filter(Boolean);
+
+  for (const candidate of candidates) {
+    if (Array.isArray(candidate)) {
+      for (const item of candidate) {
+        const record = asRecord(item);
+        if (!record) continue;
+        const metric = metricFromName(valueFromRecord(record, ['metricKey', 'metric_key', 'key', 'type', 'name', 'label', 'title', 'statName', 'stat_name']));
+        if (!metric) continue;
+        const pair = extractJsonPair(record, metric);
+        if (!pair) continue;
+        const key = `${metric.key}:${String(pair.home)}:${String(pair.away)}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        stats.push(buildStatistic(homeTeamName, 'home', metric, pair.home, item));
+        stats.push(buildStatistic(awayTeamName, 'away', metric, pair.away, item));
+      }
+    } else {
+      const record = asRecord(candidate);
+      if (!record) continue;
+      for (const [key, value] of Object.entries(record)) {
+        const metric = metricFromName(key);
+        if (!metric) continue;
+        let pair: { home: unknown; away: unknown } | null = null;
+        if (Array.isArray(value) && value.length >= 2) pair = { home: value[0], away: value[1] };
+        if (!pair) pair = extractJsonPair(value, metric);
+        if (!pair) continue;
+        const dedupe = `${metric.key}:${String(pair.home)}:${String(pair.away)}`;
+        if (seen.has(dedupe)) continue;
+        seen.add(dedupe);
+        stats.push(buildStatistic(homeTeamName, 'home', metric, pair.home, { key, value }));
+        stats.push(buildStatistic(awayTeamName, 'away', metric, pair.away, { key, value }));
+      }
+    }
+  }
+
+  return stats;
+}
+
 function normalizeJsonMatch(raw: unknown): NormalizedFifaMatch | null {
   const match = asRecord(raw);
   if (!match) return null;
-  const homeTeamName = String(match.homeTeamName ?? match.home_team_name ?? asRecord(match.homeTeam)?.name ?? '').trim();
-  const awayTeamName = String(match.awayTeamName ?? match.away_team_name ?? asRecord(match.awayTeam)?.name ?? '').trim();
+  const homeTeamName = String(match.homeTeamName ?? match.home_team_name ?? asRecord(match.homeTeam)?.name ?? asRecord(match.home_team)?.name ?? '').trim();
+  const awayTeamName = String(match.awayTeamName ?? match.away_team_name ?? asRecord(match.awayTeam)?.name ?? asRecord(match.away_team)?.name ?? '').trim();
   if (!homeTeamName || !awayTeamName) return null;
 
-  const fifaMatchId = String(match.id ?? match.matchId ?? match.fifaMatchId ?? `${homeTeamName}-${awayTeamName}`);
+  const fifaMatchId = String(match.id ?? match.matchId ?? match.fifaMatchId ?? match.match_id ?? `${homeTeamName}-${awayTeamName}`);
   return {
     fifaMatchId,
     fixtureKey: `fifa:json:${fifaMatchId}:${normalize(homeTeamName).replace(/\s+/g, '_')}:${normalize(awayTeamName).replace(/\s+/g, '_')}`,
     homeTeamName,
     awayTeamName,
-    homeScore: cleanNumber(match.homeScore ?? match.home_score),
-    awayScore: cleanNumber(match.awayScore ?? match.away_score),
+    homeScore: cleanNumber(match.homeScore ?? match.home_score ?? asRecord(match.score)?.home),
+    awayScore: cleanNumber(match.awayScore ?? match.away_score ?? asRecord(match.score)?.away),
     groupName: String(match.groupName ?? match.group ?? '').trim() || null,
     roundName: String(match.roundName ?? match.round ?? match.stage ?? 'Rodada'),
+    status: String(match.status ?? 'finished'),
     raw,
-    statistics: [],
+    statistics: parseJsonStatistics(match, homeTeamName, awayTeamName),
   };
 }
 
@@ -387,5 +483,6 @@ export async function importWorldCupFromFifaStats(options: FifaStatsImportOption
 
   if (matches.length === 0) notes.push('Nenhum jogo FIFA reconhecível foi encontrado no lote atual.');
   if (matches.length > 0 && result.matchStatisticsInserted === 0) notes.push('Jogos FIFA reconhecidos, mas nenhuma estatística de equipe foi mapeada neste lote.');
+  if (result.matchStatisticsInserted > 0) notes.push('Importação FIFA expandida: JSON configurado e PDFs oficiais agora tentam mapear métricas adicionais de equipe.');
   return result;
 }
