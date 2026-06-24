@@ -152,6 +152,59 @@ export async function answerWorldCupFromDatabase(question: string): Promise<stri
   }
 
   if (
+    q.includes('resultado') ||
+    q.includes('placar') ||
+    q.includes('venceu') ||
+    q.includes('quem ganhou') ||
+    q.includes('quanto terminou') ||
+    q.includes('quanto foi') ||
+    q.includes('score')
+  ) {
+    const matches = await sql`
+      SELECT
+        id,
+        home_team_name,
+        away_team_name,
+        home_score,
+        away_score,
+        status,
+        kickoff_at
+      FROM world_cup_matches
+      WHERE competition_key = ${WORLD_CUP_2026_KEY}
+      ORDER BY kickoff_at DESC NULLS LAST, id DESC
+      LIMIT 100
+    `;
+
+    const selected = matches
+      .map((match) => ({
+        match,
+        score: scoreMatch(question, match.home_team_name, match.away_team_name),
+      }))
+      .filter((item) => item.score > 0)
+      .sort((a, b) => b.score - a.score)[0]?.match;
+
+    if (!selected) return null;
+
+    let winner = 'Empate';
+    if (selected.home_score !== null && selected.away_score !== null) {
+      if (Number(selected.home_score) > Number(selected.away_score)) {
+        winner = selected.home_team_name;
+      } else if (Number(selected.away_score) > Number(selected.home_score)) {
+        winner = selected.away_team_name;
+      }
+    } else {
+      winner = 'Resultado ainda não informado';
+    }
+
+    return [
+      `Resultado: ${selected.home_team_name} ${selected.home_score ?? '-'} x ${selected.away_score ?? '-'} ${selected.away_team_name}`,
+      '',
+      `Vencedor: ${winner}`,
+      `Status: ${selected.status ?? 'não informado'}`,
+    ].join('\n');
+  }
+
+  if (
     q.includes('quantos escanteios') ||
     q.includes('escanteios teve') ||
     q.includes('total de escanteios') ||
