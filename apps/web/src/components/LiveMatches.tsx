@@ -5,35 +5,345 @@ import { AlertCircle, BarChart3, Clock, CornerUpRight, Radio, RefreshCw, Trophy,
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { FutureMatchPrediction } from '@/components/FutureMatchPrediction';
 
 type PeriodKey = 'firstHalf' | 'secondHalf';
-type PeriodSummary = { totalStoppedMinutes?: number | null; predictedAddedMinutes?: number | null; actualAddedMinutes?: number | null; source?: string; kind?: string; incidents?: Array<{ startAt: string; endAt?: string; durationMs: number; reason: string; period?: PeriodKey; timeline?: string }> };
-type LiveMatch = { id: number; minute: number | string; statusText: string; homeTeam: { id: number; name: string; score: number }; awayTeam: { id: number; name: string; score: number }; competition?: string; competitionId: number; corners?: { home: number; away: number; total: number }; liveStats?: Array<{ key: string; label: string; home: string; away: string }>; statsSource?: '365scores' | 'sofascore' | 'api-football'; source?: string; sourceIds?: { scores365?: number; sofascore?: number; apiFootball?: number }; stoppage?: { totalStoppedMinutes?: number; predictedAddedMinutes?: number; actualAddedMinutes?: number; kind?: string; source?: string; incidents?: PeriodSummary['incidents']; periods?: { firstHalf?: PeriodSummary; secondHalf?: PeriodSummary } }; periodStoppage?: { firstHalf?: PeriodSummary; secondHalf?: PeriodSummary } };
 
-const COMPETITION_ICONS: Record<number, string> = { 113: '🇧🇷', 116: '🇧🇷', 117: '🇧🇷', 7: '🏴', 17: '🇮🇹', 25: '🇩🇪', 35: '🇫🇷', 572: '🏆', 573: '🏆', 71: '🇧🇷', 72: '🇧🇷', 73: '🇧🇷', 2: '🏆', 3: '🏆', 848: '🏆', 39: '🏴', 40: '🏴', 140: '🇪🇸', 135: '🇮🇹', 78: '🇩🇪', 61: '🇫🇷', 88: '🇳🇱', 94: '🇵🇹', 65: '🇧🇪', 203: '🇹🇷', 197: '🇬🇷', 179: '🏴', 128: '🇦🇷', 13: '🏆' };
-const TEAM_ALIASES: Record<string, string> = { jordania: 'jordan', jordan: 'jordan', argelia: 'algeria', algeria: 'algeria', noruega: 'norway', norway: 'norway', senegal: 'senegal', 'cabo verde': 'cape verde islands', 'cape verde': 'cape verde islands', 'cape verde islands': 'cape verde islands', uruguai: 'uruguay', uruguay: 'uruguay', 'estados unidos': 'usa', eua: 'usa', usa: 'usa', alemanha: 'germany', germany: 'germany', mexico: 'mexico', 'coreia do sul': 'korea republic', 'korea republic': 'korea republic', brasil: 'brazil', brazil: 'brazil', espanha: 'spain', franca: 'france', argentina: 'argentina', portugal: 'portugal', marrocos: 'morocco', ira: 'ir iran', iran: 'ir iran', catar: 'qatar', qatar: 'qatar', 'arabia saudita': 'saudi arabia', holanda: 'netherlands', 'paises baixos': 'netherlands', turquia: 'turkiye', egito: 'egypt', paraguai: 'paraguay', colombia: 'colombia', equador: 'ecuador', panama: 'panama', canada: 'canada', australia: 'australia', japao: 'japan', suica: 'switzerland', switzerland: 'switzerland', iraque: 'iraq', iraq: 'iraq' };
-function baseNorm(value: unknown) { return String(value ?? '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/\b(fc|cf|sc|ac|ec|club|clube|futebol|sport|sporting|real|atletico)\b/g, '').replace(/[^a-z0-9]+/g, ' ').replace(/\s+/g, ' ').trim(); }
-function norm(value: unknown) { const key = baseNorm(value); return TEAM_ALIASES[key] ?? key; }
-function competitionKey(value: unknown) { const key = baseNorm(value); if (key.includes('copa do mundo') || key.includes('world cup')) return 'world cup'; return key; }
-function teamPairKey(match: Pick<LiveMatch, 'homeTeam' | 'awayTeam'>) { return [norm(match.homeTeam.name), norm(match.awayTeam.name)].sort().join('__vs__'); }
-function matchKey(match: LiveMatch) { return `${competitionKey(match.competition)}__${teamPairKey(match)}`; }
-function sourceRank(match: LiveMatch) { if (match.sourceIds?.scores365 || match.source === '365scores') return 1; if (match.sourceIds?.sofascore || match.statsSource === 'sofascore') return 2; if (match.sourceIds?.apiFootball || match.statsSource === 'api-football') return 3; return 9; }
-function currentPeriod(match: LiveMatch): PeriodKey { const raw = `${match.minute ?? ''} ${match.statusText ?? ''}`.toLowerCase(); if (raw.includes('2h') || raw.includes('2nd') || raw.includes('second') || raw.includes('segundo')) return 'secondHalf'; const n = typeof match.minute === 'number' ? match.minute : Number(String(match.minute).match(/\d{1,3}/)?.[0]); return Number.isFinite(n) && n > 45 ? 'secondHalf' : 'firstHalf'; }
-function periodSummary(match: LiveMatch, period: PeriodKey): PeriodSummary | null { return match.periodStoppage?.[period] ?? match.stoppage?.periods?.[period] ?? null; }
-function formatMinutes(value?: number | null, prefix = '') { if (value === null || value === undefined || value <= 0) return 'não informado'; return `${prefix}${value.toFixed(1).replace('.0', '')} min`; }
-function sourceLabel(source?: string) { if (!source) return 'fonte ao vivo'; if (source.includes('365scores')) return '365Scores'; if (source.includes('sofascore')) return 'SofaScore'; if (source.includes('api-football')) return 'API-Football'; return 'fonte ao vivo'; }
-function refereeAddedMinutes(summary?: PeriodSummary | null) { return summary?.actualAddedMinutes && summary.actualAddedMinutes > 0 ? summary.actualAddedMinutes : null; }
-function summaryHasData(summary?: PeriodSummary | null) { return !!summary && ((summary.totalStoppedMinutes ?? 0) > 0 || (summary.predictedAddedMinutes ?? 0) > 0 || refereeAddedMinutes(summary) !== null || (summary.incidents?.length ?? 0) > 0); }
-function minuteInfo(match: LiveMatch) { const raw = String(match.minute || match.statusText || ''); const period = currentPeriod(match); const summary = periodSummary(match, period); return { display: typeof match.minute === 'number' ? `${match.minute}'` : raw || match.statusText, actual: refereeAddedMinutes(summary), predicted: summary?.predictedAddedMinutes ?? null, stopped: summary?.totalStoppedMinutes ?? null, summary, period }; }
-function mergeSummary(base?: PeriodSummary | null, incoming?: PeriodSummary | null): PeriodSummary | undefined { if (!base) return incoming ?? undefined; if (!incoming) return base; return { ...base, totalStoppedMinutes: base.totalStoppedMinutes ?? incoming.totalStoppedMinutes, predictedAddedMinutes: base.predictedAddedMinutes ?? incoming.predictedAddedMinutes, actualAddedMinutes: base.actualAddedMinutes ?? incoming.actualAddedMinutes, source: base.source ?? incoming.source, kind: base.kind ?? incoming.kind, incidents: (incoming.incidents?.length ?? 0) > (base.incidents?.length ?? 0) ? incoming.incidents : base.incidents }; }
-function mergeMatch(base: LiveMatch, incoming: LiveMatch): LiveMatch { const preferred = sourceRank(incoming) < sourceRank(base) ? incoming : base; const other = preferred === base ? incoming : base; return { ...preferred, competition: preferred.competition ?? other.competition, competitionId: preferred.competitionId || other.competitionId, corners: preferred.corners ?? other.corners, liveStats: preferred.liveStats ?? other.liveStats, statsSource: preferred.statsSource ?? other.statsSource, sourceIds: { ...other.sourceIds, ...preferred.sourceIds }, periodStoppage: { firstHalf: mergeSummary(preferred.periodStoppage?.firstHalf ?? preferred.stoppage?.periods?.firstHalf, other.periodStoppage?.firstHalf ?? other.stoppage?.periods?.firstHalf), secondHalf: mergeSummary(preferred.periodStoppage?.secondHalf ?? preferred.stoppage?.periods?.secondHalf, other.periodStoppage?.secondHalf ?? other.stoppage?.periods?.secondHalf) } }; }
-function dedupeMatches(matches: LiveMatch[]) { const byPair = new Map<string, LiveMatch>(); for (const match of matches) { const key = matchKey(match); const existing = byPair.get(key); byPair.set(key, existing ? mergeMatch(existing, match) : match); } return Array.from(byPair.values()).sort((a, b) => sourceRank(a) - sourceRank(b) || competitionKey(a.competition).localeCompare(competitionKey(b.competition))); }
+type StoppageIncident = {
+  startAt: string;
+  endAt?: string;
+  durationMs: number;
+  reason: string;
+  period?: PeriodKey;
+  timeline?: string;
+};
 
-function LiveMatchCard({ match, selected, onClick }: { match: LiveMatch; selected?: boolean; onClick?: () => void }) { const icon = COMPETITION_ICONS[match.competitionId] || '⚽'; const info = minuteInfo(match); return <Card role="button" tabIndex={0} onClick={onClick} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick?.(); } }} className={`cursor-pointer border-emerald-500/30 bg-gradient-to-br from-emerald-500/5 to-green-500/5 p-4 transition-all hover:border-emerald-400/50 ${selected ? 'ring-2 ring-emerald-500/60 border-emerald-400' : ''}`}><div className="mb-3 flex flex-wrap items-center justify-between gap-2"><div className="flex items-center gap-2"><span className="text-lg">{icon}</span><span className="text-xs text-muted-foreground">{match.competition || 'Competição'}</span></div><Badge className="border-red-500/30 bg-red-500/20 text-red-400"><Radio className="mr-1 h-3 w-3" />AO VIVO</Badge></div><div className="grid items-center gap-3 md:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]"><p className="font-semibold md:text-right">{match.homeTeam.name}</p><div className="flex min-w-[150px] flex-col items-center"><div className="flex gap-2 text-2xl font-bold"><span className={match.homeTeam.score > match.awayTeam.score ? 'text-emerald-400' : ''}>{match.homeTeam.score}</span><span className="text-muted-foreground">-</span><span className={match.awayTeam.score > match.homeTeam.score ? 'text-emerald-400' : ''}>{match.awayTeam.score}</span></div><Badge variant="outline" className="mt-1 border-emerald-500/20 bg-emerald-500/10 text-emerald-400"><Clock className="mr-1 h-3 w-3" />{info.display}</Badge><div className="mt-2 grid gap-1 text-[11px]"><Badge variant="outline" className="justify-center bg-amber-500/10 text-amber-300 border-amber-500/20">Previsão de Acréscimo: {formatMinutes(info.predicted, '+')}</Badge><Badge variant="outline" className="justify-center border-border/70 bg-background/40 text-muted-foreground">Acréscimo dado pelo Árbitro: {formatMinutes(info.actual, '+')}</Badge></div></div><p className="font-semibold">{match.awayTeam.name}</p></div>{match.corners && <div className="mt-3 border-t border-border/50 pt-3"><div className="flex items-center justify-center gap-4 text-sm"><div className="flex items-center gap-1 text-amber-400"><CornerUpRight className="h-4 w-4" />{match.corners.home}</div><span className="text-muted-foreground">Escanteios</span><div className="flex items-center gap-1 text-amber-400">{match.corners.away}<CornerUpRight className="h-4 w-4 scale-x-[-1]" /></div></div><p className="mt-1 text-center text-xs text-muted-foreground">Total: {match.corners.total}</p></div>}</Card>; }
-function PeriodCard({ title, summary }: { title: string; summary: PeriodSummary | null }) { const has = summaryHasData(summary); const actual = refereeAddedMinutes(summary); return <div className="rounded-lg border bg-background/40 p-3"><p className="mb-3 text-sm font-semibold">{title}</p><div className="grid gap-2 sm:grid-cols-3"><div className="rounded-md bg-cyan-500/10 p-3"><p className="text-xs text-muted-foreground">Tempo parado</p><p className="text-lg font-bold text-cyan-300">{formatMinutes(summary?.totalStoppedMinutes)}</p></div><div className="rounded-md bg-amber-500/10 p-3"><p className="text-xs text-muted-foreground">Previsão de Acréscimo</p><p className="text-lg font-bold text-amber-300">{formatMinutes(summary?.predictedAddedMinutes, '+')}</p></div><div className="rounded-md bg-emerald-500/10 p-3"><p className="text-xs text-muted-foreground">Acréscimo dado pelo Árbitro</p><p className="text-lg font-bold text-emerald-300">{formatMinutes(actual, '+')}</p></div></div><p className="mt-3 text-xs text-muted-foreground">{has ? `Fonte: ${sourceLabel(summary?.source)}.` : 'Fonte ainda não informou acréscimo para este período.'}</p></div>; }
-function Details({ match, competition, onClose }: { match: LiveMatch; competition: string; onClose: () => void }) { const first = periodSummary(match, 'firstHalf'); const second = periodSummary(match, 'secondHalf'); const stats = match.liveStats ?? []; return <div className="space-y-4 rounded-xl border border-emerald-500/20 bg-card/80 p-4"><div className="flex justify-between"><div><p className="flex items-center gap-2 text-sm font-semibold text-emerald-400"><BarChart3 className="h-4 w-4" />Estatísticas ao vivo</p><h4 className="mt-1 font-bold">{match.homeTeam.name} x {match.awayTeam.name}</h4><p className="text-xs text-muted-foreground">{competition} - fonte: {match.statsSource ?? match.source ?? 'ao vivo'}</p></div><Button variant="ghost" size="icon" onClick={onClose}><X className="h-4 w-4" /></Button></div><div className="grid gap-3 md:grid-cols-3"><Card className="p-3 text-center"><p className="text-xs text-muted-foreground">Placar</p><p className="text-2xl font-bold">{match.homeTeam.score} - {match.awayTeam.score}</p></Card><Card className="p-3 text-center"><p className="text-xs text-muted-foreground">Tempo</p><p className="text-2xl font-bold text-emerald-400">{minuteInfo(match).display}</p></Card><Card className="p-3 text-center"><p className="text-xs text-muted-foreground">Escanteios</p><p className="text-2xl font-bold text-amber-400">{match.corners ? `${match.corners.home} - ${match.corners.away}` : '-'}</p></Card></div><div className="grid gap-3 md:grid-cols-2"><PeriodCard title="Resumo do 1º tempo" summary={first} /><PeriodCard title="Resumo do 2º tempo" summary={second} /></div><div className="rounded-lg border bg-background/40 p-3"><p className="mb-3 text-sm font-semibold">Números do jogo</p>{stats.length ? <div className="space-y-2">{stats.map((row) => <div key={row.key} className="grid grid-cols-[80px_1fr_80px] gap-3 rounded-md bg-muted/30 px-3 py-2 text-sm"><strong>{row.home}</strong><span className="text-center text-muted-foreground">{row.label}</span><strong className="text-right">{row.away}</strong></div>)}</div> : <p className="text-sm text-muted-foreground">A fonte ainda não enviou estatísticas detalhadas deste evento.</p>}</div><FutureMatchPrediction homeTeam={match.homeTeam.name} awayTeam={match.awayTeam.name} league={match.competition || competition} kickoffLabel="Ao vivo" /></div>; }
+type PeriodSummary = {
+  totalStoppedMinutes?: number | null;
+  predictedAddedMinutes?: number | null;
+  actualAddedMinutes?: number | null;
+  source?: string;
+  kind?: string;
+  incidents?: StoppageIncident[];
+};
 
-export function LiveMatches() { const [matches, setMatches] = useState<LiveMatch[]>([]); const [loading, setLoading] = useState(true); const [error, setError] = useState<string | null>(null); const [lastUpdatedDisplay, setLastUpdatedDisplay] = useState(''); const [autoRefresh, setAutoRefresh] = useState(true); const [selectedCompetition, setSelectedCompetition] = useState('all'); const [selectedMatchId, setSelectedMatchId] = useState<number | null>(null); const fetchLiveMatches = useCallback(async () => { try { setError(null); const response = await fetch('/api/365scores/live', { cache: 'no-store' }); const data = await response.json() as { matches?: LiveMatch[]; lastUpdated?: string; error?: string }; if (!response.ok) throw new Error(data.error ?? 'Erro ao carregar jogos ao vivo'); setMatches(dedupeMatches(data.matches ?? [])); const updatedAt = data.lastUpdated ? new Date(data.lastUpdated) : new Date(); setLastUpdatedDisplay(new Intl.DateTimeFormat('pt-BR', { timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit', second: '2-digit' }).format(updatedAt)); } catch (err) { setError(err instanceof Error ? err.message : 'Erro desconhecido'); } finally { setLoading(false); } }, []); useEffect(() => { fetchLiveMatches(); }, [fetchLiveMatches]); useEffect(() => { if (!autoRefresh) return; const interval = setInterval(fetchLiveMatches, 25000); return () => clearInterval(interval); }, [autoRefresh, fetchLiveMatches]); const matchesByCompetition = useMemo(() => matches.reduce((acc, match) => { const k = match.competition || 'Outras Competições'; (acc[k] ??= []).push(match); return acc; }, {} as Record<string, LiveMatch[]>), [matches]); const competitions = useMemo(() => Object.entries(matchesByCompetition).map(([competition, list]) => ({ competition, count: list.length })).sort((a,b)=>b.count-a.count || a.competition.localeCompare(b.competition)), [matchesByCompetition]); useEffect(() => { if (selectedCompetition !== 'all' && !matchesByCompetition[selectedCompetition]) setSelectedCompetition('all'); }, [matchesByCompetition, selectedCompetition]); const visible = selectedCompetition === 'all' ? matches : matches.filter((m) => (m.competition || 'Outras Competições') === selectedCompetition); const visibleByCompetition = visible.reduce((acc, match) => { const k = match.competition || 'Outras Competições'; (acc[k] ??= []).push(match); return acc; }, {} as Record<string, LiveMatch[]>); if (loading && matches.length === 0) return <div className="flex justify-center py-12"><RefreshCw className="h-8 w-8 animate-spin text-emerald-500" /></div>; if (error) return <div className="rounded-xl border border-red-500/20 bg-red-500/10 p-6"><AlertCircle className="mb-2 h-5 w-5 text-red-500" /><h4 className="font-medium text-red-500">Erro ao carregar jogos</h4><p className="text-sm text-red-400/80">{error}</p><Button onClick={fetchLiveMatches} variant="outline" size="sm" className="mt-3">Tentar novamente</Button></div>; return <div className="space-y-4"><div className="flex items-center justify-between"><div className="flex items-center gap-3"><div className="flex items-center gap-2"><Radio className="h-5 w-5 text-red-500" /><h3 className="text-lg font-semibold">Jogos Ao Vivo</h3></div><Badge variant="secondary" className="bg-emerald-500/10 text-emerald-400">{visible.length} {visible.length === 1 ? 'jogo' : 'jogos'}</Badge></div><div className="flex gap-2"><Button variant={autoRefresh ? 'default' : 'outline'} size="sm" onClick={() => setAutoRefresh(!autoRefresh)} className={autoRefresh ? 'bg-emerald-600 hover:bg-emerald-500' : ''}>{autoRefresh ? 'Auto ✓' : 'Auto'}</Button><Button variant="outline" size="sm" onClick={() => { setLoading(true); fetchLiveMatches(); }} disabled={loading}><RefreshCw className="mr-2 h-4 w-4" />Atualizar</Button></div></div>{lastUpdatedDisplay && <p className="text-xs text-muted-foreground">Última atualização: {lastUpdatedDisplay}{autoRefresh && ' (atualiza a cada 25s)'}</p>}{matches.length > 0 && <Card className="p-3"><label className="mb-2 block text-xs text-muted-foreground">Filtrar por liga</label><select value={selectedCompetition} onChange={(e)=>setSelectedCompetition(e.target.value)} className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm"><option value="all">Todas as ligas ({matches.length})</option>{competitions.map((c)=><option key={c.competition} value={c.competition}>{c.competition} ({c.count})</option>)}</select></Card>}{matches.length === 0 ? <Card className="border-dashed p-8 text-center"><Trophy className="mx-auto mb-4 h-12 w-12 text-muted-foreground/50" /><h4 className="mb-2 text-lg font-medium">Nenhum jogo ao vivo no momento</h4><p className="text-sm text-muted-foreground">Os jogos aparecerão aqui automaticamente quando começarem.</p></Card> : <div className="space-y-6">{Object.entries(visibleByCompetition).map(([competition, list]) => <div key={competition} className="space-y-3"><h4 className="flex items-center gap-2 text-sm font-medium text-muted-foreground"><Trophy className="h-4 w-4" />{competition}<Badge variant="outline" className="ml-auto">{list.length}</Badge></h4>{list.map((match) => <div key={`${competition}-${teamPairKey(match)}-${match.id}`} className="space-y-3"><LiveMatchCard match={match} selected={selectedMatchId === match.id} onClick={() => setSelectedMatchId((current) => current === match.id ? null : match.id)} />{selectedMatchId === match.id && <Details match={match} competition={competition} onClose={() => setSelectedMatchId(null)} />}</div>)}</div>)}</div>}</div>; }
+type LiveMatch = {
+  id: number;
+  minute: number | string;
+  statusText: string;
+  homeTeam: { id: number; name: string; score: number };
+  awayTeam: { id: number; name: string; score: number };
+  competition?: string;
+  competitionId: number;
+  corners?: { home: number; away: number; total: number };
+  liveStats?: Array<{ key: string; label: string; home: string; away: string }>;
+  statsSource?: '365scores' | 'sofascore' | 'api-football';
+  source?: string;
+  sourceIds?: { scores365?: number; sofascore?: number; apiFootball?: number };
+  stoppage?: {
+    totalStoppedMinutes?: number | null;
+    predictedAddedMinutes?: number | null;
+    actualAddedMinutes?: number | null;
+    kind?: string;
+    source?: string;
+    incidents?: StoppageIncident[];
+    periods?: { firstHalf?: PeriodSummary; secondHalf?: PeriodSummary };
+  };
+  periodStoppage?: { firstHalf?: PeriodSummary; secondHalf?: PeriodSummary };
+};
+
+const COMPETITION_ICONS: Record<number, string> = {
+  113: '🇧🇷', 116: '🇧🇷', 117: '🇧🇷', 7: '🏴', 17: '🇮🇹', 25: '🇩🇪', 35: '🇫🇷',
+  572: '🏆', 573: '🏆', 71: '🇧🇷', 72: '🇧🇷', 73: '🇧🇷', 2: '🏆', 3: '🏆', 848: '🏆',
+  39: '🏴', 40: '🏴', 140: '🇪🇸', 135: '🇮🇹', 78: '🇩🇪', 61: '🇫🇷', 88: '🇳🇱', 94: '🇵🇹',
+  65: '🇧🇪', 203: '🇹🇷', 197: '🇬🇷', 179: '🏴', 128: '🇦🇷', 13: '🏆',
+};
+
+const TEAM_ALIASES: Record<string, string> = {
+  jordania: 'jordan', jordan: 'jordan', argelia: 'algeria', algeria: 'algeria', noruega: 'norway', norway: 'norway',
+  senegal: 'senegal', 'cabo verde': 'cape verde islands', 'cape verde islands': 'cape verde islands', uruguai: 'uruguay', uruguay: 'uruguay',
+  'estados unidos': 'usa', eua: 'usa', usa: 'usa', alemanha: 'germany', germany: 'germany', mexico: 'mexico',
+  'coreia do sul': 'korea republic', 'korea republic': 'korea republic', brasil: 'brazil', brazil: 'brazil', espanha: 'spain',
+  franca: 'france', argentina: 'argentina', portugal: 'portugal', marrocos: 'morocco', ira: 'ir iran', iran: 'ir iran',
+  catar: 'qatar', qatar: 'qatar', 'arabia saudita': 'saudi arabia', holanda: 'netherlands', 'paises baixos': 'netherlands',
+  turquia: 'turkiye', egito: 'egypt', paraguai: 'paraguay', colombia: 'colombia', equador: 'ecuador', panama: 'panama',
+  canada: 'canada', australia: 'australia', japao: 'japan', suica: 'switzerland', switzerland: 'switzerland', iraque: 'iraq', iraq: 'iraq',
+};
+
+function baseNorm(value: unknown) {
+  return String(value ?? '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/\b(fc|cf|sc|ac|ec|club|clube|futebol|sport|sporting|real|atletico)\b/g, '')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function norm(value: unknown) {
+  const key = baseNorm(value);
+  return TEAM_ALIASES[key] ?? key;
+}
+
+function competitionKey(value: unknown) {
+  const key = baseNorm(value);
+  if (key.includes('copa do mundo') || key.includes('world cup')) return 'world cup';
+  return key;
+}
+
+function teamPairKey(match: Pick<LiveMatch, 'homeTeam' | 'awayTeam'>) {
+  return [norm(match.homeTeam.name), norm(match.awayTeam.name)].sort().join('__vs__');
+}
+
+function matchKey(match: LiveMatch) {
+  return `${competitionKey(match.competition)}__${teamPairKey(match)}`;
+}
+
+function sourceRank(match: LiveMatch) {
+  if (match.sourceIds?.scores365 || match.source === '365scores') return 1;
+  if (match.sourceIds?.sofascore || match.statsSource === 'sofascore') return 2;
+  if (match.sourceIds?.apiFootball || match.statsSource === 'api-football') return 3;
+  return 9;
+}
+
+function currentPeriod(match: LiveMatch): PeriodKey {
+  const raw = `${match.minute ?? ''} ${match.statusText ?? ''}`.toLowerCase();
+  if (raw.includes('2h') || raw.includes('2nd') || raw.includes('second') || raw.includes('segundo')) return 'secondHalf';
+  const n = typeof match.minute === 'number' ? match.minute : Number(String(match.minute).match(/\d{1,3}/)?.[0]);
+  return Number.isFinite(n) && n > 45 ? 'secondHalf' : 'firstHalf';
+}
+
+function periodSummary(match: LiveMatch, period: PeriodKey): PeriodSummary | null {
+  return match.periodStoppage?.[period] ?? match.stoppage?.periods?.[period] ?? null;
+}
+
+function formatMinutes(value?: number | null, prefix = '') {
+  if (value === null || value === undefined || value <= 0) return 'não informado';
+  return `${prefix}${value.toFixed(1).replace('.0', '')} min`;
+}
+
+function sourceLabel(source?: string) {
+  if (!source) return 'fonte ao vivo';
+  if (source.includes('365scores')) return '365Scores';
+  if (source.includes('sofascore')) return 'SofaScore';
+  if (source.includes('api-football')) return 'API-Football';
+  return 'fonte ao vivo';
+}
+
+function refereeAddedMinutes(summary?: PeriodSummary | null) {
+  return summary?.actualAddedMinutes && summary.actualAddedMinutes > 0 ? summary.actualAddedMinutes : null;
+}
+
+function summaryHasData(summary?: PeriodSummary | null) {
+  return !!summary && (
+    (summary.totalStoppedMinutes ?? 0) > 0 ||
+    (summary.predictedAddedMinutes ?? 0) > 0 ||
+    refereeAddedMinutes(summary) !== null ||
+    (summary.incidents?.length ?? 0) > 0
+  );
+}
+
+function minuteInfo(match: LiveMatch) {
+  const raw = String(match.minute || match.statusText || '');
+  const period = currentPeriod(match);
+  const summary = periodSummary(match, period);
+  const firstHalf = periodSummary(match, 'firstHalf');
+  const secondHalf = periodSummary(match, 'secondHalf');
+  return {
+    display: typeof match.minute === 'number' ? `${match.minute}'` : raw || match.statusText,
+    actual: refereeAddedMinutes(summary),
+    predicted: summary?.predictedAddedMinutes ?? null,
+    stopped: summary?.totalStoppedMinutes ?? null,
+    summary,
+    firstHalf,
+    secondHalf,
+    period,
+  };
+}
+
+function mergeSummary(base?: PeriodSummary | null, incoming?: PeriodSummary | null): PeriodSummary | undefined {
+  if (!base) return incoming ?? undefined;
+  if (!incoming) return base;
+  return {
+    ...base,
+    totalStoppedMinutes: base.totalStoppedMinutes ?? incoming.totalStoppedMinutes,
+    predictedAddedMinutes: base.predictedAddedMinutes ?? incoming.predictedAddedMinutes,
+    actualAddedMinutes: base.actualAddedMinutes ?? incoming.actualAddedMinutes,
+    source: base.source ?? incoming.source,
+    kind: base.kind ?? incoming.kind,
+    incidents: (incoming.incidents?.length ?? 0) > (base.incidents?.length ?? 0) ? incoming.incidents : base.incidents,
+  };
+}
+
+function mergeMatch(base: LiveMatch, incoming: LiveMatch): LiveMatch {
+  const preferred = sourceRank(incoming) < sourceRank(base) ? incoming : base;
+  const other = preferred === base ? incoming : base;
+  return {
+    ...preferred,
+    competition: preferred.competition ?? other.competition,
+    competitionId: preferred.competitionId || other.competitionId,
+    corners: preferred.corners ?? other.corners,
+    liveStats: preferred.liveStats ?? other.liveStats,
+    statsSource: preferred.statsSource ?? other.statsSource,
+    sourceIds: { ...other.sourceIds, ...preferred.sourceIds },
+    periodStoppage: {
+      firstHalf: mergeSummary(preferred.periodStoppage?.firstHalf ?? preferred.stoppage?.periods?.firstHalf, other.periodStoppage?.firstHalf ?? other.stoppage?.periods?.firstHalf),
+      secondHalf: mergeSummary(preferred.periodStoppage?.secondHalf ?? preferred.stoppage?.periods?.secondHalf, other.periodStoppage?.secondHalf ?? other.stoppage?.periods?.secondHalf),
+    },
+  };
+}
+
+function dedupeMatches(matches: LiveMatch[]) {
+  const byPair = new Map<string, LiveMatch>();
+  for (const match of matches) {
+    const key = matchKey(match);
+    const existing = byPair.get(key);
+    byPair.set(key, existing ? mergeMatch(existing, match) : match);
+  }
+  return Array.from(byPair.values()).sort((a, b) => sourceRank(a) - sourceRank(b) || competitionKey(a.competition).localeCompare(competitionKey(b.competition)));
+}
+
+function IncidentList({ summary }: { summary: PeriodSummary | null }) {
+  const incidents = summary?.incidents ?? [];
+  if (incidents.length === 0) {
+    return <p className="mt-3 rounded-md border border-dashed border-border/50 p-3 text-xs text-muted-foreground">Nenhuma parada detalhada foi enviada pela fonte para este período.</p>;
+  }
+
+  return (
+    <div className="mt-3 space-y-2">
+      <p className="text-xs font-semibold text-cyan-300">Paradas detectadas</p>
+      {incidents.slice(0, 6).map((incident, index) => (
+        <div key={`${incident.startAt}-${index}`} className="rounded-md border border-cyan-500/15 bg-cyan-500/5 p-2 text-xs">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <span className="text-muted-foreground">{incident.timeline || `Parada ${index + 1}`}</span>
+            <span className="font-semibold text-cyan-300">{formatMinutes(incident.durationMs / 60_000)}</span>
+          </div>
+          <p className="mt-1 line-clamp-2 text-muted-foreground">{incident.reason}</p>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function PeriodCard({ title, summary }: { title: string; summary: PeriodSummary | null }) {
+  const has = summaryHasData(summary);
+  const actual = refereeAddedMinutes(summary);
+  return (
+    <div className="rounded-lg border bg-background/40 p-3">
+      <p className="mb-3 text-sm font-semibold">{title}</p>
+      <div className="grid gap-2 sm:grid-cols-3">
+        <div className="rounded-md bg-cyan-500/10 p-3">
+          <p className="text-xs text-muted-foreground">Tempo que o jogo ficou parado</p>
+          <p className="text-lg font-bold text-cyan-300">{formatMinutes(summary?.totalStoppedMinutes)}</p>
+        </div>
+        <div className="rounded-md bg-amber-500/10 p-3">
+          <p className="text-xs text-muted-foreground">Previsão de Acréscimo</p>
+          <p className="text-lg font-bold text-amber-300">{formatMinutes(summary?.predictedAddedMinutes, '+')}</p>
+        </div>
+        <div className="rounded-md bg-emerald-500/10 p-3">
+          <p className="text-xs text-muted-foreground">Acréscimo dado pelo Árbitro</p>
+          <p className="text-lg font-bold text-emerald-300">{formatMinutes(actual, '+')}</p>
+        </div>
+      </div>
+      <IncidentList summary={summary} />
+      <p className="mt-3 text-xs text-muted-foreground">{has ? `Fonte: ${sourceLabel(summary?.source)}.` : 'Fonte ainda não informou acréscimo para este período.'}</p>
+    </div>
+  );
+}
+
+function LiveMatchCard({ match, selected, onClick }: { match: LiveMatch; selected?: boolean; onClick?: () => void }) {
+  const icon = COMPETITION_ICONS[match.competitionId] || '⚽';
+  const info = minuteInfo(match);
+  const firstActual = refereeAddedMinutes(info.firstHalf);
+  const secondActual = refereeAddedMinutes(info.secondHalf);
+
+  return (
+    <Card role="button" tabIndex={0} onClick={onClick} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick?.(); } }} className={`cursor-pointer border-emerald-500/30 bg-gradient-to-br from-emerald-500/5 to-green-500/5 p-4 transition-all hover:border-emerald-400/50 ${selected ? 'ring-2 ring-emerald-500/60 border-emerald-400' : ''}`}>
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <div className="flex items-center gap-2"><span className="text-lg">{icon}</span><span className="text-xs text-muted-foreground">{match.competition || 'Competição'}</span></div>
+        <Badge className="border-red-500/30 bg-red-500/20 text-red-400"><Radio className="mr-1 h-3 w-3" />AO VIVO</Badge>
+      </div>
+      <div className="grid items-center gap-3 md:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]">
+        <p className="font-semibold md:text-right">{match.homeTeam.name}</p>
+        <div className="flex min-w-[180px] flex-col items-center">
+          <div className="flex gap-2 text-2xl font-bold"><span className={match.homeTeam.score > match.awayTeam.score ? 'text-emerald-400' : ''}>{match.homeTeam.score}</span><span className="text-muted-foreground">-</span><span className={match.awayTeam.score > match.homeTeam.score ? 'text-emerald-400' : ''}>{match.awayTeam.score}</span></div>
+          <Badge variant="outline" className="mt-1 border-emerald-500/20 bg-emerald-500/10 text-emerald-400"><Clock className="mr-1 h-3 w-3" />{info.display}</Badge>
+          <div className="mt-2 grid gap-1 text-[11px]">
+            <Badge variant="outline" className="justify-center bg-cyan-500/10 text-cyan-300 border-cyan-500/20">Tempo parado: {formatMinutes(info.stopped)}</Badge>
+            <Badge variant="outline" className="justify-center bg-amber-500/10 text-amber-300 border-amber-500/20">Previsão de Acréscimo: {formatMinutes(info.predicted, '+')}</Badge>
+            <Badge variant="outline" className="justify-center border-border/70 bg-background/40 text-muted-foreground">Acréscimo dado pelo Árbitro: {formatMinutes(info.actual, '+')}</Badge>
+            {info.period === 'secondHalf' && firstActual && <Badge variant="outline" className="justify-center border-emerald-500/20 bg-emerald-500/10 text-emerald-300">1ºT - acréscimo dado: {formatMinutes(firstActual, '+')}</Badge>}
+            {info.period === 'secondHalf' && secondActual && <Badge variant="outline" className="justify-center border-emerald-500/20 bg-emerald-500/10 text-emerald-300">2ºT - acréscimo dado: {formatMinutes(secondActual, '+')}</Badge>}
+          </div>
+        </div>
+        <p className="font-semibold">{match.awayTeam.name}</p>
+      </div>
+      {match.corners && <div className="mt-3 border-t border-border/50 pt-3"><div className="flex items-center justify-center gap-4 text-sm"><div className="flex items-center gap-1 text-amber-400"><CornerUpRight className="h-4 w-4" />{match.corners.home}</div><span className="text-muted-foreground">Escanteios</span><div className="flex items-center gap-1 text-amber-400">{match.corners.away}<CornerUpRight className="h-4 w-4 scale-x-[-1]" /></div></div><p className="mt-1 text-center text-xs text-muted-foreground">Total: {match.corners.total}</p></div>}
+    </Card>
+  );
+}
+
+function Details({ match, competition, onClose }: { match: LiveMatch; competition: string; onClose: () => void }) {
+  const first = periodSummary(match, 'firstHalf');
+  const second = periodSummary(match, 'secondHalf');
+  const stats = match.liveStats ?? [];
+  return (
+    <div className="space-y-4 rounded-xl border border-emerald-500/20 bg-card/80 p-4">
+      <div className="flex justify-between"><div><p className="flex items-center gap-2 text-sm font-semibold text-emerald-400"><BarChart3 className="h-4 w-4" />Estatísticas ao vivo</p><h4 className="mt-1 font-bold">{match.homeTeam.name} x {match.awayTeam.name}</h4><p className="text-xs text-muted-foreground">{competition} - fonte: {match.statsSource ?? match.source ?? 'ao vivo'}</p></div><Button variant="ghost" size="icon" onClick={onClose}><X className="h-4 w-4" /></Button></div>
+      <div className="grid gap-3 md:grid-cols-3"><Card className="p-3 text-center"><p className="text-xs text-muted-foreground">Placar</p><p className="text-2xl font-bold">{match.homeTeam.score} - {match.awayTeam.score}</p></Card><Card className="p-3 text-center"><p className="text-xs text-muted-foreground">Tempo</p><p className="text-2xl font-bold text-emerald-400">{minuteInfo(match).display}</p></Card><Card className="p-3 text-center"><p className="text-xs text-muted-foreground">Escanteios</p><p className="text-2xl font-bold text-amber-400">{match.corners ? `${match.corners.home} - ${match.corners.away}` : '-'}</p></Card></div>
+      <div className="grid gap-3 md:grid-cols-2"><PeriodCard title="Resumo do 1º tempo" summary={first} /><PeriodCard title="Resumo do 2º tempo" summary={second} /></div>
+      <div className="rounded-lg border bg-background/40 p-3"><p className="mb-3 text-sm font-semibold">Números do jogo</p>{stats.length === 0 ? <p className="text-sm text-muted-foreground">A fonte ainda não enviou estatísticas detalhadas para este jogo.</p> : <div className="space-y-2">{stats.slice(0, 18).map((row) => <div key={row.key} className="grid grid-cols-[1fr_auto_1fr] items-center gap-3 rounded-md bg-background/50 px-3 py-2 text-sm"><span className="font-semibold">{row.home}</span><span className="text-center text-muted-foreground">{row.label}</span><span className="text-right font-semibold">{row.away}</span></div>)}</div>}</div>
+    </div>
+  );
+}
+
+export function LiveMatches() {
+  const [matches, setMatches] = useState<LiveMatch[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [lastUpdatedDisplay, setLastUpdatedDisplay] = useState('');
+  const [autoRefresh, setAutoRefresh] = useState(true);
+  const [selectedCompetition, setSelectedCompetition] = useState('all');
+  const [selectedMatchId, setSelectedMatchId] = useState<number | null>(null);
+
+  const fetchLiveMatches = useCallback(async () => {
+    try {
+      setError(null);
+      const response = await fetch('/api/365scores/live', { cache: 'no-store' });
+      const data = await response.json() as { matches?: LiveMatch[]; lastUpdated?: string; error?: string };
+      if (!response.ok) throw new Error(data.error ?? 'Erro ao carregar jogos ao vivo');
+      setMatches(dedupeMatches(data.matches ?? []));
+      const updatedAt = data.lastUpdated ? new Date(data.lastUpdated) : new Date();
+      setLastUpdatedDisplay(new Intl.DateTimeFormat('pt-BR', { timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit', second: '2-digit' }).format(updatedAt));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Erro desconhecido');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { fetchLiveMatches(); }, [fetchLiveMatches]);
+  useEffect(() => { if (!autoRefresh) return; const interval = setInterval(fetchLiveMatches, 25000); return () => clearInterval(interval); }, [autoRefresh, fetchLiveMatches]);
+
+  const matchesByCompetition = useMemo(() => matches.reduce((acc, match) => { const k = match.competition || 'Outras Competições'; (acc[k] ??= []).push(match); return acc; }, {} as Record<string, LiveMatch[]>), [matches]);
+  const competitions = useMemo(() => Object.entries(matchesByCompetition).map(([competition, list]) => ({ competition, count: list.length })).sort((a,b)=>b.count-a.count || a.competition.localeCompare(b.competition)), [matchesByCompetition]);
+
+  useEffect(() => { if (selectedCompetition !== 'all' && !matchesByCompetition[selectedCompetition]) setSelectedCompetition('all'); }, [matchesByCompetition, selectedCompetition]);
+
+  const visible = selectedCompetition === 'all' ? matches : matches.filter((m) => (m.competition || 'Outras Competições') === selectedCompetition);
+  const visibleByCompetition = visible.reduce((acc, match) => { const k = match.competition || 'Outras Competições'; (acc[k] ??= []).push(match); return acc; }, {} as Record<string, LiveMatch[]>);
+
+  if (loading && matches.length === 0) return <div className="flex justify-center py-12"><RefreshCw className="h-8 w-8 animate-spin text-emerald-500" /></div>;
+  if (error) return <div className="rounded-xl border border-red-500/20 bg-red-500/10 p-6"><AlertCircle className="mb-2 h-5 w-5 text-red-500" /><h4 className="font-medium text-red-500">Erro ao carregar jogos</h4><p className="text-sm text-red-400/80">{error}</p><Button onClick={fetchLiveMatches} variant="outline" size="sm" className="mt-3">Tentar novamente</Button></div>;
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between"><div className="flex items-center gap-3"><div className="flex items-center gap-2"><Radio className="h-5 w-5 text-red-500" /><h3 className="text-lg font-semibold">Jogos Ao Vivo</h3></div><Badge variant="secondary" className="bg-emerald-500/10 text-emerald-400">{visible.length} {visible.length === 1 ? 'jogo' : 'jogos'}</Badge></div><div className="flex gap-2"><Button variant={autoRefresh ? 'default' : 'outline'} size="sm" onClick={() => setAutoRefresh(!autoRefresh)} className={autoRefresh ? 'bg-emerald-600 hover:bg-emerald-500' : ''}>{autoRefresh ? 'Auto ✓' : 'Auto'}</Button><Button variant="outline" size="sm" onClick={() => { setLoading(true); fetchLiveMatches(); }} disabled={loading}><RefreshCw className="mr-2 h-4 w-4" />Atualizar</Button></div></div>
+      {lastUpdatedDisplay && <p className="text-xs text-muted-foreground">Última atualização: {lastUpdatedDisplay}{autoRefresh && ' (atualiza a cada 25s)'}</p>}
+      {matches.length > 0 && <Card className="p-3"><label className="mb-2 block text-xs text-muted-foreground">Filtrar por liga</label><select value={selectedCompetition} onChange={(e)=>setSelectedCompetition(e.target.value)} className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm"><option value="all">Todas as ligas ({matches.length})</option>{competitions.map((c)=><option key={c.competition} value={c.competition}>{c.competition} ({c.count})</option>)}</select></Card>}
+      {matches.length === 0 ? <Card className="border-dashed p-8 text-center"><Trophy className="mx-auto mb-4 h-12 w-12 text-muted-foreground/50" /><h4 className="mb-2 text-lg font-medium">Nenhum jogo ao vivo no momento</h4><p className="text-sm text-muted-foreground">Os jogos aparecerão aqui automaticamente quando começarem.</p></Card> : <div className="space-y-6">{Object.entries(visibleByCompetition).map(([competition, list]) => <div key={competition} className="space-y-3"><h4 className="flex items-center gap-2 text-sm font-medium text-muted-foreground"><Trophy className="h-4 w-4" />{competition}<Badge variant="outline" className="ml-auto">{list.length}</Badge></h4>{list.map((match) => <div key={`${competition}-${teamPairKey(match)}-${match.id}`} className="space-y-3"><LiveMatchCard match={match} selected={selectedMatchId === match.id} onClick={() => setSelectedMatchId((current) => current === match.id ? null : match.id)} />{selectedMatchId === match.id && <Details match={match} competition={competition} onClose={() => setSelectedMatchId(null)} />}</div>)}</div>)}</div>}
+    </div>
+  );
+}
 
 export default LiveMatches;
