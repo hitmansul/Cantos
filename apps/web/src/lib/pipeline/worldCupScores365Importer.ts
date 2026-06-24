@@ -141,17 +141,26 @@ function metricKey(name?: string) {
 
 function extractStatisticsForGame(game: Raw365Game, rawStats: Scores365Statistic[]): WorldCupStatisticInput[] {
   const rows: WorldCupStatisticInput[] = [];
+  const seen = new Set<string>();
+
   for (const stat of rawStats) {
     if (stat.competitorId !== game.homeCompetitor.id && stat.competitorId !== game.awayCompetitor.id) continue;
+
     const side = stat.competitorId === game.homeCompetitor.id ? 'home' : 'away';
     const team = side === 'home' ? game.homeCompetitor : game.awayCompetitor;
+    const normalizedMetricKey = metricKey(stat.name);
+    const dedupeKey = `${team.id}:match:${normalizedMetricKey}`;
+
+    if (seen.has(dedupeKey)) continue;
+    seen.add(dedupeKey);
+
     const valueNumeric = cleanNumber(stat.value);
     rows.push({
       teamName: team.name,
       teamExternalId: team.id,
       teamSide: side,
       period: 'match',
-      metricKey: metricKey(stat.name),
+      metricKey: normalizedMetricKey,
       metricName: stat.name ?? 'Estatística',
       valueNumeric,
       valueText: valueNumeric === null ? String(stat.value ?? '') : null,
@@ -160,6 +169,7 @@ function extractStatisticsForGame(game: Raw365Game, rawStats: Scores365Statistic
       sourceUpdatedAt: nowIso(),
     });
   }
+
   return rows;
 }
 
