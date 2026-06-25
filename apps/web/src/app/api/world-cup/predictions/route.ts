@@ -31,9 +31,13 @@ function clamp(value: number, min: number, max: number) {
 }
 
 function probabilityOver(mean: number, line: number) {
-  // Aproximação simples para exibir tendência, sem criar dado fictício de aposta.
   const z = (mean - line) / Math.max(1.8, Math.sqrt(Math.max(mean, 1)));
-  return clamp(Math.round((50 + z * 24)), 5, 95);
+  return clamp(Math.round(50 + z * 24), 5, 95);
+}
+
+function isFinishedStatus(status: unknown) {
+  const value = String(status ?? '').toLowerCase();
+  return ['finished', 'fim', 'final', 'ft'].some((term) => value.includes(term));
 }
 
 function model(home?: TeamAverages, away?: TeamAverages) {
@@ -91,20 +95,17 @@ function model(home?: TeamAverages, away?: TeamAverages) {
 
 export async function GET() {
   try {
+    const now = new Date();
     const upcoming = await sql`
       SELECT id, home_team_name, away_team_name, kickoff_at, group_name, round_name, status, source_key
       FROM world_cup_matches
       WHERE competition_key = ${WORLD_CUP_2026_KEY}
-        AND (
-          kickoff_at >= NOW() - INTERVAL '2 hours'
-          OR COALESCE(home_score, away_score) IS NULL
-          OR LOWER(COALESCE(status, '')) NOT IN ('finished', 'fim', 'final', 'ft')
-        )
+        AND kickoff_at >= NOW() - INTERVAL '2 hours'
       ORDER BY kickoff_at ASC NULLS LAST, id ASC
-      LIMIT 30
+      LIMIT 60
     `;
 
-    const averages = await sql`
+    const averages = (await sql`
       WITH stat_base AS (
         SELECT
           m.id AS match_id,
@@ -137,27 +138,32 @@ export async function GET() {
         AVG(p.value_numeric) FILTER (WHERE p.metric_key IN ('expected_goals', 'xg') AND p.team_id = t.id)::float AS xg_for,
         AVG(p.value_numeric) FILTER (WHERE p.metric_key IN ('expected_goals', 'xg') AND p.team_id <> t.id)::float AS xg_against
       FROM world_cup_teams t
-      LEFT JOIN picked p ON p.team_id = t.id OR (p.home_team_id = t.id OR p.away_team_id = t.id)
+      LEFT JOIN picked p ON p.team_id = t.id OR p.home_team_id = t.id OR p.away_team_id = t.id
       WHERE t.competition_key = ${WORLD_CUP_2026_KEY}
       GROUP BY t.id, t.name
-    ` as TeamAverages[];
+    `) as TeamAverages[];
 
     const byTeam = new Map(averages.map((row) => [row.team_name.toLowerCase(), row]));
-    const predictions = upcoming.map((match: any) => {
-      const home = byTeam.get(String(match.home_team_name).toLowerCase());
-      const away = byTeam.get(String(match.away_team_name).toLowerCase());
-      return {
-        id: match.id,
-        homeTeamName: match.home_team_name,
-        awayTeamName: match.away_team_name,
-        kickoffAt: match.kickoff_at,
-        groupName: match.group_name,
-        roundName: match.round_name,
-        sourceKey: match.source_key,
-        prediction: model(home, away),
-        samples: { homeMatches: home?.matches ?? 0, awayMatches: away?.matches ?? 0 },
-      };
-    });
+    const predictions = upcoming
+      .filter((match: any) => {
+        const kickoff = match.kickoff_at ? new Date(match.kickoff_at) : null;
+        return !isFinishedStatus(match.status) && (!kickoff || kickoff.getTime() >= now.getTime() - 2 * 60 * 60 * 1000);
+      })
+      .map((match: any) => {
+        const home = byTeam.get(String(match.home_team_name).toLowerCase());
+        const away = byTeam.get(String(match.away_team_name).toLowerCase());
+        return {
+          id: match.id,
+          homeTeamName: match.home_team_name,
+          awayTeamName: match.away_team_name,
+          kickoffAt: match.kickoff_at,
+          groupName: match.group_name,
+          roundName: match.round_name,
+          sourceKey: match.source_key,
+          prediction: model(home, away),
+          samples: { homeMatches: home?.matches ?? 0, awayMatches: away?.matches ?? 0 },
+        };
+      });
 
     return NextResponse.json({ success: true, predictions, count: predictions.length, lastUpdated: new Date().toISOString() });
   } catch (error) {
