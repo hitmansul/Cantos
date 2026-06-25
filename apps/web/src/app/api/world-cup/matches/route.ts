@@ -31,7 +31,7 @@ function toInteger(value: string | null, fallback: number, max: number): number 
 export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
-    const limit = toInteger(searchParams.get('limit'), 100, 500);
+    const limit = toInteger(searchParams.get('limit'), 150, 500);
 
     const rows = (await sql`
       SELECT
@@ -54,11 +54,11 @@ export async function GET(request: Request) {
       LEFT JOIN world_cup_match_statistics ms ON ms.match_id = m.id
       WHERE m.competition_key = ${WORLD_CUP_2026_KEY}
       GROUP BY m.id
-      ORDER BY m.kickoff_at DESC NULLS LAST, m.id DESC
+      ORDER BY m.kickoff_at ASC NULLS LAST, m.id ASC
       LIMIT ${limit}
     `) as MatchRow[];
 
-    return NextResponse.json({ success: true, count: rows.length, matches: rows });
+    return NextResponse.json({ success: true, count: rows.length, matches: rows, lastUpdated: new Date().toISOString() });
   } catch (error) {
     return NextResponse.json(
       { success: false, error: error instanceof Error ? error.message : 'Erro ao consultar partidas da Copa.' },
