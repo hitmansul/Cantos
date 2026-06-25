@@ -4,6 +4,7 @@ import sql from '@/app/api/utils/sql';
 export const dynamic = 'force-dynamic';
 
 const WORLD_CUP_2026_KEY = 'world_cup_2026';
+const THREE_HOURS_MS = 3 * 60 * 60 * 1000;
 
 type TeamAverages = {
   team_name: string;
@@ -38,6 +39,79 @@ type SourceMatch = {
   homeTeam?: { name?: string | null; shortName?: string | null };
   awayTeam?: { name?: string | null; shortName?: string | null };
 };
+
+const KNOCKOUT_FALLBACK_MATCHES: DbMatch[] = [
+  ...Array.from({ length: 16 }, (_, index) => ({
+    id: `fifa-r32-${index + 1}`,
+    home_team_name: `Classificado ${index * 2 + 1}`,
+    away_team_name: `Classificado ${index * 2 + 2}`,
+    kickoff_at: new Date(Date.UTC(2026, 5, 28 + Math.floor(index / 3), [16, 19, 22][index % 3] ?? 22)).toISOString(),
+    group_name: null,
+    round_name: 'Oitavas de final / fase 32',
+    status: 'Agendado',
+    source_key: 'fifa-schedule-fallback',
+  })),
+  ...Array.from({ length: 8 }, (_, index) => ({
+    id: `fifa-r16-${index + 1}`,
+    home_team_name: `Vencedor fase 32 ${index * 2 + 1}`,
+    away_team_name: `Vencedor fase 32 ${index * 2 + 2}`,
+    kickoff_at: new Date(Date.UTC(2026, 6, 4 + Math.floor(index / 2), index % 2 === 0 ? 20 : 23)).toISOString(),
+    group_name: null,
+    round_name: 'Oitavas de final',
+    status: 'Agendado',
+    source_key: 'fifa-schedule-fallback',
+  })),
+  ...Array.from({ length: 4 }, (_, index) => ({
+    id: `fifa-qf-${index + 1}`,
+    home_team_name: `Vencedor oitavas ${index * 2 + 1}`,
+    away_team_name: `Vencedor oitavas ${index * 2 + 2}`,
+    kickoff_at: new Date(Date.UTC(2026, 6, 9 + Math.floor(index / 2), index % 2 === 0 ? 20 : 23)).toISOString(),
+    group_name: null,
+    round_name: 'Quartas de final',
+    status: 'Agendado',
+    source_key: 'fifa-schedule-fallback',
+  })),
+  {
+    id: 'fifa-sf-1',
+    home_team_name: 'Vencedor quartas 1',
+    away_team_name: 'Vencedor quartas 2',
+    kickoff_at: '2026-07-14T23:00:00.000Z',
+    group_name: null,
+    round_name: 'Semifinal',
+    status: 'Agendado',
+    source_key: 'fifa-schedule-fallback',
+  },
+  {
+    id: 'fifa-sf-2',
+    home_team_name: 'Vencedor quartas 3',
+    away_team_name: 'Vencedor quartas 4',
+    kickoff_at: '2026-07-15T23:00:00.000Z',
+    group_name: null,
+    round_name: 'Semifinal',
+    status: 'Agendado',
+    source_key: 'fifa-schedule-fallback',
+  },
+  {
+    id: 'fifa-third-place',
+    home_team_name: 'Perdedor semifinal 1',
+    away_team_name: 'Perdedor semifinal 2',
+    kickoff_at: '2026-07-18T20:00:00.000Z',
+    group_name: null,
+    round_name: 'Disputa de terceiro lugar',
+    status: 'Agendado',
+    source_key: 'fifa-schedule-fallback',
+  },
+  {
+    id: 'fifa-final',
+    home_team_name: 'Vencedor semifinal 1',
+    away_team_name: 'Vencedor semifinal 2',
+    kickoff_at: '2026-07-19T22:00:00.000Z',
+    group_name: null,
+    round_name: 'Final',
+    status: 'Agendado',
+    source_key: 'fifa-schedule-fallback',
+  },
+];
 
 function n(value: unknown, fallback = 0) {
   const number = Number(value);
@@ -88,7 +162,8 @@ function teamKey(value: unknown) {
 }
 
 function matchIdentity(home: unknown, away: unknown, date: unknown) {
-  const day = date ? new Date(String(date)).toISOString().slice(0, 10) : 'sem-data';
+  const timestamp = date ? new Date(String(date)).getTime() : NaN;
+  const day = Number.isFinite(timestamp) ? new Date(timestamp).toISOString().slice(0, 10) : 'sem-data';
   return `${day}|${teamKey(home)}|${teamKey(away)}`;
 }
 
@@ -99,14 +174,14 @@ function probabilityOver(mean: number, line: number) {
 
 function isFinishedStatus(status: unknown) {
   const value = normalize(status);
-  return ['finished', 'fim', 'final', 'ft'].some((term) => value.includes(term));
+  return ['finished', 'fim', 'final', 'ft', 'encerrado'].some((term) => value.includes(term));
 }
 
 function shouldPredict(match: { kickoff_at?: string | Date | null; status?: unknown }) {
   if (isFinishedStatus(match.status)) return false;
   const kickoff = match.kickoff_at ? new Date(match.kickoff_at) : null;
   if (kickoff && Number.isFinite(kickoff.getTime())) {
-    return kickoff.getTime() >= Date.now() - 3 * 60 * 60 * 1000;
+    return kickoff.getTime() >= Date.now() - THREE_HOURS_MS;
   }
   return true;
 }
@@ -120,6 +195,10 @@ function model(home?: TeamAverages, away?: TeamAverages) {
   const homeCardsAgainst = n(home?.cards_against, 1.9);
   const awayCardsFor = n(away?.cards_for, 1.9);
   const awayCardsAgainst = n(away?.cards_against, 1.9);
+  const homeShotsFor = n(home?.shots_for, 10.5);
+  const homeShotsAgainst = n(home?.shots_against, 10.5);
+  const awayShotsFor = n(away?.shots_for, 10.5);
+  const awayShotsAgainst = n(away?.shots_against, 10.5);
   const homeXgFor = n(home?.xg_for, 1.2);
   const homeXgAgainst = n(home?.xg_against, 1.2);
   const awayXgFor = n(away?.xg_for, 1.2);
@@ -131,6 +210,8 @@ function model(home?: TeamAverages, away?: TeamAverages) {
   const homeCards = (homeCardsFor + awayCardsAgainst) / 2;
   const awayCards = (awayCardsFor + homeCardsAgainst) / 2;
   const totalCards = homeCards + awayCards;
+  const homeShots = (homeShotsFor + awayShotsAgainst) / 2;
+  const awayShots = (awayShotsFor + homeShotsAgainst) / 2;
   const homeXg = (homeXgFor + awayXgAgainst) / 2;
   const awayXg = (awayXgFor + homeXgAgainst) / 2;
   const totalXg = homeXg + awayXg;
@@ -143,6 +224,7 @@ function model(home?: TeamAverages, away?: TeamAverages) {
       home: round(homeCorners),
       away: round(awayCorners),
       total: round(totalCorners),
+      over75: probabilityOver(totalCorners, 7.5),
       over85: probabilityOver(totalCorners, 8.5),
       over95: probabilityOver(totalCorners, 9.5),
       over105: probabilityOver(totalCorners, 10.5),
@@ -153,6 +235,7 @@ function model(home?: TeamAverages, away?: TeamAverages) {
       total: round(totalCards),
       over35: probabilityOver(totalCards, 3.5),
       over45: probabilityOver(totalCards, 4.5),
+      over55: probabilityOver(totalCards, 5.5),
     },
     goals: {
       homeXg: round(homeXg, 2),
@@ -160,6 +243,26 @@ function model(home?: TeamAverages, away?: TeamAverages) {
       totalXg: round(totalXg, 2),
       bothTeamsScore: clamp(Math.round(30 + Math.min(homeXg, awayXg) * 24), 10, 78),
       over25: probabilityOver(totalXg, 2.5),
+    },
+    shots: {
+      home: round(homeShots),
+      away: round(awayShots),
+      total: round(homeShots + awayShots),
+    },
+    fifaAverages: {
+      homeMatches: homeSamples,
+      awayMatches: awaySamples,
+      homeCornersFor: round(homeCornersFor),
+      awayCornersFor: round(awayCornersFor),
+      homeCardsFor: round(homeCardsFor),
+      awayCardsFor: round(awayCardsFor),
+      homeXgFor: round(homeXgFor, 2),
+      awayXgFor: round(awayXgFor, 2),
+    },
+    recentHistory: {
+      homeMatches: homeSamples,
+      awayMatches: awaySamples,
+      source: homeSamples || awaySamples ? 'Banco persistido da Copa' : 'Média base até a FIFA publicar estatísticas suficientes',
     },
     confidence,
     note: homeSamples && awaySamples
@@ -174,9 +277,9 @@ async function loadUpcomingFromDatabase(): Promise<DbMatch[]> {
     FROM world_cup_matches
     WHERE competition_key = ${WORLD_CUP_2026_KEY}
       AND (kickoff_at IS NULL OR kickoff_at >= NOW() - INTERVAL '3 hours')
-      AND LOWER(COALESCE(status, '')) NOT IN ('finished', 'fim', 'final', 'ft')
+      AND LOWER(COALESCE(status, '')) NOT IN ('finished', 'fim', 'final', 'ft', 'encerrado')
     ORDER BY kickoff_at ASC NULLS LAST, id ASC
-    LIMIT 120
+    LIMIT 160
   `;
   return rows as DbMatch[];
 }
@@ -205,6 +308,10 @@ async function loadUpcomingFromLiveSource(request: NextRequest): Promise<DbMatch
   }
 }
 
+function loadFallbackUpcoming(): DbMatch[] {
+  return KNOCKOUT_FALLBACK_MATCHES.filter(shouldPredict);
+}
+
 async function loadTeamAverages() {
   return (await sql`
     WITH stat_base AS (
@@ -223,7 +330,7 @@ async function loadTeamAverages() {
       JOIN world_cup_matches m ON m.id = ms.match_id
       WHERE m.competition_key = ${WORLD_CUP_2026_KEY}
         AND ms.value_numeric IS NOT NULL
-        AND LOWER(COALESCE(m.status, '')) IN ('finished', 'fim', 'final', 'ft')
+        AND LOWER(COALESCE(m.status, '')) IN ('finished', 'fim', 'final', 'ft', 'encerrado')
     ), picked AS (
       SELECT * FROM stat_base WHERE rn = 1
     )
@@ -260,6 +367,14 @@ export async function GET(request: NextRequest) {
       if (!merged.has(id)) merged.set(id, match);
     }
 
+    const usedFallback = merged.size === 0;
+    if (usedFallback) {
+      for (const match of loadFallbackUpcoming()) {
+        const id = matchIdentity(match.home_team_name, match.away_team_name, match.kickoff_at);
+        if (!merged.has(id)) merged.set(id, match);
+      }
+    }
+
     const byTeam = new Map(averages.map((row) => [teamKey(row.team_name), row]));
     const predictions = Array.from(merged.values())
       .sort((a, b) => {
@@ -277,6 +392,7 @@ export async function GET(request: NextRequest) {
           kickoffAt: match.kickoff_at,
           groupName: match.group_name,
           roundName: match.round_name,
+          status: match.status,
           sourceKey: match.source_key,
           prediction: model(home, away),
           samples: { homeMatches: home?.matches ?? 0, awayMatches: away?.matches ?? 0 },
@@ -290,6 +406,7 @@ export async function GET(request: NextRequest) {
       sources: {
         databaseUpcoming: dbUpcoming.length,
         liveUpcoming: liveUpcoming.length,
+        fallbackUpcoming: usedFallback ? predictions.length : 0,
         teamAverages: averages.length,
       },
       lastUpdated: new Date().toISOString(),
