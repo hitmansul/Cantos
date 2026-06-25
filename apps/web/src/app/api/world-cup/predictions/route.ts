@@ -1,4 +1,4 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import sql from '@/app/api/utils/sql';
 
 export const dynamic = 'force-dynamic';
@@ -16,6 +16,27 @@ type TeamAverages = {
   shots_against: number | null;
   xg_for: number | null;
   xg_against: number | null;
+};
+
+type DbMatch = {
+  id: number | string;
+  home_team_name: string;
+  away_team_name: string;
+  kickoff_at: string | Date | null;
+  group_name: string | null;
+  round_name: string | null;
+  status: string | null;
+  source_key: string | null;
+};
+
+type SourceMatch = {
+  id?: number | string;
+  startTime?: string | null;
+  roundName?: string | null;
+  statusId?: number | null;
+  statusText?: string | null;
+  homeTeam?: { name?: string | null; shortName?: string | null };
+  awayTeam?: { name?: string | null; shortName?: string | null };
 };
 
 function n(value: unknown, fallback = 0) {
@@ -49,9 +70,9 @@ function stripPrefix(value: unknown) {
 
 function teamKey(value: unknown) {
   const raw = normalize(stripPrefix(value));
-  if (raw === 'brasil') return 'brazil';
-  if (raw === 'escocia') return 'scotland';
-  if (raw === 'eua' || raw === 'united states') return 'usa';
+  if (raw === 'brasil' || raw === 'bra') return 'brazil';
+  if (raw === 'escocia' || raw === 'sco') return 'scotland';
+  if (raw === 'eua' || raw === 'usa' || raw === 'united states') return 'usa';
   if (raw === 'coreia do sul' || raw === 'south korea') return 'korea republic';
   if (raw === 'tchequia' || raw === 'republica tcheca' || raw === 'czech republic') return 'czechia';
   if (raw === 'turquia' || raw === 'turkey') return 'turkiye';
@@ -59,11 +80,16 @@ function teamKey(value: unknown) {
   if (raw === 'cabo verde' || raw === 'cape verde') return 'cape verde islands';
   if (raw === 'rd congo' || raw === 'dr congo' || raw === 'congo rd') return 'congo dr';
   if (raw === 'ira' || raw === 'iran') return 'ir iran';
-  if (raw === 'alemanha') return 'germany';
-  if (raw === 'equador') return 'ecuador';
-  if (raw === 'mexico') return 'mexico';
-  if (raw === 'curacao' || raw === 'curacau') return 'curacao';
+  if (raw === 'alemanha' || raw === 'ger') return 'germany';
+  if (raw === 'equador' || raw === 'ecu') return 'ecuador';
+  if (raw === 'mexico' || raw === 'mex') return 'mexico';
+  if (raw === 'curacao' || raw === 'curacau' || raw === 'cw') return 'curacao';
   return raw;
+}
+
+function matchIdentity(home: unknown, away: unknown, date: unknown) {
+  const day = date ? new Date(String(date)).toISOString().slice(0, 10) : 'sem-data';
+  return `${day}|${teamKey(home)}|${teamKey(away)}`;
 }
 
 function probabilityOver(mean: number, line: number) {
@@ -77,14 +103,12 @@ function isFinishedStatus(status: unknown) {
 }
 
 function shouldPredict(match: { kickoff_at?: string | Date | null; status?: unknown }) {
+  if (isFinishedStatus(match.status)) return false;
   const kickoff = match.kickoff_at ? new Date(match.kickoff_at) : null;
-  const now = Date.now();
   if (kickoff && Number.isFinite(kickoff.getTime())) {
-    // Algumas fontes marcam jogos futuros com status textual incorreto. Para previsão,
-    // a data/hora manda: todo jogo ainda não encerrado pela janela de 2h deve aparecer.
-    return kickoff.getTime() >= now - 2 * 60 * 60 * 1000;
+    return kickoff.getTime() >= Date.now() - 3 * 60 * 60 * 1000;
   }
-  return !isFinishedStatus(match.status);
+  return true;
 }
 
 function model(home?: TeamAverages, away?: TeamAverages) {
@@ -144,59 +168,106 @@ function model(home?: TeamAverages, away?: TeamAverages) {
   };
 }
 
-export async function GET() {
-  try {
-    const upcoming = await sql`
-      SELECT id, home_team_name, away_team_name, kickoff_at, group_name, round_name, status, source_key
-      FROM world_cup_matches
-      WHERE competition_key = ${WORLD_CUP_2026_KEY}
-        AND (kickoff_at IS NULL OR kickoff_at >= NOW() - INTERVAL '2 hours')
-      ORDER BY kickoff_at ASC NULLS LAST, id ASC
-      LIMIT 80
-    `;
+async function loadUpcomingFromDatabase(): Promise<DbMatch[]> {
+  const rows = await sql`
+    SELECT id, home_team_name, away_team_name, kickoff_at, group_name, round_name, status, source_key
+    FROM world_cup_matches
+    WHERE competition_key = ${WORLD_CUP_2026_KEY}
+      AND (kickoff_at IS NULL OR kickoff_at >= NOW() - INTERVAL '3 hours')
+      AND LOWER(COALESCE(status, '')) NOT IN ('finished', 'fim', 'final', 'ft')
+    ORDER BY kickoff_at ASC NULLS LAST, id ASC
+    LIMIT 120
+  `;
+  return rows as DbMatch[];
+}
 
-    const averages = (await sql`
-      WITH stat_base AS (
-        SELECT
-          m.id AS match_id,
-          m.home_team_id,
-          m.away_team_id,
-          ms.team_id,
-          LOWER(ms.metric_key) AS metric_key,
-          ms.value_numeric,
-          ROW_NUMBER() OVER (
-            PARTITION BY m.id, ms.team_id, LOWER(ms.metric_key)
-            ORDER BY CASE ms.source_key WHEN 'fifa' THEN 1 WHEN '365scores' THEN 2 WHEN 'api-football' THEN 3 ELSE 9 END
-          ) AS rn
-        FROM world_cup_match_statistics ms
-        JOIN world_cup_matches m ON m.id = ms.match_id
-        WHERE m.competition_key = ${WORLD_CUP_2026_KEY}
-          AND ms.value_numeric IS NOT NULL
-          AND LOWER(COALESCE(m.status, '')) IN ('finished', 'fim', 'final', 'ft')
-      ), picked AS (
-        SELECT * FROM stat_base WHERE rn = 1
-      )
+async function loadUpcomingFromLiveSource(request: NextRequest): Promise<DbMatch[]> {
+  try {
+    const url = new URL('/api/365scores/upcoming/copa_do_mundo', request.nextUrl.origin);
+    const response = await fetch(url, { cache: 'no-store' });
+    if (!response.ok) return [];
+    const payload = (await response.json()) as { matches?: SourceMatch[] };
+    return (payload.matches ?? [])
+      .filter((match) => match.homeTeam?.name && match.awayTeam?.name)
+      .map((match) => ({
+        id: match.id ?? `${match.startTime}-${match.homeTeam?.name}-${match.awayTeam?.name}`,
+        home_team_name: String(match.homeTeam?.name ?? ''),
+        away_team_name: String(match.awayTeam?.name ?? ''),
+        kickoff_at: match.startTime ?? null,
+        group_name: null,
+        round_name: match.roundName ?? null,
+        status: match.statusText ?? (match.statusId === 2 ? 'Ao vivo' : 'Agendado'),
+        source_key: '365scores',
+      }))
+      .filter(shouldPredict);
+  } catch {
+    return [];
+  }
+}
+
+async function loadTeamAverages() {
+  return (await sql`
+    WITH stat_base AS (
       SELECT
-        t.name AS team_name,
-        COUNT(DISTINCT p.match_id)::int AS matches,
-        AVG(p.value_numeric) FILTER (WHERE p.metric_key IN ('corners', 'corner_kicks', 'escanteios') AND p.team_id = t.id)::float AS corners_for,
-        AVG(p.value_numeric) FILTER (WHERE p.metric_key IN ('corners', 'corner_kicks', 'escanteios') AND p.team_id <> t.id)::float AS corners_against,
-        AVG(p.value_numeric) FILTER (WHERE p.metric_key IN ('yellow_cards', 'red_cards', 'cartoes_amarelos', 'cartoes_vermelhos') AND p.team_id = t.id)::float AS cards_for,
-        AVG(p.value_numeric) FILTER (WHERE p.metric_key IN ('yellow_cards', 'red_cards', 'cartoes_amarelos', 'cartoes_vermelhos') AND p.team_id <> t.id)::float AS cards_against,
-        AVG(p.value_numeric) FILTER (WHERE p.metric_key IN ('shots', 'total_shots', 'finalizacoes') AND p.team_id = t.id)::float AS shots_for,
-        AVG(p.value_numeric) FILTER (WHERE p.metric_key IN ('shots', 'total_shots', 'finalizacoes') AND p.team_id <> t.id)::float AS shots_against,
-        AVG(p.value_numeric) FILTER (WHERE p.metric_key IN ('expected_goals', 'xg', 'gols_esperados_xg') AND p.team_id = t.id)::float AS xg_for,
-        AVG(p.value_numeric) FILTER (WHERE p.metric_key IN ('expected_goals', 'xg', 'gols_esperados_xg') AND p.team_id <> t.id)::float AS xg_against
-      FROM world_cup_teams t
-      LEFT JOIN picked p ON p.team_id = t.id OR p.home_team_id = t.id OR p.away_team_id = t.id
-      WHERE t.competition_key = ${WORLD_CUP_2026_KEY}
-      GROUP BY t.id, t.name
-    `) as TeamAverages[];
+        m.id AS match_id,
+        m.home_team_id,
+        m.away_team_id,
+        ms.team_id,
+        LOWER(ms.metric_key) AS metric_key,
+        ms.value_numeric,
+        ROW_NUMBER() OVER (
+          PARTITION BY m.id, ms.team_id, LOWER(ms.metric_key)
+          ORDER BY CASE ms.source_key WHEN 'fifa' THEN 1 WHEN '365scores' THEN 2 WHEN 'api-football' THEN 3 ELSE 9 END
+        ) AS rn
+      FROM world_cup_match_statistics ms
+      JOIN world_cup_matches m ON m.id = ms.match_id
+      WHERE m.competition_key = ${WORLD_CUP_2026_KEY}
+        AND ms.value_numeric IS NOT NULL
+        AND LOWER(COALESCE(m.status, '')) IN ('finished', 'fim', 'final', 'ft')
+    ), picked AS (
+      SELECT * FROM stat_base WHERE rn = 1
+    )
+    SELECT
+      t.name AS team_name,
+      COUNT(DISTINCT p.match_id)::int AS matches,
+      AVG(p.value_numeric) FILTER (WHERE p.metric_key IN ('corners', 'corner_kicks', 'escanteios') AND p.team_id = t.id)::float AS corners_for,
+      AVG(p.value_numeric) FILTER (WHERE p.metric_key IN ('corners', 'corner_kicks', 'escanteios') AND p.team_id <> t.id)::float AS corners_against,
+      AVG(p.value_numeric) FILTER (WHERE p.metric_key IN ('yellow_cards', 'cartoes_amarelos') AND p.team_id = t.id)::float AS cards_for,
+      AVG(p.value_numeric) FILTER (WHERE p.metric_key IN ('yellow_cards', 'cartoes_amarelos') AND p.team_id <> t.id)::float AS cards_against,
+      AVG(p.value_numeric) FILTER (WHERE p.metric_key IN ('shots', 'total_shots', 'finalizacoes') AND p.team_id = t.id)::float AS shots_for,
+      AVG(p.value_numeric) FILTER (WHERE p.metric_key IN ('shots', 'total_shots', 'finalizacoes') AND p.team_id <> t.id)::float AS shots_against,
+      AVG(p.value_numeric) FILTER (WHERE p.metric_key IN ('expected_goals', 'xg', 'gols_esperados_xg') AND p.team_id = t.id)::float AS xg_for,
+      AVG(p.value_numeric) FILTER (WHERE p.metric_key IN ('expected_goals', 'xg', 'gols_esperados_xg') AND p.team_id <> t.id)::float AS xg_against
+    FROM world_cup_teams t
+    LEFT JOIN picked p ON p.team_id = t.id OR p.home_team_id = t.id OR p.away_team_id = t.id
+    WHERE t.competition_key = ${WORLD_CUP_2026_KEY}
+    GROUP BY t.id, t.name
+  `) as TeamAverages[];
+}
+
+export async function GET(request: NextRequest) {
+  try {
+    const [dbUpcoming, liveUpcoming, averages] = await Promise.all([
+      loadUpcomingFromDatabase(),
+      loadUpcomingFromLiveSource(request),
+      loadTeamAverages(),
+    ]);
+
+    const merged = new Map<string, DbMatch>();
+    for (const match of [...dbUpcoming, ...liveUpcoming]) {
+      if (!shouldPredict(match)) continue;
+      const id = matchIdentity(match.home_team_name, match.away_team_name, match.kickoff_at);
+      if (!merged.has(id)) merged.set(id, match);
+    }
 
     const byTeam = new Map(averages.map((row) => [teamKey(row.team_name), row]));
-    const predictions = upcoming
-      .filter((match: any) => shouldPredict(match))
-      .map((match: any) => {
+    const predictions = Array.from(merged.values())
+      .sort((a, b) => {
+        const at = a.kickoff_at ? new Date(a.kickoff_at).getTime() : Number.MAX_SAFE_INTEGER;
+        const bt = b.kickoff_at ? new Date(b.kickoff_at).getTime() : Number.MAX_SAFE_INTEGER;
+        return at - bt;
+      })
+      .map((match) => {
         const home = byTeam.get(teamKey(match.home_team_name));
         const away = byTeam.get(teamKey(match.away_team_name));
         return {
@@ -212,7 +283,17 @@ export async function GET() {
         };
       });
 
-    return NextResponse.json({ success: true, predictions, count: predictions.length, lastUpdated: new Date().toISOString() });
+    return NextResponse.json({
+      success: true,
+      predictions,
+      count: predictions.length,
+      sources: {
+        databaseUpcoming: dbUpcoming.length,
+        liveUpcoming: liveUpcoming.length,
+        teamAverages: averages.length,
+      },
+      lastUpdated: new Date().toISOString(),
+    });
   } catch (error) {
     return NextResponse.json({ success: false, error: error instanceof Error ? error.message : 'Erro ao gerar previsões.' }, { status: 500 });
   }
