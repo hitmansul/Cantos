@@ -131,7 +131,16 @@ function sourceLabel(source?: string) {
 }
 
 function refereeAddedMinutes(summary?: PeriodSummary | null) {
-  return summary?.actualAddedMinutes && summary.actualAddedMinutes > 0 ? summary.actualAddedMinutes : null;
+  const actual = summary?.actualAddedMinutes ?? null;
+  if (!actual || actual <= 0) return null;
+
+  // Evita mostrar o relógio corrido no acréscimo como se fosse o acréscimo dado pelo árbitro.
+  // Ex.: se o app recebe 45+2, isso é apenas o tempo já jogado após 45', não necessariamente +2 dado pelo juiz.
+  // Quando temos previsão calculada maior que o valor recebido, tratamos o valor como relógio decorrido e escondemos.
+  const predicted = summary?.predictedAddedMinutes ?? null;
+  if (predicted && predicted > 0 && actual < Math.max(3, Math.round(predicted))) return null;
+
+  return actual;
 }
 
 function summaryHasData(summary?: PeriodSummary | null) {
