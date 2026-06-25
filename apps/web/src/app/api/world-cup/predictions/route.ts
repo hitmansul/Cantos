@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server';
 import sql from '@/app/api/utils/sql';
 
+export const dynamic = 'force-dynamic';
+
 const WORLD_CUP_2026_KEY = 'world_cup_2026';
 
 type TeamAverages = {
@@ -30,25 +32,70 @@ function clamp(value: number, min: number, max: number) {
   return Math.max(min, Math.min(max, value));
 }
 
+function normalize(value: unknown) {
+  return String(value ?? '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function stripPrefix(value: unknown) {
+  const parts = String(value ?? '').trim().split(/\s+/);
+  return parts.length > 1 && /^[A-Z]{2,3}$/i.test(parts[0] ?? '') ? parts.slice(1).join(' ') : String(value ?? '');
+}
+
+function teamKey(value: unknown) {
+  const raw = normalize(stripPrefix(value));
+  if (raw === 'brasil') return 'brazil';
+  if (raw === 'escocia') return 'scotland';
+  if (raw === 'eua' || raw === 'united states') return 'usa';
+  if (raw === 'coreia do sul' || raw === 'south korea') return 'korea republic';
+  if (raw === 'tchequia' || raw === 'republica tcheca' || raw === 'czech republic') return 'czechia';
+  if (raw === 'turquia' || raw === 'turkey') return 'turkiye';
+  if (raw === 'costa do marfim' || raw === 'ivory coast' || raw === 'cote d ivoire') return "cote d'ivoire";
+  if (raw === 'cabo verde' || raw === 'cape verde') return 'cape verde islands';
+  if (raw === 'rd congo' || raw === 'dr congo' || raw === 'congo rd') return 'congo dr';
+  if (raw === 'ira' || raw === 'iran') return 'ir iran';
+  if (raw === 'alemanha') return 'germany';
+  if (raw === 'equador') return 'ecuador';
+  if (raw === 'mexico') return 'mexico';
+  if (raw === 'curacao' || raw === 'curacau') return 'curacao';
+  return raw;
+}
+
 function probabilityOver(mean: number, line: number) {
   const z = (mean - line) / Math.max(1.8, Math.sqrt(Math.max(mean, 1)));
   return clamp(Math.round(50 + z * 24), 5, 95);
 }
 
 function isFinishedStatus(status: unknown) {
-  const value = String(status ?? '').toLowerCase();
+  const value = normalize(status);
   return ['finished', 'fim', 'final', 'ft'].some((term) => value.includes(term));
 }
 
+function shouldPredict(match: { kickoff_at?: string | Date | null; status?: unknown }) {
+  const kickoff = match.kickoff_at ? new Date(match.kickoff_at) : null;
+  const now = Date.now();
+  if (kickoff && Number.isFinite(kickoff.getTime())) {
+    // Algumas fontes marcam jogos futuros com status textual incorreto. Para previsão,
+    // a data/hora manda: todo jogo ainda não encerrado pela janela de 2h deve aparecer.
+    return kickoff.getTime() >= now - 2 * 60 * 60 * 1000;
+  }
+  return !isFinishedStatus(match.status);
+}
+
 function model(home?: TeamAverages, away?: TeamAverages) {
-  const homeCornersFor = n(home?.corners_for, 4.5);
-  const homeCornersAgainst = n(home?.corners_against, 4.5);
-  const awayCornersFor = n(away?.corners_for, 4.5);
-  const awayCornersAgainst = n(away?.corners_against, 4.5);
-  const homeCardsFor = n(home?.cards_for, 1.8);
-  const homeCardsAgainst = n(home?.cards_against, 1.8);
-  const awayCardsFor = n(away?.cards_for, 1.8);
-  const awayCardsAgainst = n(away?.cards_against, 1.8);
+  const homeCornersFor = n(home?.corners_for, 4.7);
+  const homeCornersAgainst = n(home?.corners_against, 4.7);
+  const awayCornersFor = n(away?.corners_for, 4.7);
+  const awayCornersAgainst = n(away?.corners_against, 4.7);
+  const homeCardsFor = n(home?.cards_for, 1.9);
+  const homeCardsAgainst = n(home?.cards_against, 1.9);
+  const awayCardsFor = n(away?.cards_for, 1.9);
+  const awayCardsAgainst = n(away?.cards_against, 1.9);
   const homeXgFor = n(home?.xg_for, 1.2);
   const homeXgAgainst = n(home?.xg_against, 1.2);
   const awayXgFor = n(away?.xg_for, 1.2);
@@ -63,7 +110,9 @@ function model(home?: TeamAverages, away?: TeamAverages) {
   const homeXg = (homeXgFor + awayXgAgainst) / 2;
   const awayXg = (awayXgFor + homeXgAgainst) / 2;
   const totalXg = homeXg + awayXg;
-  const confidence = clamp(35 + Math.min(n(home?.matches), n(away?.matches)) * 12, 35, 82);
+  const homeSamples = n(home?.matches);
+  const awaySamples = n(away?.matches);
+  const confidence = clamp(35 + Math.min(homeSamples, awaySamples) * 12, 35, 82);
 
   return {
     corners: {
@@ -89,20 +138,21 @@ function model(home?: TeamAverages, away?: TeamAverages) {
       over25: probabilityOver(totalXg, 2.5),
     },
     confidence,
-    note: 'Modelo inicial baseado no histórico persistido da Copa. Prioriza dados oficiais FIFA quando disponíveis e usa 365Scores/API-Football apenas como complemento.',
+    note: homeSamples && awaySamples
+      ? 'Modelo baseado no histórico persistido da Copa. Prioriza FIFA e usa 365Scores/API-Football apenas como complemento.'
+      : 'Modelo com média padrão até existir histórico suficiente para as duas seleções.',
   };
 }
 
 export async function GET() {
   try {
-    const now = new Date();
     const upcoming = await sql`
       SELECT id, home_team_name, away_team_name, kickoff_at, group_name, round_name, status, source_key
       FROM world_cup_matches
       WHERE competition_key = ${WORLD_CUP_2026_KEY}
-        AND kickoff_at >= NOW() - INTERVAL '2 hours'
+        AND (kickoff_at IS NULL OR kickoff_at >= NOW() - INTERVAL '2 hours')
       ORDER BY kickoff_at ASC NULLS LAST, id ASC
-      LIMIT 60
+      LIMIT 80
     `;
 
     const averages = (await sql`
@@ -129,29 +179,26 @@ export async function GET() {
       SELECT
         t.name AS team_name,
         COUNT(DISTINCT p.match_id)::int AS matches,
-        AVG(p.value_numeric) FILTER (WHERE p.metric_key IN ('corners', 'corner_kicks') AND p.team_id = t.id)::float AS corners_for,
-        AVG(p.value_numeric) FILTER (WHERE p.metric_key IN ('corners', 'corner_kicks') AND p.team_id <> t.id)::float AS corners_against,
-        AVG(p.value_numeric) FILTER (WHERE p.metric_key IN ('yellow_cards', 'red_cards') AND p.team_id = t.id)::float AS cards_for,
-        AVG(p.value_numeric) FILTER (WHERE p.metric_key IN ('yellow_cards', 'red_cards') AND p.team_id <> t.id)::float AS cards_against,
-        AVG(p.value_numeric) FILTER (WHERE p.metric_key IN ('shots', 'total_shots') AND p.team_id = t.id)::float AS shots_for,
-        AVG(p.value_numeric) FILTER (WHERE p.metric_key IN ('shots', 'total_shots') AND p.team_id <> t.id)::float AS shots_against,
-        AVG(p.value_numeric) FILTER (WHERE p.metric_key IN ('expected_goals', 'xg') AND p.team_id = t.id)::float AS xg_for,
-        AVG(p.value_numeric) FILTER (WHERE p.metric_key IN ('expected_goals', 'xg') AND p.team_id <> t.id)::float AS xg_against
+        AVG(p.value_numeric) FILTER (WHERE p.metric_key IN ('corners', 'corner_kicks', 'escanteios') AND p.team_id = t.id)::float AS corners_for,
+        AVG(p.value_numeric) FILTER (WHERE p.metric_key IN ('corners', 'corner_kicks', 'escanteios') AND p.team_id <> t.id)::float AS corners_against,
+        AVG(p.value_numeric) FILTER (WHERE p.metric_key IN ('yellow_cards', 'red_cards', 'cartoes_amarelos', 'cartoes_vermelhos') AND p.team_id = t.id)::float AS cards_for,
+        AVG(p.value_numeric) FILTER (WHERE p.metric_key IN ('yellow_cards', 'red_cards', 'cartoes_amarelos', 'cartoes_vermelhos') AND p.team_id <> t.id)::float AS cards_against,
+        AVG(p.value_numeric) FILTER (WHERE p.metric_key IN ('shots', 'total_shots', 'finalizacoes') AND p.team_id = t.id)::float AS shots_for,
+        AVG(p.value_numeric) FILTER (WHERE p.metric_key IN ('shots', 'total_shots', 'finalizacoes') AND p.team_id <> t.id)::float AS shots_against,
+        AVG(p.value_numeric) FILTER (WHERE p.metric_key IN ('expected_goals', 'xg', 'gols_esperados_xg') AND p.team_id = t.id)::float AS xg_for,
+        AVG(p.value_numeric) FILTER (WHERE p.metric_key IN ('expected_goals', 'xg', 'gols_esperados_xg') AND p.team_id <> t.id)::float AS xg_against
       FROM world_cup_teams t
       LEFT JOIN picked p ON p.team_id = t.id OR p.home_team_id = t.id OR p.away_team_id = t.id
       WHERE t.competition_key = ${WORLD_CUP_2026_KEY}
       GROUP BY t.id, t.name
     `) as TeamAverages[];
 
-    const byTeam = new Map(averages.map((row) => [row.team_name.toLowerCase(), row]));
+    const byTeam = new Map(averages.map((row) => [teamKey(row.team_name), row]));
     const predictions = upcoming
-      .filter((match: any) => {
-        const kickoff = match.kickoff_at ? new Date(match.kickoff_at) : null;
-        return !isFinishedStatus(match.status) && (!kickoff || kickoff.getTime() >= now.getTime() - 2 * 60 * 60 * 1000);
-      })
+      .filter((match: any) => shouldPredict(match))
       .map((match: any) => {
-        const home = byTeam.get(String(match.home_team_name).toLowerCase());
-        const away = byTeam.get(String(match.away_team_name).toLowerCase());
+        const home = byTeam.get(teamKey(match.home_team_name));
+        const away = byTeam.get(teamKey(match.away_team_name));
         return {
           id: match.id,
           homeTeamName: match.home_team_name,
