@@ -65,9 +65,17 @@ export async function GET() {
       FROM world_cup_matches m
       LEFT JOIN world_cup_match_statistics ms ON ms.match_id = m.id
       WHERE m.competition_key = ${WORLD_CUP_2026_KEY}
+        AND m.fixture_key NOT LIKE 'fifa:pdf:%'
       GROUP BY m.id
       ORDER BY m.kickoff_at DESC NULLS LAST, m.id DESC
     `) as Row[];
+
+    const orphanRows = (await sql`
+      SELECT COUNT(*)::int AS count
+      FROM world_cup_matches
+      WHERE competition_key = ${WORLD_CUP_2026_KEY}
+        AND fixture_key LIKE 'fifa:pdf:%'
+    `) as Array<{ count: number }>;
 
     const completed = rows.filter((row) => finished(row.status) || row.home_score !== null || row.away_score !== null);
     const completeFifa = completed.filter((row) => row.fifa_stats > 0 && row.required_metric_count >= 8);
@@ -91,7 +99,7 @@ export async function GET() {
     return NextResponse.json({
       success: true,
       competition: WORLD_CUP_2026_KEY,
-      scope: 'Somente Copa do Mundo 2026.',
+      scope: 'Somente Copa do Mundo 2026. Diagnóstico ignora resíduos fifa:pdf:* para refletir a aba Resultados real.',
       requiredMetrics: REQUIRED_METRICS,
       coreMetrics: CORE_METRICS,
       summary: {
@@ -101,6 +109,7 @@ export async function GET() {
         partialFifaMatches: partialFifa.length,
         missingFifaMatches: missingFifa.length,
         missingAllStatsMatches: missingAllStats.length,
+        fifaPdfResidualMatches: Number(orphanRows[0]?.count ?? 0),
         completeFifaCoveragePercent: completed.length ? Math.round((completeFifa.length / completed.length) * 100) : 0,
         usableFifaCoveragePercent: completed.length ? Math.round((usableFifa.length / completed.length) * 100) : 0,
       },
