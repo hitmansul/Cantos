@@ -5,43 +5,18 @@ export const dynamic = 'force-dynamic';
 
 const WORLD_CUP_2026_KEY = 'world_cup_2026';
 
-type MatchRow = {
-  id: number;
-  home_team_id: number | null;
-  away_team_id: number | null;
-  home_team_name: string;
-  away_team_name: string;
-  fixture_key: string;
-  kickoff_at?: string | null;
-};
+type MatchRow = { id: number; home_team_id: number | null; away_team_id: number | null; home_team_name: string; away_team_name: string; fixture_key: string; kickoff_at?: string | null };
+type ExtractedStat = { metricKey: string; metricName: string; home: number | null; away: number | null; period: string; parser: string; rawLine?: string };
+type MetricDefinition = { key: string; name: string; aliases: string[]; max?: number; percent?: boolean; decimal?: boolean };
 
-type ExtractedStat = {
-  metricKey: string;
-  metricName: string;
-  home: number | null;
-  away: number | null;
-  period: string;
-  parser: string;
-  rawLine?: string;
-};
+type TeamInfo = { fifa: string; code: string };
 
-type PdfLine = { page: number; y: number; text: string };
-
-type MetricDefinition = {
-  key: string;
-  name: string;
-  aliases: string[];
-  max?: number;
-  percent?: boolean;
-  decimal?: boolean;
-};
-
-const TEAM_ALIASES: Record<string, { fifa: string; code: string }> = {
+const TEAMS: Record<string, TeamInfo> = {
   bra: { fifa: 'Brazil', code: 'BRA' }, brazil: { fifa: 'Brazil', code: 'BRA' }, brasil: { fifa: 'Brazil', code: 'BRA' },
   sco: { fifa: 'Scotland', code: 'SCO' }, scotland: { fifa: 'Scotland', code: 'SCO' }, escocia: { fifa: 'Scotland', code: 'SCO' },
   cze: { fifa: 'Czechia', code: 'CZE' }, czechia: { fifa: 'Czechia', code: 'CZE' }, tchequia: { fifa: 'Czechia', code: 'CZE' }, 'czech republic': { fifa: 'Czechia', code: 'CZE' },
   mex: { fifa: 'Mexico', code: 'MEX' }, mexico: { fifa: 'Mexico', code: 'MEX' },
-  kor: { fifa: 'Korea Republic', code: 'KOR' }, 'korea republic': { fifa: 'Korea Republic', code: 'KOR' }, 'south korea': { fifa: 'Korea Republic', code: 'KOR' }, 'coreia do sul': { fifa: 'Korea Republic', code: 'KOR' },
+  kor: { fifa: 'Korea Republic', code: 'KOR' }, korea: { fifa: 'Korea Republic', code: 'KOR' }, 'korea republic': { fifa: 'Korea Republic', code: 'KOR' }, 'south korea': { fifa: 'Korea Republic', code: 'KOR' }, 'coreia do sul': { fifa: 'Korea Republic', code: 'KOR' },
   rsa: { fifa: 'South Africa', code: 'RSA' }, zaf: { fifa: 'South Africa', code: 'RSA' }, 'south africa': { fifa: 'South Africa', code: 'RSA' }, 'africa do sul': { fifa: 'South Africa', code: 'RSA' },
   mar: { fifa: 'Morocco', code: 'MAR' }, morocco: { fifa: 'Morocco', code: 'MAR' }, marrocos: { fifa: 'Morocco', code: 'MAR' },
   hai: { fifa: 'Haiti', code: 'HAI' }, haiti: { fifa: 'Haiti', code: 'HAI' },
@@ -69,7 +44,7 @@ const TEAM_ALIASES: Record<string, { fifa: string; code: string }> = {
   eng: { fifa: 'England', code: 'ENG' }, england: { fifa: 'England', code: 'ENG' }, inglaterra: { fifa: 'England', code: 'ENG' },
   col: { fifa: 'Colombia', code: 'COL' }, colombia: { fifa: 'Colombia', code: 'COL' },
   por: { fifa: 'Portugal', code: 'POR' }, portugal: { fifa: 'Portugal', code: 'POR' },
-  cod: { fifa: 'Congo DR', code: 'COD' }, 'congo dr': { fifa: 'Congo DR', code: 'COD' }, 'rd congo': { fifa: 'Congo DR', code: 'COD' },
+  cod: { fifa: 'Congo DR', code: 'COD' }, 'congo dr': { fifa: 'Congo DR', code: 'COD' }, 'rd congo': { fifa: 'Congo DR', code: 'COD' }, 'dr congo': { fifa: 'Congo DR', code: 'COD' },
   uzb: { fifa: 'Uzbekistan', code: 'UZB' }, uzbekistan: { fifa: 'Uzbekistan', code: 'UZB' }, uzbequistao: { fifa: 'Uzbekistan', code: 'UZB' },
   alg: { fifa: 'Algeria', code: 'ALG' }, algeria: { fifa: 'Algeria', code: 'ALG' }, argelia: { fifa: 'Algeria', code: 'ALG' },
   aut: { fifa: 'Austria', code: 'AUT' }, austria: { fifa: 'Austria', code: 'AUT' },
@@ -87,26 +62,26 @@ const TEAM_ALIASES: Record<string, { fifa: string; code: string }> = {
   bih: { fifa: 'Bosnia and Herzegovina', code: 'BIH' }, 'bosnia and herzegovina': { fifa: 'Bosnia and Herzegovina', code: 'BIH' }, 'bosnia e herzegovina': { fifa: 'Bosnia and Herzegovina', code: 'BIH' },
 };
 
-const CODE_ALIASES: Record<string, string> = Object.fromEntries(Object.values(TEAM_ALIASES).map((team) => [team.code, team.fifa]));
+const CODE_ALIASES: Record<string, TeamInfo> = Object.fromEntries(Object.values(TEAMS).map((team) => [team.code, team]));
 
 const METRICS: MetricDefinition[] = [
   { key: 'possession', name: 'Posse de bola', aliases: ['possession', 'posse de bola', 'ball possession'], max: 100, percent: true },
   { key: 'shots', name: 'Finalizações', aliases: ['total attempts', 'total shots', 'shots', 'attempts', 'finalizacoes', 'finalizações'], max: 80 },
-  { key: 'shots_on_target', name: 'Finalizações no gol', aliases: ['attempts on target', 'shots on target', 'on target', 'chutes no gol', 'finalizacoes no gol', 'finalizações no gol'], max: 50 },
+  { key: 'shots_on_target', name: 'Finalizações no gol', aliases: ['attempts on target', 'shots on target', 'shots goal', 'on target', 'chutes no gol', 'finalizacoes no gol'], max: 50 },
   { key: 'corners', name: 'Escanteios', aliases: ['corners', 'corner kicks', 'escanteios'], max: 30 },
-  { key: 'yellow_cards', name: 'Cartões amarelos', aliases: ['yellow cards', 'cartoes amarelos', 'cartões amarelos'], max: 15 },
-  { key: 'red_cards', name: 'Cartões vermelhos', aliases: ['red cards', 'cartoes vermelhos', 'cartões vermelhos'], max: 5 },
+  { key: 'yellow_cards', name: 'Cartões amarelos', aliases: ['yellow cards', 'cartoes amarelos'], max: 15 },
+  { key: 'red_cards', name: 'Cartões vermelhos', aliases: ['red cards', 'cartoes vermelhos'], max: 5 },
   { key: 'fouls', name: 'Faltas', aliases: ['fouls committed', 'fouls', 'faltas'], max: 60 },
   { key: 'offsides', name: 'Impedimentos', aliases: ['offsides', 'impedimentos'], max: 20 },
   { key: 'passes', name: 'Passes totais', aliases: ['total passes', 'passes', 'passes totais'], max: 1500 },
-  { key: 'pass_accuracy', name: 'Precisão de passes', aliases: ['passing accuracy', 'pass accuracy', 'precisao de passes', 'precisão de passes'], max: 100, percent: true },
+  { key: 'pass_accuracy', name: 'Precisão de passes', aliases: ['passing accuracy', 'pass accuracy', 'precisao de passes'], max: 100, percent: true },
   { key: 'goalkeeper_saves', name: 'Defesas do goleiro', aliases: ['goalkeeper saves', 'saves', 'defesas do goleiro'], max: 30 },
   { key: 'expected_goals', name: 'Gols esperados (xG)', aliases: ['expected goals', 'xg', 'gols esperados'], max: 10, decimal: true },
   { key: 'crosses', name: 'Cruzamentos', aliases: ['crosses', 'cruzamentos'], max: 80 },
   { key: 'tackles', name: 'Desarmes', aliases: ['tackles', 'desarmes'], max: 80 },
-  { key: 'interceptions', name: 'Interceptações', aliases: ['interceptions', 'interceptacoes', 'interceptações'], max: 80 },
-  { key: 'recoveries', name: 'Recuperações', aliases: ['recoveries', 'recuperacoes', 'recuperações'], max: 120 },
-  { key: 'clearances', name: 'Cortes defensivos', aliases: ['clearances', 'perigo afastado', 'cortes'], max: 100 },
+  { key: 'interceptions', name: 'Interceptações', aliases: ['interceptions', 'interceptacoes'], max: 80 },
+  { key: 'recoveries', name: 'Recuperações', aliases: ['recoveries', 'recuperacoes'], max: 120 },
+  { key: 'clearances', name: 'Cortes defensivos', aliases: ['clearances', 'cortes'], max: 100 },
 ];
 
 function normalize(value: unknown) {
@@ -117,9 +92,9 @@ function textKey(value: unknown) {
   return normalize(value).replace(/[.,%]/g, '').trim();
 }
 
-function teamInfo(value: unknown) {
+function teamInfo(value: unknown): TeamInfo {
   const key = textKey(value);
-  return TEAM_ALIASES[key] ?? { fifa: String(value ?? '').trim(), code: key.toUpperCase().slice(0, 3) };
+  return TEAMS[key] ?? CODE_ALIASES[String(value ?? '').toUpperCase()] ?? { fifa: String(value ?? '').trim(), code: key.toUpperCase().slice(0, 3) || 'UNK' };
 }
 
 function numberValue(value: string | undefined) {
@@ -129,21 +104,20 @@ function numberValue(value: string | undefined) {
 }
 
 function isPlausible(metric: MetricDefinition, value: number | null) {
-  if (value === null) return false;
-  if (value < 0) return false;
-  if (metric.max !== undefined && value > metric.max) return false;
-  return true;
+  return value !== null && value >= 0 && (metric.max === undefined || value <= metric.max);
 }
 
 function extractCodesFromUrl(url: string) {
-  const file = decodeURIComponent(url.split('/').pop() ?? '').toUpperCase();
-  const match = file.match(/M(\d+)[-_ ]+([A-Z]{3})[-_ ]+V[-_ ]+([A-Z]{3})/i) ?? file.match(/([A-Z]{3})[-_ ]+V[-_ ]+([A-Z]{3})/i);
+  const fileName = decodeURIComponent(url.split('/').pop() ?? '').toUpperCase();
+  const match = fileName.match(/M(\d+)[-_ ]+([A-Z]{3})[-_ ]+V[-_ ]+([A-Z]{3})/i) ?? fileName.match(/([A-Z]{3})[-_ ]+V[-_ ]+([A-Z]{3})/i);
   if (!match) return null;
   const hasMatchNumber = match.length === 4;
   const matchNumber = hasMatchNumber ? Number(match[1]) : null;
   const homeCode = hasMatchNumber ? match[2] : match[1];
   const awayCode = hasMatchNumber ? match[3] : match[2];
-  return { homeName: CODE_ALIASES[homeCode] ?? homeCode, awayName: CODE_ALIASES[awayCode] ?? awayCode, homeCode, awayCode, matchNumber, fileName: file };
+  const home = CODE_ALIASES[homeCode] ?? teamInfo(homeCode);
+  const away = CODE_ALIASES[awayCode] ?? teamInfo(awayCode);
+  return { homeName: home.fifa, awayName: away.fifa, homeCode, awayCode, matchNumber, fileName };
 }
 
 async function parsePdfText(buffer: Buffer) {
@@ -156,33 +130,6 @@ async function parsePdfText(buffer: Buffer) {
   }
 }
 
-async function extractPdfLines(buffer: Buffer): Promise<PdfLine[]> {
-  try {
-    const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
-    const document = await pdfjs.getDocument({ data: new Uint8Array(buffer), disableWorker: true, isEvalSupported: false }).promise;
-    const lines: PdfLine[] = [];
-    for (let pageNumber = 1; pageNumber <= document.numPages; pageNumber += 1) {
-      const page = await document.getPage(pageNumber);
-      const content = await page.getTextContent();
-      const items = (content.items as Array<{ str?: string; transform?: number[] }>).filter((item) => item.str?.trim());
-      const grouped = new Map<number, Array<{ x: number; text: string }>>();
-      for (const item of items) {
-        const y = Math.round(Number(item.transform?.[5] ?? 0));
-        const x = Number(item.transform?.[4] ?? 0);
-        if (!grouped.has(y)) grouped.set(y, []);
-        grouped.get(y)!.push({ x, text: String(item.str) });
-      }
-      for (const [y, row] of grouped.entries()) {
-        const text = row.sort((a, b) => a.x - b.x).map((item) => item.text).join(' ').replace(/\s+/g, ' ').trim();
-        if (text) lines.push({ page: pageNumber, y, text });
-      }
-    }
-    return lines;
-  } catch {
-    return [];
-  }
-}
-
 function numbersFromLine(line: string) {
   return Array.from(line.matchAll(/-?\d+(?:[\.,]\d+)?\s*%?/g)).map((match) => numberValue(match[0])).filter((value): value is number => value !== null);
 }
@@ -192,12 +139,10 @@ function lineContainsMetric(line: string, metric: MetricDefinition) {
   return metric.aliases.some((alias) => normalized.includes(textKey(alias)));
 }
 
-function makeStat(metric: MetricDefinition, values: number[], parser: string, rawLine: string, period = 'match'): ExtractedStat | null {
-  const plausible = values.filter((value) => isPlausible(metric, value));
+function makeStat(metric: MetricDefinition, values: Array<number | null>, parser: string, rawLine: string): ExtractedStat | null {
+  const plausible = values.filter((value): value is number => isPlausible(metric, value));
   if (plausible.length < 2) return null;
-  const home = plausible[0] ?? null;
-  const away = plausible[1] ?? null;
-  return { metricKey: metric.key, metricName: metric.name, home, away, period, parser, rawLine };
+  return { metricKey: metric.key, metricName: metric.name, home: plausible[0], away: plausible[1], period: 'match', parser, rawLine };
 }
 
 function mergeStats(stats: ExtractedStat[]) {
@@ -209,37 +154,38 @@ function mergeStats(stats: ExtractedStat[]) {
   return Array.from(byKey.values());
 }
 
-function extractStatsFromPlainText(text: string) {
-  const compact = text.replace(/\s+/g, ' ').trim();
+function extractStats(text: string) {
+  const lines = text.split(/\n+/).map((line) => line.replace(/\s+/g, ' ').trim()).filter(Boolean);
+  const compact = lines.join(' ');
   const stats: ExtractedStat[] = [];
+
   for (const metric of METRICS) {
     for (const alias of metric.aliases) {
       const escaped = alias.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s+');
-      const regex = new RegExp(`${escaped}[^0-9-]{0,80}(-?\\d+(?:[\\.,]\\d+)?\\s*%?)[^0-9-]{1,80}(-?\\d+(?:[\\.,]\\d+)?\\s*%?)`, 'i');
+      const regex = new RegExp(`${escaped}[^0-9-]{0,90}(-?\\d+(?:[\\.,]\\d+)?\\s*%?)[^0-9-]{1,90}(-?\\d+(?:[\\.,]\\d+)?\\s*%?)`, 'i');
       const found = compact.match(regex);
       if (found) {
-        const stat = makeStat(metric, [numberValue(found[1]), numberValue(found[2])].filter((v): v is number => v !== null), 'plain-text', found[0]);
+        const stat = makeStat(metric, [numberValue(found[1]), numberValue(found[2])], 'plain-text', found[0]);
         if (stat) stats.push(stat);
         break;
       }
     }
   }
-  return stats;
-}
 
-function extractStatsFromLines(lines: PdfLine[]) {
-  const stats: ExtractedStat[] = [];
   for (let index = 0; index < lines.length; index += 1) {
-    const current = lines[index];
-    const windowText = [lines[index - 1]?.text, current.text, lines[index + 1]?.text].filter(Boolean).join(' | ');
+    const windowText = [lines[index - 1], lines[index], lines[index + 1]].filter(Boolean).join(' | ');
     for (const metric of METRICS) {
       if (!lineContainsMetric(windowText, metric)) continue;
-      const values = numbersFromLine(windowText);
-      const stat = makeStat(metric, values, 'line-window', windowText);
+      const stat = makeStat(metric, numbersFromLine(windowText), 'line-window', windowText);
       if (stat) stats.push(stat);
     }
   }
-  return stats;
+
+  return { stats: mergeStats(stats), lineCount: lines.length, plainTextLength: text.length };
+}
+
+function slug(value: unknown) {
+  return textKey(value).replace(/\s+/g, '_') || 'unknown';
 }
 
 function rowText(row: MatchRow) {
@@ -256,28 +202,39 @@ function matchScore(row: MatchRow, homeName: string, awayName: string, matchNumb
   if (text.includes(textKey(home.code))) score += 2;
   if (text.includes(textKey(away.code))) score += 2;
   if (matchNumber && text.includes(`m${matchNumber}`)) score += 2;
-  if (text.includes(`${textKey(home.fifa)} ${textKey(away.fifa)}`) || text.includes(`${textKey(away.fifa)} ${textKey(home.fifa)}`)) score += 2;
   return score;
 }
 
 async function ensureTeam(name: string, code: string) {
+  const existing = await sql`SELECT id FROM world_cup_teams WHERE competition_key = ${WORLD_CUP_2026_KEY} AND fifa_code = ${code} LIMIT 1`;
+  if (existing[0]?.id) {
+    await sql`UPDATE world_cup_teams SET name = ${name}, source_key = 'fifa', source_payload = ${JSON.stringify({ code, name, importedBy: 'pmsr-3' })}::jsonb, source_updated_at = NOW(), updated_at = NOW() WHERE id = ${Number(existing[0].id)}`;
+    return Number(existing[0].id);
+  }
   const rows = await sql`
     INSERT INTO world_cup_teams (competition_key, fifa_code, name, source_key, source_payload, source_updated_at)
     VALUES (${WORLD_CUP_2026_KEY}, ${code}, ${name}, 'fifa', ${JSON.stringify({ code, name, importedBy: 'pmsr-3' })}::jsonb, NOW())
-    ON CONFLICT (competition_key, fifa_code) DO UPDATE SET name = EXCLUDED.name, source_key = 'fifa', source_payload = EXCLUDED.source_payload, source_updated_at = NOW(), updated_at = NOW()
     RETURNING id
   `;
   return Number(rows[0]?.id);
 }
 
-async function createFifaPdfMatch(homeName: string, awayName: string, homeCode: string, awayCode: string, matchNumber: number | null, pdfUrl: string): Promise<MatchRow> {
+async function createOrUpdateFifaPdfMatch(homeName: string, awayName: string, homeCode: string, awayCode: string, matchNumber: number | null, pdfUrl: string): Promise<MatchRow> {
   const homeTeamId = await ensureTeam(homeName, homeCode);
   const awayTeamId = await ensureTeam(awayName, awayCode);
-  const fixtureKey = `fifa:pdf:M${matchNumber ?? 'unknown'}:${textKey(homeName).replace(/\s+/g, '_')}:${textKey(awayName).replace(/\s+/g, '_')}`;
+  const fixtureKey = `fifa:pdf:M${matchNumber ?? 'unknown'}:${slug(homeName)}:${slug(awayName)}`;
+  const existing = await sql`SELECT id FROM world_cup_matches WHERE competition_key = ${WORLD_CUP_2026_KEY} AND fixture_key = ${fixtureKey} LIMIT 1`;
+  if (existing[0]?.id) {
+    const rows = await sql`
+      UPDATE world_cup_matches SET fifa_match_id = ${matchNumber ? `M${matchNumber}` : null}, home_team_id = ${homeTeamId}, away_team_id = ${awayTeamId}, home_team_name = ${homeName}, away_team_name = ${awayName}, source_key = 'fifa', source_payload = ${JSON.stringify({ pdfUrl, importedBy: 'pmsr-3', reconciled: true })}::jsonb, source_updated_at = NOW(), updated_at = NOW()
+      WHERE id = ${Number(existing[0].id)}
+      RETURNING id, home_team_id, away_team_id, home_team_name, away_team_name, fixture_key, kickoff_at
+    `;
+    return rows[0] as MatchRow;
+  }
   const rows = await sql`
     INSERT INTO world_cup_matches (competition_key, fixture_key, fifa_match_id, home_team_id, away_team_id, home_team_name, away_team_name, stage, round_name, status, source_key, source_payload, source_updated_at)
     VALUES (${WORLD_CUP_2026_KEY}, ${fixtureKey}, ${matchNumber ? `M${matchNumber}` : null}, ${homeTeamId}, ${awayTeamId}, ${homeName}, ${awayName}, 'Copa do Mundo 2026', 'FIFA PMSR', 'Fim', 'fifa', ${JSON.stringify({ pdfUrl, importedBy: 'pmsr-3', reconciled: true })}::jsonb, NOW())
-    ON CONFLICT (competition_key, fixture_key) DO UPDATE SET source_key = 'fifa', source_payload = EXCLUDED.source_payload, source_updated_at = NOW(), updated_at = NOW()
     RETURNING id, home_team_id, away_team_id, home_team_name, away_team_name, fixture_key, kickoff_at
   `;
   return rows[0] as MatchRow;
@@ -289,12 +246,26 @@ async function findOrCreateMatch(homeName: string, awayName: string, homeCode: s
     FROM world_cup_matches
     WHERE competition_key = ${WORLD_CUP_2026_KEY}
     ORDER BY kickoff_at DESC NULLS LAST, id DESC
-    LIMIT 500
+    LIMIT 600
   `) as MatchRow[];
   const ranked = rows.map((row) => ({ row, score: matchScore(row, homeName, awayName, matchNumber) })).sort((a, b) => b.score - a.score);
   if (ranked[0] && ranked[0].score >= 8) return { match: ranked[0].row, created: false, bestScore: ranked[0].score };
   if (!allowCreate) return { match: null, created: false, bestScore: ranked[0]?.score ?? 0 };
-  return { match: await createFifaPdfMatch(homeName, awayName, homeCode, awayCode, matchNumber, pdfUrl), created: true, bestScore: ranked[0]?.score ?? 0 };
+  return { match: await createOrUpdateFifaPdfMatch(homeName, awayName, homeCode, awayCode, matchNumber, pdfUrl), created: true, bestScore: ranked[0]?.score ?? 0 };
+}
+
+async function saveOne(matchId: number, teamId: number | null, stat: ExtractedStat, value: number | null, pdfUrl: string, side: 'home' | 'away') {
+  if (!teamId || value === null) return 0;
+  const payload = { pdfUrl, parser: stat.parser, rawLine: stat.rawLine, importedBy: 'pmsr-3', side };
+  await sql`
+    DELETE FROM world_cup_match_statistics
+    WHERE match_id = ${matchId} AND team_id = ${teamId} AND period = ${stat.period} AND metric_key = ${stat.metricKey} AND source_key = 'fifa'
+  `;
+  await sql`
+    INSERT INTO world_cup_match_statistics (match_id, team_id, period, metric_key, metric_name, value_numeric, source_key, source_payload, source_updated_at)
+    VALUES (${matchId}, ${teamId}, ${stat.period}, ${stat.metricKey}, ${stat.metricName}, ${value}, 'fifa', ${JSON.stringify(payload)}::jsonb, NOW())
+  `;
+  return 1;
 }
 
 async function saveStat(match: MatchRow, stat: ExtractedStat, homeName: string, awayName: string, pdfUrl: string) {
@@ -305,24 +276,7 @@ async function saveStat(match: MatchRow, stat: ExtractedStat, homeName: string, 
   const awayTeamId = reversed ? match.home_team_id : match.away_team_id;
   const homeValue = reversed ? stat.away : stat.home;
   const awayValue = reversed ? stat.home : stat.away;
-  const now = new Date().toISOString();
-  const payload = { pdfUrl, parser: stat.parser, rawLine: stat.rawLine, importedBy: 'pmsr-3' };
-  if (homeTeamId && homeValue !== null) {
-    await sql`
-      INSERT INTO world_cup_match_statistics (match_id, team_id, period, metric_key, metric_name, value_numeric, source_key, source_payload, source_updated_at)
-      VALUES (${match.id}, ${homeTeamId}, ${stat.period}, ${stat.metricKey}, ${stat.metricName}, ${homeValue}, 'fifa', ${JSON.stringify({ ...payload, side: 'home' })}::jsonb, ${now})
-      ON CONFLICT (match_id, team_id, period, metric_key, source_key)
-      DO UPDATE SET value_numeric = EXCLUDED.value_numeric, metric_name = EXCLUDED.metric_name, source_payload = EXCLUDED.source_payload, source_updated_at = EXCLUDED.source_updated_at
-    `;
-  }
-  if (awayTeamId && awayValue !== null) {
-    await sql`
-      INSERT INTO world_cup_match_statistics (match_id, team_id, period, metric_key, metric_name, value_numeric, source_key, source_payload, source_updated_at)
-      VALUES (${match.id}, ${awayTeamId}, ${stat.period}, ${stat.metricKey}, ${stat.metricName}, ${awayValue}, 'fifa', ${JSON.stringify({ ...payload, side: 'away' })}::jsonb, ${now})
-      ON CONFLICT (match_id, team_id, period, metric_key, source_key)
-      DO UPDATE SET value_numeric = EXCLUDED.value_numeric, metric_name = EXCLUDED.metric_name, source_payload = EXCLUDED.source_payload, source_updated_at = EXCLUDED.source_updated_at
-    `;
-  }
+  return (await saveOne(match.id, homeTeamId, stat, homeValue, pdfUrl, 'home')) + (await saveOne(match.id, awayTeamId, stat, awayValue, pdfUrl, 'away'));
 }
 
 export async function POST(request: NextRequest) {
@@ -337,16 +291,14 @@ export async function POST(request: NextRequest) {
     if (!response.ok) return NextResponse.json({ success: false, error: `Falha ao baixar PDF FIFA: HTTP ${response.status}` }, { status: 502 });
 
     const buffer = Buffer.from(await response.arrayBuffer());
-    const [plainText, lines] = await Promise.all([parsePdfText(buffer), extractPdfLines(buffer)]);
-    const extractedStats = mergeStats([...extractStatsFromPlainText(plainText), ...extractStatsFromLines(lines)]);
+    const plainText = await parsePdfText(buffer);
+    const parsed = extractStats(plainText);
     const { match, created, bestScore } = await findOrCreateMatch(codes.homeName, codes.awayName, codes.homeCode, codes.awayCode, codes.matchNumber, pdfUrl, body.allowCreateMatch !== false);
+    if (!match) return NextResponse.json({ success: false, error: 'Partida não encontrada no banco persistido.', detected: codes, bestScore, extractedStats: parsed.stats }, { status: 404 });
 
-    if (!match) {
-      return NextResponse.json({ success: false, error: 'Partida não encontrada no banco persistido.', detected: codes, bestScore, extractedStats, linesPreview: lines.slice(0, 20) }, { status: 404 });
-    }
-
+    let savedValues = 0;
     if (!body.dryRun) {
-      for (const stat of extractedStats) await saveStat(match, stat, codes.homeName, codes.awayName, pdfUrl);
+      for (const stat of parsed.stats) savedValues += await saveStat(match, stat, codes.homeName, codes.awayName, pdfUrl);
     }
 
     return NextResponse.json({
@@ -356,10 +308,10 @@ export async function POST(request: NextRequest) {
       matchCreatedFromFifaPdf: created,
       bestExistingMatchScore: bestScore,
       detected: codes,
-      parser: { plainTextLength: plainText.length, lineCount: lines.length, strategy: 'pmsr-3-lines-and-text' },
-      extractedStats,
-      savedValues: body.dryRun ? 0 : extractedStats.reduce((sum, stat) => sum + (stat.home !== null ? 1 : 0) + (stat.away !== null ? 1 : 0), 0),
-      warning: extractedStats.length === 0 ? 'PDF baixado, mas nenhuma métrica foi identificada. O retorno inclui diagnóstico do parser.' : null,
+      parser: { plainTextLength: parsed.plainTextLength, lineCount: parsed.lineCount, strategy: 'pmsr-3-delete-insert-no-constraint' },
+      extractedStats: parsed.stats,
+      savedValues,
+      warning: parsed.stats.length === 0 ? 'PDF baixado, mas nenhuma métrica foi identificada. O retorno inclui diagnóstico do parser.' : null,
       scope: 'Somente Copa do Mundo: world_cup_matches, world_cup_teams e world_cup_match_statistics.',
       lastUpdated: new Date().toISOString(),
     });
