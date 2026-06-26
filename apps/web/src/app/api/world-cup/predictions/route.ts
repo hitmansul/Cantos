@@ -40,6 +40,100 @@ type SourceMatch = {
   awayTeam?: { name?: string | null; shortName?: string | null };
 };
 
+const TEAM_ALIASES: Record<string, string> = {
+  brasil: 'brazil',
+  bra: 'brazil',
+  brazil: 'brazil',
+  marrocos: 'morocco',
+  morocco: 'morocco',
+  haiti: 'haiti',
+  escocia: 'scotland',
+  scotland: 'scotland',
+  paraguai: 'paraguay',
+  paraguay: 'paraguay',
+  australia: 'australia',
+  turquia: 'turkiye',
+  turkey: 'turkiye',
+  turkiye: 'turkiye',
+  eua: 'usa',
+  usa: 'usa',
+  'united states': 'usa',
+  'estados unidos': 'usa',
+  noruega: 'norway',
+  norway: 'norway',
+  franca: 'france',
+  france: 'france',
+  senegal: 'senegal',
+  iraque: 'iraq',
+  iraq: 'iraq',
+  uruguai: 'uruguay',
+  uruguay: 'uruguay',
+  espanha: 'spain',
+  spain: 'spain',
+  'cabo verde': 'cape verde islands',
+  'cape verde': 'cape verde islands',
+  'cape verde islands': 'cape verde islands',
+  'arabia saudita': 'saudi arabia',
+  'saudi arabia': 'saudi arabia',
+  egito: 'egypt',
+  egypt: 'egypt',
+  ira: 'ir iran',
+  iran: 'ir iran',
+  'ir iran': 'ir iran',
+  'nova zelandia': 'new zealand',
+  'new zealand': 'new zealand',
+  belgica: 'belgium',
+  belgium: 'belgium',
+  croacia: 'croatia',
+  croatia: 'croatia',
+  gana: 'ghana',
+  ghana: 'ghana',
+  panama: 'panama',
+  inglaterra: 'england',
+  england: 'england',
+  colombia: 'colombia',
+  portugal: 'portugal',
+  'rd congo': 'congo dr',
+  'dr congo': 'congo dr',
+  'congo dr': 'congo dr',
+  uzbequistao: 'uzbekistan',
+  uzbekistan: 'uzbekistan',
+  argelia: 'algeria',
+  algeria: 'algeria',
+  austria: 'austria',
+  jordania: 'jordan',
+  jordan: 'jordan',
+  argentina: 'argentina',
+  japao: 'japan',
+  japan: 'japan',
+  suecia: 'sweden',
+  sweden: 'sweden',
+  tunisia: 'tunisia',
+  holanda: 'netherlands',
+  'paises baixos': 'netherlands',
+  netherlands: 'netherlands',
+  'africa do sul': 'south africa',
+  'south africa': 'south africa',
+  canada: 'canada',
+  alemanha: 'germany',
+  germany: 'germany',
+  equador: 'ecuador',
+  ecuador: 'ecuador',
+  mexico: 'mexico',
+  curacao: 'curacao',
+  curacau: 'curacao',
+  'coreia do sul': 'korea republic',
+  'south korea': 'korea republic',
+  'korea republic': 'korea republic',
+  tchequia: 'czechia',
+  'republica tcheca': 'czechia',
+  'czech republic': 'czechia',
+  czechia: 'czechia',
+  'costa do marfim': "cote d'ivoire",
+  'ivory coast': "cote d'ivoire",
+  'cote d ivoire': "cote d'ivoire",
+};
+
 const KNOCKOUT_FALLBACK_MATCHES: DbMatch[] = [
   ...Array.from({ length: 16 }, (_, index) => ({
     id: `fifa-r32-${index + 1}`,
@@ -71,46 +165,10 @@ const KNOCKOUT_FALLBACK_MATCHES: DbMatch[] = [
     status: 'Agendado',
     source_key: 'fifa-schedule-fallback',
   })),
-  {
-    id: 'fifa-sf-1',
-    home_team_name: 'Vencedor quartas 1',
-    away_team_name: 'Vencedor quartas 2',
-    kickoff_at: '2026-07-14T23:00:00.000Z',
-    group_name: null,
-    round_name: 'Semifinal',
-    status: 'Agendado',
-    source_key: 'fifa-schedule-fallback',
-  },
-  {
-    id: 'fifa-sf-2',
-    home_team_name: 'Vencedor quartas 3',
-    away_team_name: 'Vencedor quartas 4',
-    kickoff_at: '2026-07-15T23:00:00.000Z',
-    group_name: null,
-    round_name: 'Semifinal',
-    status: 'Agendado',
-    source_key: 'fifa-schedule-fallback',
-  },
-  {
-    id: 'fifa-third-place',
-    home_team_name: 'Perdedor semifinal 1',
-    away_team_name: 'Perdedor semifinal 2',
-    kickoff_at: '2026-07-18T20:00:00.000Z',
-    group_name: null,
-    round_name: 'Disputa de terceiro lugar',
-    status: 'Agendado',
-    source_key: 'fifa-schedule-fallback',
-  },
-  {
-    id: 'fifa-final',
-    home_team_name: 'Vencedor semifinal 1',
-    away_team_name: 'Vencedor semifinal 2',
-    kickoff_at: '2026-07-19T22:00:00.000Z',
-    group_name: null,
-    round_name: 'Final',
-    status: 'Agendado',
-    source_key: 'fifa-schedule-fallback',
-  },
+  { id: 'fifa-sf-1', home_team_name: 'Vencedor quartas 1', away_team_name: 'Vencedor quartas 2', kickoff_at: '2026-07-14T23:00:00.000Z', group_name: null, round_name: 'Semifinal', status: 'Agendado', source_key: 'fifa-schedule-fallback' },
+  { id: 'fifa-sf-2', home_team_name: 'Vencedor quartas 3', away_team_name: 'Vencedor quartas 4', kickoff_at: '2026-07-15T23:00:00.000Z', group_name: null, round_name: 'Semifinal', status: 'Agendado', source_key: 'fifa-schedule-fallback' },
+  { id: 'fifa-third-place', home_team_name: 'Perdedor semifinal 1', away_team_name: 'Perdedor semifinal 2', kickoff_at: '2026-07-18T20:00:00.000Z', group_name: null, round_name: 'Disputa de terceiro lugar', status: 'Agendado', source_key: 'fifa-schedule-fallback' },
+  { id: 'fifa-final', home_team_name: 'Vencedor semifinal 1', away_team_name: 'Vencedor semifinal 2', kickoff_at: '2026-07-19T22:00:00.000Z', group_name: null, round_name: 'Final', status: 'Agendado', source_key: 'fifa-schedule-fallback' },
 ];
 
 function n(value: unknown, fallback = 0) {
@@ -144,21 +202,7 @@ function stripPrefix(value: unknown) {
 
 function teamKey(value: unknown) {
   const raw = normalize(stripPrefix(value));
-  if (raw === 'brasil' || raw === 'bra') return 'brazil';
-  if (raw === 'escocia' || raw === 'sco') return 'scotland';
-  if (raw === 'eua' || raw === 'usa' || raw === 'united states') return 'usa';
-  if (raw === 'coreia do sul' || raw === 'south korea') return 'korea republic';
-  if (raw === 'tchequia' || raw === 'republica tcheca' || raw === 'czech republic') return 'czechia';
-  if (raw === 'turquia' || raw === 'turkey') return 'turkiye';
-  if (raw === 'costa do marfim' || raw === 'ivory coast' || raw === 'cote d ivoire') return "cote d'ivoire";
-  if (raw === 'cabo verde' || raw === 'cape verde') return 'cape verde islands';
-  if (raw === 'rd congo' || raw === 'dr congo' || raw === 'congo rd') return 'congo dr';
-  if (raw === 'ira' || raw === 'iran') return 'ir iran';
-  if (raw === 'alemanha' || raw === 'ger') return 'germany';
-  if (raw === 'equador' || raw === 'ecu') return 'ecuador';
-  if (raw === 'mexico' || raw === 'mex') return 'mexico';
-  if (raw === 'curacao' || raw === 'curacau' || raw === 'cw') return 'curacao';
-  return raw;
+  return TEAM_ALIASES[raw] ?? raw;
 }
 
 function matchIdentity(home: unknown, away: unknown, date: unknown) {
@@ -220,54 +264,14 @@ function model(home?: TeamAverages, away?: TeamAverages) {
   const confidence = clamp(35 + Math.min(homeSamples, awaySamples) * 12, 35, 82);
 
   return {
-    corners: {
-      home: round(homeCorners),
-      away: round(awayCorners),
-      total: round(totalCorners),
-      over75: probabilityOver(totalCorners, 7.5),
-      over85: probabilityOver(totalCorners, 8.5),
-      over95: probabilityOver(totalCorners, 9.5),
-      over105: probabilityOver(totalCorners, 10.5),
-    },
-    cards: {
-      home: round(homeCards),
-      away: round(awayCards),
-      total: round(totalCards),
-      over35: probabilityOver(totalCards, 3.5),
-      over45: probabilityOver(totalCards, 4.5),
-      over55: probabilityOver(totalCards, 5.5),
-    },
-    goals: {
-      homeXg: round(homeXg, 2),
-      awayXg: round(awayXg, 2),
-      totalXg: round(totalXg, 2),
-      bothTeamsScore: clamp(Math.round(30 + Math.min(homeXg, awayXg) * 24), 10, 78),
-      over25: probabilityOver(totalXg, 2.5),
-    },
-    shots: {
-      home: round(homeShots),
-      away: round(awayShots),
-      total: round(homeShots + awayShots),
-    },
-    fifaAverages: {
-      homeMatches: homeSamples,
-      awayMatches: awaySamples,
-      homeCornersFor: round(homeCornersFor),
-      awayCornersFor: round(awayCornersFor),
-      homeCardsFor: round(homeCardsFor),
-      awayCardsFor: round(awayCardsFor),
-      homeXgFor: round(homeXgFor, 2),
-      awayXgFor: round(awayXgFor, 2),
-    },
-    recentHistory: {
-      homeMatches: homeSamples,
-      awayMatches: awaySamples,
-      source: homeSamples || awaySamples ? 'Banco persistido da Copa' : 'Média base até a FIFA publicar estatísticas suficientes',
-    },
+    corners: { home: round(homeCorners), away: round(awayCorners), total: round(totalCorners), over75: probabilityOver(totalCorners, 7.5), over85: probabilityOver(totalCorners, 8.5), over95: probabilityOver(totalCorners, 9.5), over105: probabilityOver(totalCorners, 10.5) },
+    cards: { home: round(homeCards), away: round(awayCards), total: round(totalCards), over35: probabilityOver(totalCards, 3.5), over45: probabilityOver(totalCards, 4.5), over55: probabilityOver(totalCards, 5.5) },
+    goals: { homeXg: round(homeXg, 2), awayXg: round(awayXg, 2), totalXg: round(totalXg, 2), bothTeamsScore: clamp(Math.round(30 + Math.min(homeXg, awayXg) * 24), 10, 78), over25: probabilityOver(totalXg, 2.5) },
+    shots: { home: round(homeShots), away: round(awayShots), total: round(homeShots + awayShots) },
+    fifaAverages: { homeMatches: homeSamples, awayMatches: awaySamples, homeCornersFor: round(homeCornersFor), awayCornersFor: round(awayCornersFor), homeCardsFor: round(homeCardsFor), awayCardsFor: round(awayCardsFor), homeXgFor: round(homeXgFor, 2), awayXgFor: round(awayXgFor, 2) },
+    recentHistory: { homeMatches: homeSamples, awayMatches: awaySamples, source: homeSamples || awaySamples ? 'Banco persistido da Copa' : 'Média base até a FIFA publicar estatísticas suficientes' },
     confidence,
-    note: homeSamples && awaySamples
-      ? 'Modelo baseado no histórico persistido da Copa. Prioriza FIFA e usa 365Scores/API-Football apenas como complemento.'
-      : 'Modelo com média padrão até existir histórico suficiente para as duas seleções.',
+    note: homeSamples && awaySamples ? 'Modelo baseado no histórico persistido da Copa. Prioriza FIFA e usa 365Scores/API-Football apenas como complemento.' : 'Modelo com média padrão até existir histórico suficiente para as duas seleções.',
   };
 }
 
@@ -337,14 +341,14 @@ async function loadTeamAverages() {
     SELECT
       t.name AS team_name,
       COUNT(DISTINCT p.match_id)::int AS matches,
-      AVG(p.value_numeric) FILTER (WHERE p.metric_key IN ('corners', 'corner_kicks', 'escanteios') AND p.team_id = t.id)::float AS corners_for,
-      AVG(p.value_numeric) FILTER (WHERE p.metric_key IN ('corners', 'corner_kicks', 'escanteios') AND p.team_id <> t.id)::float AS corners_against,
-      AVG(p.value_numeric) FILTER (WHERE p.metric_key IN ('yellow_cards', 'cartoes_amarelos') AND p.team_id = t.id)::float AS cards_for,
-      AVG(p.value_numeric) FILTER (WHERE p.metric_key IN ('yellow_cards', 'cartoes_amarelos') AND p.team_id <> t.id)::float AS cards_against,
-      AVG(p.value_numeric) FILTER (WHERE p.metric_key IN ('shots', 'total_shots', 'finalizacoes') AND p.team_id = t.id)::float AS shots_for,
-      AVG(p.value_numeric) FILTER (WHERE p.metric_key IN ('shots', 'total_shots', 'finalizacoes') AND p.team_id <> t.id)::float AS shots_against,
-      AVG(p.value_numeric) FILTER (WHERE p.metric_key IN ('expected_goals', 'xg', 'gols_esperados_xg') AND p.team_id = t.id)::float AS xg_for,
-      AVG(p.value_numeric) FILTER (WHERE p.metric_key IN ('expected_goals', 'xg', 'gols_esperados_xg') AND p.team_id <> t.id)::float AS xg_against
+      AVG(p.value_numeric) FILTER (WHERE p.metric_key IN ('corners', 'corner_kicks', 'escanteios') AND p.team_id = t.id AND p.value_numeric BETWEEN 0 AND 20)::float AS corners_for,
+      AVG(p.value_numeric) FILTER (WHERE p.metric_key IN ('corners', 'corner_kicks', 'escanteios') AND p.team_id <> t.id AND p.value_numeric BETWEEN 0 AND 20)::float AS corners_against,
+      AVG(p.value_numeric) FILTER (WHERE p.metric_key IN ('yellow_cards', 'cartoes_amarelos', 'cards') AND p.team_id = t.id AND p.value_numeric BETWEEN 0 AND 10)::float AS cards_for,
+      AVG(p.value_numeric) FILTER (WHERE p.metric_key IN ('yellow_cards', 'cartoes_amarelos', 'cards') AND p.team_id <> t.id AND p.value_numeric BETWEEN 0 AND 10)::float AS cards_against,
+      AVG(p.value_numeric) FILTER (WHERE p.metric_key IN ('shots', 'total_shots', 'finalizacoes') AND p.team_id = t.id AND p.value_numeric BETWEEN 0 AND 40)::float AS shots_for,
+      AVG(p.value_numeric) FILTER (WHERE p.metric_key IN ('shots', 'total_shots', 'finalizacoes') AND p.team_id <> t.id AND p.value_numeric BETWEEN 0 AND 40)::float AS shots_against,
+      AVG(p.value_numeric) FILTER (WHERE p.metric_key IN ('expected_goals', 'xg', 'gols_esperados_xg') AND p.team_id = t.id AND p.value_numeric BETWEEN 0 AND 5)::float AS xg_for,
+      AVG(p.value_numeric) FILTER (WHERE p.metric_key IN ('expected_goals', 'xg', 'gols_esperados_xg') AND p.team_id <> t.id AND p.value_numeric BETWEEN 0 AND 5)::float AS xg_against
     FROM world_cup_teams t
     LEFT JOIN picked p ON p.team_id = t.id OR p.home_team_id = t.id OR p.away_team_id = t.id
     WHERE t.competition_key = ${WORLD_CUP_2026_KEY}
@@ -354,11 +358,7 @@ async function loadTeamAverages() {
 
 export async function GET(request: NextRequest) {
   try {
-    const [dbUpcoming, liveUpcoming, averages] = await Promise.all([
-      loadUpcomingFromDatabase(),
-      loadUpcomingFromLiveSource(request),
-      loadTeamAverages(),
-    ]);
+    const [dbUpcoming, liveUpcoming, averages] = await Promise.all([loadUpcomingFromDatabase(), loadUpcomingFromLiveSource(request), loadTeamAverages()]);
 
     const merged = new Map<string, DbMatch>();
     for (const match of [...dbUpcoming, ...liveUpcoming]) {
@@ -385,32 +385,10 @@ export async function GET(request: NextRequest) {
       .map((match) => {
         const home = byTeam.get(teamKey(match.home_team_name));
         const away = byTeam.get(teamKey(match.away_team_name));
-        return {
-          id: match.id,
-          homeTeamName: match.home_team_name,
-          awayTeamName: match.away_team_name,
-          kickoffAt: match.kickoff_at,
-          groupName: match.group_name,
-          roundName: match.round_name,
-          status: match.status,
-          sourceKey: match.source_key,
-          prediction: model(home, away),
-          samples: { homeMatches: home?.matches ?? 0, awayMatches: away?.matches ?? 0 },
-        };
+        return { id: match.id, homeTeamName: match.home_team_name, awayTeamName: match.away_team_name, kickoffAt: match.kickoff_at, groupName: match.group_name, roundName: match.round_name, status: match.status, sourceKey: match.source_key, prediction: model(home, away), samples: { homeMatches: home?.matches ?? 0, awayMatches: away?.matches ?? 0 } };
       });
 
-    return NextResponse.json({
-      success: true,
-      predictions,
-      count: predictions.length,
-      sources: {
-        databaseUpcoming: dbUpcoming.length,
-        liveUpcoming: liveUpcoming.length,
-        fallbackUpcoming: usedFallback ? predictions.length : 0,
-        teamAverages: averages.length,
-      },
-      lastUpdated: new Date().toISOString(),
-    });
+    return NextResponse.json({ success: true, predictions, count: predictions.length, sources: { databaseUpcoming: dbUpcoming.length, liveUpcoming: liveUpcoming.length, fallbackUpcoming: usedFallback ? predictions.length : 0, teamAverages: averages.length }, lastUpdated: new Date().toISOString() });
   } catch (error) {
     return NextResponse.json({ success: false, error: error instanceof Error ? error.message : 'Erro ao gerar previsões.' }, { status: 500 });
   }
