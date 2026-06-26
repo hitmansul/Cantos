@@ -23,58 +23,73 @@ type ExtractedStat = {
 };
 
 const TEAM_ALIASES: Record<string, string> = {
-  bra: 'brazil',
-  brazil: 'brazil',
-  brasil: 'brazil',
-  sco: 'scotland',
-  scotland: 'scotland',
-  escocia: 'scotland',
-  cze: 'czechia',
-  czechia: 'czechia',
-  tchequia: 'czechia',
-  'czech republic': 'czechia',
-  mex: 'mexico',
-  mexico: 'mexico',
-  kor: 'korea republic',
-  korea: 'korea republic',
-  'korea republic': 'korea republic',
-  'south korea': 'korea republic',
-  rsa: 'south africa',
-  'south africa': 'south africa',
-  zaf: 'south africa',
-  mar: 'morocco',
-  morocco: 'morocco',
-  marrocos: 'morocco',
-  hai: 'haiti',
-  haiti: 'haiti',
-  sui: 'switzerland',
-  switzerland: 'switzerland',
-  suica: 'switzerland',
-  can: 'canada',
-  canada: 'canada',
-  usa: 'usa',
-  eua: 'usa',
-  'united states': 'usa',
-  tur: 'turkiye',
-  turkiye: 'turkiye',
-  turkey: 'turkiye',
-  turquia: 'turkiye',
+  bra: 'brazil', brazil: 'brazil', brasil: 'brazil',
+  sco: 'scotland', scotland: 'scotland', escocia: 'scotland',
+  cze: 'czechia', czechia: 'czechia', tchequia: 'czechia', 'czech republic': 'czechia', 'czech rep': 'czechia',
+  mex: 'mexico', mexico: 'mexico',
+  kor: 'korea republic', korea: 'korea republic', 'korea republic': 'korea republic', 'south korea': 'korea republic', 'coreia do sul': 'korea republic',
+  rsa: 'south africa', zaf: 'south africa', 'south africa': 'south africa', 'africa do sul': 'south africa',
+  mar: 'morocco', morocco: 'morocco', marrocos: 'morocco',
+  hai: 'haiti', haiti: 'haiti',
+  sui: 'switzerland', switzerland: 'switzerland', suica: 'switzerland',
+  can: 'canada', canada: 'canada',
+  usa: 'usa', eua: 'usa', 'united states': 'usa',
+  tur: 'turkiye', turkiye: 'turkiye', turkey: 'turkiye', turquia: 'turkiye',
+  par: 'paraguay', paraguay: 'paraguay', paraguai: 'paraguay',
+  aus: 'australia', australia: 'australia', austrália: 'australia',
+  nor: 'norway', norway: 'norway', noruega: 'norway',
+  fra: 'france', france: 'france', franca: 'france',
+  sen: 'senegal', senegal: 'senegal',
+  irq: 'iraq', iraq: 'iraq', iraque: 'iraq',
+  uru: 'uruguay', uruguay: 'uruguay', uruguai: 'uruguay',
+  esp: 'spain', spain: 'spain', espanha: 'spain',
+  ksa: 'saudi arabia', 'saudi arabia': 'saudi arabia', 'arabia saudita': 'saudi arabia',
+  cpv: 'cape verde islands', 'cape verde': 'cape verde islands', 'cabo verde': 'cape verde islands',
+  egy: 'egypt', egypt: 'egypt', egito: 'egypt',
+  irn: 'ir iran', iran: 'ir iran', ira: 'ir iran', 'ir iran': 'ir iran',
+  nzl: 'new zealand', 'new zealand': 'new zealand', 'nova zelandia': 'new zealand',
+  bel: 'belgium', belgium: 'belgium', belgica: 'belgium',
+  cro: 'croatia', croatia: 'croatia', croacia: 'croatia',
+  gha: 'ghana', ghana: 'ghana', gana: 'ghana',
+  pan: 'panama', panama: 'panama',
+  eng: 'england', england: 'england', inglaterra: 'england',
+  col: 'colombia', colombia: 'colombia',
+  por: 'portugal', portugal: 'portugal',
+  cod: 'congo dr', 'congo dr': 'congo dr', 'rd congo': 'congo dr', 'dr congo': 'congo dr',
+  uzb: 'uzbekistan', uzbekistan: 'uzbekistan', uzbequistao: 'uzbekistan',
+  alg: 'algeria', algeria: 'algeria', argelia: 'algeria',
+  aut: 'austria', austria: 'austria',
+  jor: 'jordan', jordan: 'jordan', jordania: 'jordan',
+  arg: 'argentina', argentina: 'argentina',
+  jpn: 'japan', japan: 'japan', japao: 'japan',
+  swe: 'sweden', sweden: 'sweden', suecia: 'sweden',
+  tun: 'tunisia', tunisia: 'tunisia',
+  ned: 'netherlands', netherlands: 'netherlands', holanda: 'netherlands',
+  ger: 'germany', germany: 'germany', alemanha: 'germany',
+  ecu: 'ecuador', ecuador: 'ecuador', equador: 'ecuador',
+  cuw: 'curacao', curacao: 'curacao', curacau: 'curacao',
+  civ: "cote d'ivoire", 'cote d ivoire': "cote d'ivoire", 'ivory coast': "cote d'ivoire", 'costa do marfim': "cote d'ivoire",
+  qat: 'qatar', qatar: 'qatar', catar: 'qatar',
+  bih: 'bosnia and herzegovina', 'bosnia and herzegovina': 'bosnia and herzegovina', 'bosnia e herzegovina': 'bosnia and herzegovina',
 };
 
-const CODE_ALIASES: Record<string, string> = {
-  CZE: 'czechia',
-  MEX: 'mexico',
-  BRA: 'brazil',
-  SCO: 'scotland',
-  KOR: 'korea republic',
-  RSA: 'south africa',
-  ZAF: 'south africa',
-  MAR: 'morocco',
-  HAI: 'haiti',
-  SUI: 'switzerland',
-  CAN: 'canada',
-  USA: 'usa',
-  TUR: 'turkiye',
+const CODE_ALIASES: Record<string, string> = Object.fromEntries(Object.keys(TEAM_ALIASES).filter((key) => key.length === 3).map((key) => [key.toUpperCase(), TEAM_ALIASES[key]]));
+
+const TEAM_VARIANTS: Record<string, string[]> = {
+  czechia: ['czechia', 'tchequia', 'czech republic', 'cze'],
+  mexico: ['mexico', 'mex'],
+  'south africa': ['south africa', 'africa do sul', 'rsa', 'zaf'],
+  'korea republic': ['korea republic', 'south korea', 'coreia do sul', 'kor'],
+  brazil: ['brazil', 'brasil', 'bra'],
+  scotland: ['scotland', 'escocia', 'sco'],
+  switzerland: ['switzerland', 'suica', 'sui'],
+  'bosnia and herzegovina': ['bosnia and herzegovina', 'bosnia e herzegovina', 'bih'],
+  'cape verde islands': ['cape verde islands', 'cape verde', 'cabo verde', 'cpv'],
+  'congo dr': ['congo dr', 'rd congo', 'dr congo', 'cod'],
+  turkiye: ['turkiye', 'turkey', 'turquia', 'tur'],
+  usa: ['usa', 'eua', 'united states'],
+  'ir iran': ['ir iran', 'iran', 'ira', 'irn'],
+  "cote d'ivoire": ["cote d'ivoire", 'cote d ivoire', 'ivory coast', 'costa do marfim', 'civ'],
 };
 
 const METRIC_PATTERNS: Array<{ key: string; name: string; patterns: RegExp[] }> = [
@@ -107,6 +122,10 @@ function teamKey(value: unknown) {
   return TEAM_ALIASES[raw] ?? raw;
 }
 
+function teamVariants(key: string) {
+  return Array.from(new Set([key, ...(TEAM_VARIANTS[key] ?? [])].map(normalize).filter(Boolean)));
+}
+
 function numberValue(value: string | undefined) {
   if (!value) return null;
   const parsed = Number(value.replace(',', '.'));
@@ -129,7 +148,6 @@ async function parsePdfText(buffer: Buffer) {
 function extractStats(text: string): ExtractedStat[] {
   const compact = text.replace(/\s+/g, ' ').trim();
   const stats: ExtractedStat[] = [];
-
   for (const metric of METRIC_PATTERNS) {
     let found: RegExpMatchArray | null = null;
     for (const pattern of metric.patterns) {
@@ -137,16 +155,17 @@ function extractStats(text: string): ExtractedStat[] {
       if (found) break;
     }
     if (!found) continue;
-    stats.push({
-      metricKey: metric.key,
-      metricName: metric.name,
-      home: numberValue(found[1]),
-      away: numberValue(found[2]),
-      period: 'match',
-    });
+    stats.push({ metricKey: metric.key, metricName: metric.name, home: numberValue(found[1]), away: numberValue(found[2]), period: 'match' });
   }
-
   return stats.filter((stat) => stat.home !== null || stat.away !== null);
+}
+
+function rowText(row: MatchRow) {
+  return normalize(`${row.fixture_key} ${row.home_team_name} ${row.away_team_name}`);
+}
+
+function containsAny(text: string, variants: string[]) {
+  return variants.some((variant) => text.includes(variant.replace(/\s+/g, ' ')) || text.includes(variant.replace(/\s+/g, '_')));
 }
 
 async function findMatch(homeKey: string, awayKey: string): Promise<MatchRow | null> {
@@ -154,16 +173,12 @@ async function findMatch(homeKey: string, awayKey: string): Promise<MatchRow | n
     SELECT id, home_team_id, away_team_id, home_team_name, away_team_name, fixture_key
     FROM world_cup_matches
     WHERE competition_key = ${WORLD_CUP_2026_KEY}
-      AND (
-        (LOWER(home_team_name) LIKE ${`%${homeKey}%`} AND LOWER(away_team_name) LIKE ${`%${awayKey}%`})
-        OR (LOWER(home_team_name) LIKE ${`%${awayKey}%`} AND LOWER(away_team_name) LIKE ${`%${homeKey}%`})
-        OR fixture_key LIKE ${`%${homeKey.replaceAll(' ', '_')}%${awayKey.replaceAll(' ', '_')}%`}
-        OR fixture_key LIKE ${`%${awayKey.replaceAll(' ', '_')}%${homeKey.replaceAll(' ', '_')}%`}
-      )
-    ORDER BY kickoff_at DESC NULLS LAST
-    LIMIT 1
+    ORDER BY kickoff_at DESC NULLS LAST, id DESC
+    LIMIT 300
   `) as MatchRow[];
-  return rows[0] ?? null;
+  const homeVariants = teamVariants(homeKey);
+  const awayVariants = teamVariants(awayKey);
+  return rows.find((row) => containsAny(rowText(row), homeVariants) && containsAny(rowText(row), awayVariants)) ?? null;
 }
 
 async function saveStat(match: MatchRow, stat: ExtractedStat, homeKey: string, awayKey: string, pdfUrl: string) {
@@ -173,7 +188,6 @@ async function saveStat(match: MatchRow, stat: ExtractedStat, homeKey: string, a
   const homeValue = reversed ? stat.away : stat.home;
   const awayValue = reversed ? stat.home : stat.away;
   const now = new Date().toISOString();
-
   if (homeTeamId && homeValue !== null) {
     await sql`
       INSERT INTO world_cup_match_statistics (match_id, team_id, period, metric_key, metric_name, value_numeric, source_key, source_payload, source_updated_at)
@@ -182,7 +196,6 @@ async function saveStat(match: MatchRow, stat: ExtractedStat, homeKey: string, a
       DO UPDATE SET value_numeric = EXCLUDED.value_numeric, metric_name = EXCLUDED.metric_name, source_payload = EXCLUDED.source_payload, source_updated_at = EXCLUDED.source_updated_at
     `;
   }
-
   if (awayTeamId && awayValue !== null) {
     await sql`
       INSERT INTO world_cup_match_statistics (match_id, team_id, period, metric_key, metric_name, value_numeric, source_key, source_payload, source_updated_at)
@@ -197,33 +210,17 @@ export async function POST(request: NextRequest) {
   try {
     const body = (await request.json()) as { url?: string; pdfUrl?: string; dryRun?: boolean };
     const pdfUrl = body.pdfUrl ?? body.url;
-    if (!pdfUrl || !/^https:\/\//i.test(pdfUrl)) {
-      return NextResponse.json({ success: false, error: 'Informe pdfUrl com a URL HTTPS do relatório PMSR da FIFA.' }, { status: 400 });
-    }
-
+    if (!pdfUrl || !/^https:\/\//i.test(pdfUrl)) return NextResponse.json({ success: false, error: 'Informe pdfUrl com a URL HTTPS do relatório PMSR da FIFA.' }, { status: 400 });
     const codes = extractCodesFromUrl(pdfUrl);
-    if (!codes) {
-      return NextResponse.json({ success: false, error: 'Não foi possível identificar os códigos das seleções pelo nome do PDF.' }, { status: 400 });
-    }
-
+    if (!codes) return NextResponse.json({ success: false, error: 'Não foi possível identificar os códigos das seleções pelo nome do PDF.' }, { status: 400 });
     const response = await fetch(pdfUrl, { cache: 'no-store' });
-    if (!response.ok) {
-      return NextResponse.json({ success: false, error: `Falha ao baixar PDF FIFA: HTTP ${response.status}` }, { status: 502 });
-    }
-
+    if (!response.ok) return NextResponse.json({ success: false, error: `Falha ao baixar PDF FIFA: HTTP ${response.status}` }, { status: 502 });
     const buffer = Buffer.from(await response.arrayBuffer());
     const text = await parsePdfText(buffer);
     const stats = extractStats(text);
     const match = await findMatch(codes.homeKey, codes.awayKey);
-
-    if (!match) {
-      return NextResponse.json({ success: false, error: 'Partida não encontrada no banco persistido.', detected: codes, extractedStats: stats }, { status: 404 });
-    }
-
-    if (!body.dryRun) {
-      for (const stat of stats) await saveStat(match, stat, codes.homeKey, codes.awayKey, pdfUrl);
-    }
-
+    if (!match) return NextResponse.json({ success: false, error: 'Partida não encontrada no banco persistido.', detected: codes, extractedStats: stats }, { status: 404 });
+    if (!body.dryRun) for (const stat of stats) await saveStat(match, stat, codes.homeKey, codes.awayKey, pdfUrl);
     return NextResponse.json({
       success: true,
       dryRun: Boolean(body.dryRun),
@@ -232,6 +229,7 @@ export async function POST(request: NextRequest) {
       extractedStats: stats,
       savedValues: body.dryRun ? 0 : stats.reduce((sum, stat) => sum + (stat.home !== null ? 1 : 0) + (stat.away !== null ? 1 : 0), 0),
       warning: stats.length === 0 ? 'PDF baixado, mas nenhum padrão de estatística foi identificado. Pode ser necessário ajustar o parser para o layout PMSR.' : null,
+      scope: 'Somente Copa do Mundo: world_cup_matches e world_cup_match_statistics.',
       lastUpdated: new Date().toISOString(),
     });
   } catch (error) {
