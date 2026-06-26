@@ -124,7 +124,7 @@ async function urlExists(url: string) {
 
 async function importOne(origin: string, pdfUrl: string, dryRun: boolean, source: 'hub' | 'backfill', missingMatch?: MissingMatch): Promise<ImportResult> {
   try {
-    const response = await fetch(`${origin}/api/world-cup/import-fifa-pmsr`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ pdfUrl, dryRun }), cache: 'no-store' });
+    const response = await fetch(`${origin}/api/world-cup/import-fifa-pmsr-safe`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ pdfUrl, dryRun }), cache: 'no-store' });
     let payload: unknown = null; try { payload = await response.json(); } catch { payload = await response.text(); }
     return { url: pdfUrl, ok: response.ok, status: response.status, payload, missingMatch, source };
   } catch (error) { return { url: pdfUrl, ok: false, status: 0, error: error instanceof Error ? error.message : 'Erro ao importar PDF.', missingMatch, source }; }
