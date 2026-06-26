@@ -159,6 +159,62 @@ const STATIC_UPCOMING_MATCHES: Record<string, NormalizedUpcomingMatch[]> = {
   ],
 };
 
+const TEAM_ALIASES: Record<string, string> = {
+  brasil: 'brazil',
+  bra: 'brazil',
+  marrocos: 'morocco',
+  escocia: 'scotland',
+  paraguai: 'paraguay',
+  australia: 'australia',
+  austrália: 'australia',
+  turquia: 'turkiye',
+  turkey: 'turkiye',
+  eua: 'usa',
+  'united states': 'usa',
+  estadosunidos: 'usa',
+  noruega: 'norway',
+  franca: 'france',
+  frança: 'france',
+  senegal: 'senegal',
+  iraque: 'iraq',
+  uruguai: 'uruguay',
+  espanha: 'spain',
+  caboverde: 'capeverdeislands',
+  'cape verde': 'capeverdeislands',
+  'cape verde islands': 'capeverdeislands',
+  arabiasaudita: 'saudiarabia',
+  'saudi arabia': 'saudiarabia',
+  egito: 'egypt',
+  ira: 'iran',
+  'ir iran': 'iran',
+  novazelandia: 'newzealand',
+  'new zealand': 'newzealand',
+  belgica: 'belgium',
+  croacia: 'croatia',
+  gana: 'ghana',
+  panama: 'panama',
+  inglaterra: 'england',
+  colombia: 'colombia',
+  portugal: 'portugal',
+  rdcongo: 'congodr',
+  'congo dr': 'congodr',
+  'dr congo': 'congodr',
+  uzbequistao: 'uzbekistan',
+  argelia: 'algeria',
+  austria: 'austria',
+  jordania: 'jordan',
+  argentina: 'argentina',
+  japao: 'japan',
+  suecia: 'sweden',
+  tunisia: 'tunisia',
+  holanda: 'netherlands',
+  netherlands: 'netherlands',
+  africa: 'southafrica',
+  africadosul: 'southafrica',
+  'south africa': 'southafrica',
+  canada: 'canada',
+};
+
 function normalizeGame(game: Raw365UpcomingGame): NormalizedUpcomingMatch {
   return {
     id: game.id,
@@ -259,22 +315,22 @@ function isFutureLiveOrToday(startTime: string, statusId?: number, now = Date.no
 }
 
 function compact(value: string): string {
-  return value
+  const normalized = value
     .toLowerCase()
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[^a-z0-9]/g, '');
+    .replace(/[^a-z0-9]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  const noSpaces = normalized.replace(/\s+/g, '');
+  return TEAM_ALIASES[normalized] ?? TEAM_ALIASES[noSpaces] ?? noSpaces;
 }
 
 function matchKey(match: NormalizedUpcomingMatch): string {
   const date = Number.isFinite(Date.parse(match.startTime))
     ? new Date(match.startTime).toISOString().slice(0, 10)
     : match.startTime.slice(0, 10);
-  return [
-    date,
-    compact(match.homeTeam.name),
-    compact(match.awayTeam.name),
-  ].join('|');
+  return [date, compact(match.homeTeam.name), compact(match.awayTeam.name)].join('|');
 }
 
 function mergeStaticUpcoming(
@@ -282,18 +338,19 @@ function mergeStaticUpcoming(
   matches: NormalizedUpcomingMatch[],
   now = Date.now()
 ): NormalizedUpcomingMatch[] {
-  const merged = new Map<number, NormalizedUpcomingMatch>();
-  const seenByMatch = new Set<string>();
+  const merged = new Map<string, NormalizedUpcomingMatch>();
+
   for (const match of matches) {
-    merged.set(match.id, match);
-    seenByMatch.add(matchKey(match));
+    if (!isFutureLiveOrToday(match.startTime, match.statusId, now)) continue;
+    const key = matchKey(match);
+    const current = merged.get(key);
+    if (!current || current.homeTeam.name !== match.homeTeam.name) merged.set(key, match);
   }
 
   for (const match of STATIC_UPCOMING_MATCHES[league] ?? []) {
     const key = matchKey(match);
-    if (isFutureLiveOrToday(match.startTime, undefined, now) && !seenByMatch.has(key)) {
-      merged.set(match.id, match);
-      seenByMatch.add(key);
+    if (isFutureLiveOrToday(match.startTime, undefined, now) && !merged.has(key)) {
+      merged.set(key, match);
     }
   }
 
@@ -324,10 +381,9 @@ export async function GET(
       }
     }
 
-    // Primary: use /web/games/ endpoint to get all upcoming matches directly
     const gamesData = (await scores365Get('/web/games/', {
       competitions: competition.id.toString(),
-      statuses: '1,2', // 1=scheduled, 2=live
+      statuses: '1,2',
     })) as {
       games?: Raw365UpcomingGame[];
     };
@@ -337,8 +393,8 @@ export async function GET(
         league,
         [
           ...gamesData.games
-          .filter((game) => isFutureOrLive(game.startTime, game.statusId, now))
-          .map(normalizeGame),
+            .filter((game) => isFutureOrLive(game.startTime, game.statusId, now))
+            .map(normalizeGame),
           ...apiFootballMatches,
         ],
         now
@@ -353,7 +409,6 @@ export async function GET(
       });
     }
 
-    // Fallback: extract nextMatch from standings rows
     const data = (await scores365Get('/web/standings/', {
       competitions: competition.id.toString(),
     })) as {
@@ -383,17 +438,7 @@ export async function GET(
       });
     }
 
-    const matchesMap = new Map<
-      number,
-      {
-        id: number;
-        startTime: string;
-        round?: number;
-        roundName?: string;
-        homeTeam: { id: number; name: string; shortName?: string };
-        awayTeam: { id: number; name: string; shortName?: string };
-      }
-    >();
+    const matchesMap = new Map<number, NormalizedUpcomingMatch>();
 
     for (const standing of data.standings) {
       for (const row of standing.rows) {
@@ -405,6 +450,7 @@ export async function GET(
               startTime: match.startTime,
               round: match.roundNum,
               roundName: match.roundName,
+              statusId: match.statusId,
               homeTeam: {
                 id: match.homeCompetitor.id,
                 name: match.homeCompetitor.name,
