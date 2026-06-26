@@ -19,7 +19,11 @@ type StatRow = {
   team_id: number;
   period: string;
   metric_key: string;
+  metric_name: string;
+  value_numeric: number | null;
   source_key: string;
+  source_payload: unknown;
+  source_updated_at: string | null;
 };
 
 const CODE_BY_ALIAS: Record<string, string> = {
@@ -78,13 +82,14 @@ function normalize(value: unknown) {
     .toLowerCase()
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
+    .replace(/_/g, ' ')
     .replace(/[^a-z0-9']+/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
 }
 
 function codeFor(value: unknown) {
-  const text = normalize(value).replace(/_/g, ' ');
+  const text = normalize(value);
   if (CODE_BY_ALIAS[text]) return CODE_BY_ALIAS[text];
   for (const [alias, code] of Object.entries(CODE_BY_ALIAS)) {
     if (text.includes(alias)) return code;
@@ -92,11 +97,16 @@ function codeFor(value: unknown) {
   return null;
 }
 
+function codesFromFixtureKey(fixtureKey: string) {
+  const parts = fixtureKey.split(':').slice(-2).map(codeFor).filter(Boolean) as string[];
+  return parts.length >= 2 ? parts : [];
+}
+
 function pairKey(match: MatchRow) {
-  const home = codeFor(match.home_team_name) ?? codeFor(match.fixture_key);
-  const away = codeFor(match.away_team_name) ?? codeFor(match.fixture_key.split(':').slice(-1)[0]);
-  if (!home || !away) return null;
-  return [home, away].sort().join('-');
+  const fromNames = [codeFor(match.home_team_name), codeFor(match.away_team_name)].filter(Boolean) as string[];
+  const codes = fromNames.length >= 2 ? fromNames : codesFromFixtureKey(match.fixture_key);
+  if (codes.length < 2) return null;
+  return codes.slice(0, 2).sort().join('-');
 }
 
 function sideForStat(dup: MatchRow, stat: StatRow) {
@@ -105,34 +115,64 @@ function sideForStat(dup: MatchRow, stat: StatRow) {
   return null;
 }
 
+async function copyStatToTarget(dup: MatchRow, target: MatchRow, stat: StatRow) {
+  const side = sideForStat(dup, stat);
+  const targetTeamId = side === 'home' ? target.home_team_id : side === 'away' ? target.away_team_id : null;
+  if (!targetTeamId || stat.value_numeric === null) return 0;
+
+  const payload = {
+    ...(typeof stat.source_payload === 'object' && stat.source_payload !== null ? stat.source_payload : {}),
+    reconciledFromMatchId: dup.id,
+    reconciledFromFixtureKey: dup.fixture_key,
+    reconciledToFixtureKey: target.fixture_key,
+  };
+
+  await sql`
+    INSERT INTO world_cup_match_statistics (
+      match_id,
+      team_id,
+      period,
+      metric_key,
+      metric_name,
+      value_numeric,
+      source_key,
+      source_payload,
+      source_updated_at
+    )
+    VALUES (
+      ${target.id},
+      ${targetTeamId},
+      ${stat.period},
+      ${stat.metric_key},
+      ${stat.metric_name},
+      ${Number(stat.value_numeric)},
+      ${stat.source_key},
+      ${JSON.stringify(payload)}::jsonb,
+      COALESCE(${stat.source_updated_at}, NOW())
+    )
+    ON CONFLICT ON CONSTRAINT world_cup_match_statistics_unique
+    DO UPDATE SET
+      metric_name = EXCLUDED.metric_name,
+      value_numeric = EXCLUDED.value_numeric,
+      source_payload = EXCLUDED.source_payload,
+      source_updated_at = EXCLUDED.source_updated_at
+  `;
+
+  await sql`DELETE FROM world_cup_match_statistics WHERE id = ${stat.id}`;
+  return 1;
+}
+
 async function moveStats(dup: MatchRow, target: MatchRow) {
   const stats = (await sql`
-    SELECT id, team_id, period, metric_key, source_key
+    SELECT id, team_id, period, metric_key, metric_name, value_numeric, source_key, source_payload, source_updated_at
     FROM world_cup_match_statistics
     WHERE match_id = ${dup.id}
+    ORDER BY id
   `) as StatRow[];
 
   let moved = 0;
   for (const stat of stats) {
-    const side = sideForStat(dup, stat);
-    const targetTeamId = side === 'home' ? target.home_team_id : side === 'away' ? target.away_team_id : null;
-    if (!targetTeamId) continue;
-
-    await sql`
-      DELETE FROM world_cup_match_statistics
-      WHERE match_id = ${target.id}
-        AND team_id = ${targetTeamId}
-        AND period = ${stat.period}
-        AND metric_key = ${stat.metric_key}
-        AND source_key = ${stat.source_key}
-    `;
-
-    await sql`
-      UPDATE world_cup_match_statistics
-      SET match_id = ${target.id}, team_id = ${targetTeamId}
-      WHERE id = ${stat.id}
-    `;
-    moved += 1;
+    moved += await copyStatToTarget(dup, target, stat);
   }
 
   return moved;
@@ -141,7 +181,8 @@ async function moveStats(dup: MatchRow, target: MatchRow) {
 export async function GET(request: NextRequest) {
   try {
     const dryRun = request.nextUrl.searchParams.get('dryRun') !== 'false';
-    const limit = Math.max(1, Math.min(Number(request.nextUrl.searchParams.get('limit') ?? 120), 300));
+    const deleteUnmatched = request.nextUrl.searchParams.get('deleteUnmatched') === 'true';
+    const limit = Math.max(1, Math.min(Number(request.nextUrl.searchParams.get('limit') ?? 300), 500));
 
     const duplicates = (await sql`
       SELECT id, fixture_key, home_team_id, away_team_id, home_team_name, away_team_name
@@ -168,12 +209,21 @@ export async function GET(request: NextRequest) {
     const actions: Array<{ duplicate: string; target?: string; movedStats?: number; deleted?: boolean; reason?: string }> = [];
     let movedStats = 0;
     let deletedDuplicates = 0;
+    let unmatched = 0;
 
     for (const dup of duplicates) {
       const key = pairKey(dup);
       const target = key ? targetByPair.get(key) : null;
       if (!key || !target) {
-        actions.push({ duplicate: dup.fixture_key, reason: 'sem alvo scores365 equivalente' });
+        unmatched += 1;
+        if (!dryRun && deleteUnmatched) {
+          await sql`DELETE FROM world_cup_match_statistics WHERE match_id = ${dup.id}`;
+          await sql`DELETE FROM world_cup_matches WHERE id = ${dup.id}`;
+          deletedDuplicates += 1;
+          actions.push({ duplicate: dup.fixture_key, reason: 'sem alvo scores365 equivalente; removido por deleteUnmatched=true', deleted: true });
+        } else {
+          actions.push({ duplicate: dup.fixture_key, reason: 'sem alvo scores365 equivalente' });
+        }
         continue;
       }
 
@@ -184,6 +234,7 @@ export async function GET(request: NextRequest) {
 
       const moved = await moveStats(dup, target);
       movedStats += moved;
+      await sql`DELETE FROM world_cup_match_statistics WHERE match_id = ${dup.id}`;
       await sql`DELETE FROM world_cup_matches WHERE id = ${dup.id}`;
       deletedDuplicates += 1;
       actions.push({ duplicate: dup.fixture_key, target: target.fixture_key, movedStats: moved, deleted: true });
@@ -192,9 +243,11 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({
       success: true,
       dryRun,
+      deleteUnmatched,
       scope: 'Somente Copa do Mundo 2026.',
       duplicatesFound: duplicates.length,
       reconciled: actions.filter((item) => item.target).length,
+      unmatched,
       movedStats,
       deletedDuplicates,
       actions,
