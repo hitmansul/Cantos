@@ -13,6 +13,7 @@ type SingleStatCandidate = { metricKey: string; metricName: string; value: numbe
 type ImportBody = { url?: string; homeTeamName?: string; awayTeamName?: string; dryRun?: boolean; debug?: boolean };
 type EndpointResult = { url: string; ok: boolean; status: number; contentType: string; length: number; json: unknown | null; error?: string };
 type ScanHit = { path: string; key: string; valuePreview: string; sourceUrl?: string };
+type DebugSample = { path: string; keys: string[]; keyCount: number; arrayKeys: string[]; valuePreview: string; sourceUrl?: string };
 
 const TEAM_ALIASES: Record<string, string[]> = {
   turkiye: ['turkey', 'turkiye', 'turquia', 'türkiye', 'tur'],
@@ -22,16 +23,16 @@ const TEAM_ALIASES: Record<string, string[]> = {
 };
 
 const METRIC_ALIASES: Record<string, string> = {
-  possession: 'Posse de bola', ballpossession: 'Posse de bola', ball_possession: 'Posse de bola', possessionpercentage: 'Posse de bola', possessionpercent: 'Posse de bola', possessionpct: 'Posse de bola',
-  shots: 'Finalizações', totalshots: 'Finalizações', total_shots: 'Finalizações', attempts: 'Finalizações', totalattempts: 'Finalizações', attemptsongoal: 'Finalizações no gol',
-  shotson_target: 'Finalizações no gol', shotsontarget: 'Finalizações no gol', attemptsontarget: 'Finalizações no gol', on_target: 'Finalizações no gol', ongoal: 'Finalizações no gol',
-  corners: 'Escanteios', cornerkicks: 'Escanteios', corner_kicks: 'Escanteios', cornerswon: 'Escanteios',
-  yellowcards: 'Cartões amarelos', yellow_cards: 'Cartões amarelos', cautions: 'Cartões amarelos', yellowcard: 'Cartões amarelos', bookings: 'Cartões amarelos',
-  redcards: 'Cartões vermelhos', red_cards: 'Cartões vermelhos', redcard: 'Cartões vermelhos',
-  fouls: 'Faltas', foulscommitted: 'Faltas', fouls_committed: 'Faltas', foulcommitted: 'Faltas',
-  offsides: 'Impedimentos', offside: 'Impedimentos',
-  passes: 'Passes totais', totalpasses: 'Passes totais', total_passes: 'Passes totais', passesattempted: 'Passes totais',
-  passaccuracy: 'Precisão de passes', pass_accuracy: 'Precisão de passes', passingaccuracy: 'Precisão de passes', passcompletion: 'Precisão de passes',
+  possession: 'Posse de bola', ballpossession: 'Posse de bola', ball_possession: 'Posse de bola', possessionpercentage: 'Posse de bola', possessionpercent: 'Posse de bola', possessionpct: 'Posse de bola', possessionpercentagehome: 'Posse de bola', possessionpercentageaway: 'Posse de bola',
+  shots: 'Finalizações', totalshots: 'Finalizações', total_shots: 'Finalizações', attempts: 'Finalizações', totalattempts: 'Finalizações', attemptsongoal: 'Finalizações no gol', attemptsatgoal: 'Finalizações', shotattempts: 'Finalizações',
+  shotson_target: 'Finalizações no gol', shotsontarget: 'Finalizações no gol', attemptsontarget: 'Finalizações no gol', on_target: 'Finalizações no gol', ongoal: 'Finalizações no gol', shotsongoal: 'Finalizações no gol',
+  corners: 'Escanteios', cornerkicks: 'Escanteios', corner_kicks: 'Escanteios', cornerswon: 'Escanteios', corner: 'Escanteios',
+  yellowcards: 'Cartões amarelos', yellow_cards: 'Cartões amarelos', cautions: 'Cartões amarelos', yellowcard: 'Cartões amarelos', bookings: 'Cartões amarelos', yellowcardscount: 'Cartões amarelos',
+  redcards: 'Cartões vermelhos', red_cards: 'Cartões vermelhos', redcard: 'Cartões vermelhos', redcardscount: 'Cartões vermelhos',
+  fouls: 'Faltas', foulscommitted: 'Faltas', fouls_committed: 'Faltas', foulcommitted: 'Faltas', foulsagainst: 'Faltas',
+  offsides: 'Impedimentos', offside: 'Impedimentos', offsidescount: 'Impedimentos',
+  passes: 'Passes totais', totalpasses: 'Passes totais', total_passes: 'Passes totais', passesattempted: 'Passes totais', passattempts: 'Passes totais',
+  passaccuracy: 'Precisão de passes', pass_accuracy: 'Precisão de passes', passingaccuracy: 'Precisão de passes', passcompletion: 'Precisão de passes', passpercentage: 'Precisão de passes',
   saves: 'Defesas do goleiro', goalkeepersaves: 'Defesas do goleiro', goalkeeper_saves: 'Defesas do goleiro', savesmade: 'Defesas do goleiro',
   expectedgoals: 'Gols esperados (xG)', expected_goals: 'Gols esperados (xG)', xg: 'Gols esperados (xG)',
   crosses: 'Cruzamentos', tackles: 'Desarmes', interceptions: 'Interceptações', recoveries: 'Recuperações', clearances: 'Cortes defensivos',
@@ -40,13 +41,13 @@ const METRIC_ALIASES: Record<string, string> = {
 };
 
 const METRIC_WORDS = Object.keys(METRIC_ALIASES);
-const VALUE_KEYS = ['value', 'Value', 'statValue', 'numericValue', 'total', 'count', 'home', 'away', 'homeValue', 'awayValue', 'homeTeamValue', 'awayTeamValue', 'team1Value', 'team2Value', 'teamAValue', 'teamBValue', 'valueHome', 'valueAway'];
+const VALUE_KEYS = ['value', 'Value', 'statValue', 'numericValue', 'total', 'count', 'home', 'away', 'homeValue', 'awayValue', 'homeTeamValue', 'awayTeamValue', 'team1Value', 'team2Value', 'teamAValue', 'teamBValue', 'valueHome', 'valueAway', 'homeTeamCount', 'awayTeamCount'];
 
 function normalize(value: unknown) {
   return String(value ?? '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, ' ').replace(/\s+/g, ' ').trim();
 }
 function compact(value: unknown) { return normalize(value).replace(/\s+/g, ''); }
-function preview(value: unknown, max = 160) { const text = typeof value === 'string' ? value : JSON.stringify(value); return String(text ?? '').slice(0, max); }
+function preview(value: unknown, max = 180) { const text = typeof value === 'string' ? value : JSON.stringify(value); return String(text ?? '').slice(0, max); }
 function numberValue(value: unknown): number | null {
   if (typeof value === 'number' && Number.isFinite(value)) return value;
   if (typeof value === 'string') {
@@ -69,7 +70,7 @@ function metricKeyFromName(name: unknown) {
   if (!c || c.length < 2) return null;
   if (METRIC_ALIASES[c]) return c;
   for (const key of METRIC_WORDS) if (c.includes(key) || key.includes(c)) return key;
-  if (c.length <= 42 && /[a-z]/.test(c) && !/^\d+$/.test(c) && /(shot|corner|possession|pass|foul|card|offside|save|goal|tackle|duel|block|clearance|cross|interception|recovery)/i.test(c)) return c;
+  if (c.length <= 42 && /[a-z]/.test(c) && !/^\d+$/.test(c) && /(shot|corner|possession|pass|foul|card|offside|save|tackle|duel|block|clearance|cross|interception|recovery)/i.test(c)) return c;
   return null;
 }
 function metricName(key: string, fallback?: unknown) { return METRIC_ALIASES[key] ?? String(fallback ?? key).replace(/_/g, ' '); }
@@ -130,7 +131,7 @@ function statFromObject(obj: Record<string, unknown>, path: string, sourceUrl?: 
   const away = numberValue(obj.away) ?? numberValue(obj.awayValue) ?? numberValue(obj.awayTeamValue) ?? numberValue(obj.team2Value) ?? numberValue(obj.teamBValue) ?? numberValue(obj.valueAway) ?? numberValue(obj.awayTeam?.value) ?? numberValue(obj.awayTeam);
   if (home !== null && away !== null) return { metricKey, metricName: metricName(metricKey, label), home, away, raw: obj, path, sourceUrl };
 
-  for (const key of ['values', 'items', 'teams', 'teamValues', 'statistics', 'stats', 'data']) {
+  for (const key of ['values', 'items', 'teams', 'teamValues', 'statistics', 'stats', 'data', 'children']) {
     const arr = obj[key];
     if (!Array.isArray(arr) || arr.length < 2) continue;
     const first = arr[0];
@@ -171,6 +172,23 @@ function collectKeyValueStats(obj: Record<string, unknown>, path: string, source
   return found;
 }
 
+function collectSiblingTeamStats(obj: Record<string, unknown>, path: string, sourceUrl?: string): StatCandidate[] {
+  const found: StatCandidate[] = [];
+  const home = obj.HomeTeam ?? obj.homeTeam ?? obj.home ?? obj.Team1 ?? obj.team1;
+  const away = obj.AwayTeam ?? obj.awayTeam ?? obj.away ?? obj.Team2 ?? obj.team2;
+  if (!home || !away || typeof home !== 'object' || typeof away !== 'object' || Array.isArray(home) || Array.isArray(away)) return found;
+  const homeObj = home as Record<string, unknown>;
+  const awayObj = away as Record<string, unknown>;
+  for (const key of Object.keys(homeObj)) {
+    const metricKey = metricKeyFromName(key);
+    if (!metricKey || !(key in awayObj)) continue;
+    const homeValue = numberValue(homeObj[key]);
+    const awayValue = numberValue(awayObj[key]);
+    if (homeValue !== null && awayValue !== null) found.push({ metricKey, metricName: metricName(metricKey, key), home: homeValue, away: awayValue, raw: { home: homeObj[key], away: awayObj[key] }, path: `${path}.HomeTeam.${key} + ${path}.AwayTeam.${key}`, sourceUrl });
+  }
+  return found;
+}
+
 function collectStats(value: unknown, path = '$', out: StatCandidate[] = [], sourceUrl?: string, inheritedSide: Side | null = null, singles: SingleStatCandidate[] = [], homeTeamName?: string, awayTeamName?: string, hits: ScanHit[] = []) {
   if (!value || typeof value !== 'object') return { pairs: out, singles, hits };
   if (Array.isArray(value)) {
@@ -178,14 +196,15 @@ function collectStats(value: unknown, path = '$', out: StatCandidate[] = [], sou
     return { pairs: out, singles, hits };
   }
   const obj = value as Record<string, unknown>;
-  const objectText = normalize(`${candidateLabel(obj, path)} ${path}`);
-  if (/(stat|statistics|corner|possession|shot|foul|card|offside|pass|xg|goal|save)/.test(objectText) && hits.length < 80) {
+  const objectText = normalize(`${candidateLabel(obj, path)} ${path} ${Object.keys(obj).join(' ')}`);
+  if (/(stat|statistics|corner|possession|shot|foul|card|offside|pass|xg|save)/.test(objectText) && hits.length < 140) {
     hits.push({ path, key: String(candidateLabel(obj, path)), valuePreview: preview(obj), sourceUrl });
   }
 
   const direct = statFromObject(obj, path, sourceUrl);
   if (direct) out.push(direct);
   collectKeyValueStats(obj, path, sourceUrl).forEach((stat) => out.push(stat));
+  collectSiblingTeamStats(obj, path, sourceUrl).forEach((stat) => out.push(stat));
   const single = singleStatFromObject(obj, path, sourceUrl, inheritedSide, homeTeamName, awayTeamName);
   if (single) singles.push(single);
 
@@ -200,6 +219,42 @@ function collectStats(value: unknown, path = '$', out: StatCandidate[] = [], sou
     collectStats(child, `${path}.${key}`, out, sourceUrl, childSide, singles, homeTeamName, awayTeamName, hits);
   }
   return { pairs: out, singles, hits };
+}
+
+function collectDebugSamples(value: unknown, path = '$', sourceUrl?: string, samples: DebugSample[] = []) {
+  if (!value || typeof value !== 'object' || samples.length >= 160) return samples;
+  if (Array.isArray(value)) {
+    if (value.length > 0 && value.length <= 80 && samples.length < 160) {
+      samples.push({ path, keys: ['array'], keyCount: value.length, arrayKeys: [], valuePreview: preview(value[0]), sourceUrl });
+    }
+    value.slice(0, 40).forEach((item, index) => collectDebugSamples(item, `${path}[${index}]`, sourceUrl, samples));
+    return samples;
+  }
+  const obj = value as Record<string, unknown>;
+  const keys = Object.keys(obj);
+  const arrayKeys = keys.filter((key) => Array.isArray(obj[key]));
+  const text = normalize(`${path} ${keys.join(' ')}`);
+  if ((arrayKeys.length > 0 || keys.length >= 5 || /(stat|statistics|team|match|period|group|summary|football|event|incident|corner|shot|pass|possession)/.test(text)) && samples.length < 160) {
+    samples.push({ path, keys: keys.slice(0, 30), keyCount: keys.length, arrayKeys: arrayKeys.slice(0, 20), valuePreview: preview(obj), sourceUrl });
+  }
+  for (const [key, child] of Object.entries(obj)) collectDebugSamples(child, `${path}.${key}`, sourceUrl, samples);
+  return samples;
+}
+
+function keySummary(samples: DebugSample[]) {
+  const counts = new Map<string, { count: number; paths: string[] }>();
+  for (const sample of samples) {
+    for (const key of sample.keys) {
+      const item = counts.get(key) ?? { count: 0, paths: [] };
+      item.count += 1;
+      if (item.paths.length < 4) item.paths.push(sample.path);
+      counts.set(key, item);
+    }
+  }
+  return Array.from(counts.entries())
+    .map(([key, value]) => ({ key, count: value.count, paths: value.paths }))
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 120);
 }
 
 function pairSingles(singles: SingleStatCandidate[]) {
@@ -262,7 +317,7 @@ function endpointCandidates(url: string, html: string) {
       `https://api.fifa.com/api/v3/calendar/matches?competitionId=${competitionId}&seasonId=${seasonId}&stageId=${stageId}&matchId=${matchId}`,
     );
   }
-  return unique(candidates).slice(0, 40);
+  return unique(candidates).slice(0, 55);
 }
 
 async function fetchEndpoint(url: string): Promise<EndpointResult> {
@@ -290,7 +345,7 @@ async function fetchEndpoint(url: string): Promise<EndpointResult> {
 }
 
 async function discoverInternalPayloads(url: string, html: string) {
-  const candidates = endpointCandidates(url, html).filter((candidate) => /api|match|stats|statistics|football/i.test(candidate)).slice(0, 25);
+  const candidates = endpointCandidates(url, html).filter((candidate) => /api|match|stats|statistics|football/i.test(candidate)).slice(0, 40);
   const results: EndpointResult[] = [];
   for (const candidate of candidates) results.push(await fetchEndpoint(candidate));
   const jsonPayloads = results.filter((result) => result.json !== null).map((result) => ({ url: result.url, json: result.json }));
@@ -307,7 +362,7 @@ async function savePair(match: MatchRow, stat: StatCandidate, url: string, rever
     if (!side.teamId || side.value === null) continue;
     await sql`
       INSERT INTO world_cup_match_statistics (match_id, team_id, period, metric_key, metric_name, value_numeric, source_key, source_payload, source_updated_at)
-      VALUES (${match.id}, ${side.teamId}, 'match', ${stat.metricKey}, ${stat.metricName}, ${side.value}, 'fifa', ${JSON.stringify({ importedBy: 'fifa-match-centre-deep-json-scanner', matchCentreUrl: url, internalEndpoint: stat.sourceUrl, side: side.side, raw: stat.raw, path: stat.path })}::jsonb, NOW())
+      VALUES (${match.id}, ${side.teamId}, 'match', ${stat.metricKey}, ${stat.metricName}, ${side.value}, 'fifa', ${JSON.stringify({ importedBy: 'fifa-match-centre-deep-json-scanner-v3', matchCentreUrl: url, internalEndpoint: stat.sourceUrl, side: side.side, raw: stat.raw, path: stat.path })}::jsonb, NOW())
       ON CONFLICT ON CONSTRAINT world_cup_match_statistics_unique
       DO UPDATE SET metric_name = EXCLUDED.metric_name, value_numeric = EXCLUDED.value_numeric, source_payload = EXCLUDED.source_payload, source_updated_at = EXCLUDED.source_updated_at
     `;
@@ -330,8 +385,14 @@ async function runImport(body: ImportBody) {
   const endpointCollected = discovery.jsonPayloads.map((payload, index) => collectStats(payload.json, `$endpointJson[${index}]`, [], payload.url, null, [], homeTeamName, awayTeamName, []));
   const htmlStats = htmlCollected.flatMap((result) => [...result.pairs, ...pairSingles(result.singles)]);
   const endpointStats = endpointCollected.flatMap((result) => [...result.pairs, ...pairSingles(result.singles)]);
-  const scanHits = [...endpointCollected.flatMap((result) => result.hits), ...htmlCollected.flatMap((result) => result.hits)].slice(0, 120);
+  const scanHits = [...endpointCollected.flatMap((result) => result.hits), ...htmlCollected.flatMap((result) => result.hits)].slice(0, 140);
   const extractedStats = dedupeStats([...endpointStats, ...htmlStats]);
+  const debugSamples = body.debug
+    ? [
+        ...discovery.jsonPayloads.flatMap((payload, index) => collectDebugSamples(payload.json, `$endpointJson[${index}]`, payload.url, [])),
+        ...jsonBlocks.flatMap((block, index) => collectDebugSamples(block, `$htmlJson[${index}]`, url, [])),
+      ].slice(0, 200)
+    : [];
   const match = await findMatch(homeTeamName, awayTeamName);
   if (!match) return NextResponse.json({ success: false, error: 'Partida não encontrada no banco.', detected: { homeTeamName, awayTeamName }, extractedStats }, { status: 404 });
   const reversed = sameTeam(match.home_team_name, awayTeamName) && sameTeam(match.away_team_name, homeTeamName);
@@ -347,12 +408,13 @@ async function runImport(body: ImportBody) {
       internalCandidates: discovery.candidates.length,
       internalJsonPayloads: discovery.jsonPayloads.length,
       scanHits: scanHits.length,
-      strategy: 'fifa-match-centre-deep-json-scanner-v2',
+      debugSamples: debugSamples.length,
+      strategy: 'fifa-match-centre-deep-json-scanner-v3',
     },
     extractedStats,
     savedValues,
-    warning: extractedStats.length === 0 ? 'A página e os endpoints JSON foram acessados, mas ainda não encontrei pares de estatísticas. Abra com debug=true e envie debug.scanHits.' : null,
-    debug: body.debug ? { endpointResults: discovery.results.map(({ json, ...rest }) => rest), scanHits } : undefined,
+    warning: extractedStats.length === 0 ? 'A página e os endpoints JSON foram acessados, mas ainda não encontrei pares de estatísticas. Abra com debug=true e envie debug.scanHits, debug.keySummary e debug.samples.' : null,
+    debug: body.debug ? { endpointResults: discovery.results.map(({ json, ...rest }) => rest), scanHits, keySummary: keySummary(debugSamples), samples: debugSamples.slice(0, 80) } : undefined,
     source: url,
     lastUpdated: new Date().toISOString(),
   });
