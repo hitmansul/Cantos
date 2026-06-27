@@ -7,8 +7,9 @@ const WORLD_CUP_2026_KEY = 'world_cup_2026';
 const DEFAULT_MATCH_CENTRE_URL = 'https://www.fifa.com/pt/match-centre/match/17/285023/289273/400021459';
 
 type MatchRow = { id: number; home_team_id: number | null; away_team_id: number | null; home_team_name: string; away_team_name: string; fixture_key: string };
-type StatCandidate = { metricKey: string; metricName: string; home: number | null; away: number | null; raw?: unknown; path?: string };
-type ImportBody = { url?: string; homeTeamName?: string; awayTeamName?: string; dryRun?: boolean };
+type StatCandidate = { metricKey: string; metricName: string; home: number | null; away: number | null; raw?: unknown; path?: string; sourceUrl?: string };
+type ImportBody = { url?: string; homeTeamName?: string; awayTeamName?: string; dryRun?: boolean; debug?: boolean };
+type EndpointResult = { url: string; ok: boolean; status: number; contentType: string; length: number; json: unknown | null; error?: string };
 
 const TEAM_ALIASES: Record<string, string[]> = {
   turkiye: ['turkey', 'turkiye', 'turquia', 'türkiye', 'tur'],
@@ -88,25 +89,25 @@ function extractJsonBlocks(html: string) {
   return blocks;
 }
 
-function statFromObject(obj: Record<string, unknown>, path: string): StatCandidate | null {
+function statFromObject(obj: Record<string, unknown>, path: string, sourceUrl?: string): StatCandidate | null {
   const label = obj.name ?? obj.label ?? obj.title ?? obj.statName ?? obj.type ?? obj.key ?? obj.code ?? obj.metricName ?? obj.metric;
   const metricKey = metricKeyFromName(label);
   if (!metricKey) return null;
   const home = numberValue(obj.home) ?? numberValue(obj.homeValue) ?? numberValue(obj.homeTeamValue) ?? numberValue(obj.team1Value) ?? numberValue(obj.teamAValue) ?? numberValue(obj.valueHome);
   const away = numberValue(obj.away) ?? numberValue(obj.awayValue) ?? numberValue(obj.awayTeamValue) ?? numberValue(obj.team2Value) ?? numberValue(obj.teamBValue) ?? numberValue(obj.valueAway);
   if (home === null || away === null) return null;
-  return { metricKey, metricName: metricName(metricKey, label), home, away, raw: obj, path };
+  return { metricKey, metricName: metricName(metricKey, label), home, away, raw: obj, path, sourceUrl };
 }
 
-function collectStats(value: unknown, path = '$', out: StatCandidate[] = []) {
+function collectStats(value: unknown, path = '$', out: StatCandidate[] = [], sourceUrl?: string) {
   if (!value || typeof value !== 'object') return out;
-  if (Array.isArray(value)) { value.forEach((item, index) => collectStats(item, `${path}[${index}]`, out)); return out; }
+  if (Array.isArray(value)) { value.forEach((item, index) => collectStats(item, `${path}[${index}]`, out, sourceUrl)); return out; }
   const obj = value as Record<string, unknown>;
-  const direct = statFromObject(obj, path);
+  const direct = statFromObject(obj, path, sourceUrl);
   if (direct) out.push(direct);
   for (const [key, child] of Object.entries(obj)) {
     if (['raw', 'payload'].includes(key)) continue;
-    collectStats(child, `${path}.${key}`, out);
+    collectStats(child, `${path}.${key}`, out, sourceUrl);
   }
   return out;
 }
@@ -120,6 +121,88 @@ function dedupeStats(stats: StatCandidate[]) {
   return Array.from(byKey.values());
 }
 
+function matchCentreIds(url: string) {
+  const ids = url.match(/\/match-centre\/match\/(\d+)\/(\d+)\/(\d+)\/(\d+)/i);
+  return ids ? { competitionId: ids[1], seasonId: ids[2], stageId: ids[3], matchId: ids[4] } : null;
+}
+
+function unique(values: string[]) { return Array.from(new Set(values.filter(Boolean))); }
+
+function endpointCandidates(url: string, html: string) {
+  const ids = matchCentreIds(url);
+  const candidates: string[] = [];
+  for (const match of html.matchAll(/https?:\\?\/\\?\/[^\s"'<>]+/gi)) {
+    const raw = match[0].replace(/\\\//g, '/').replace(/[),.;]+$/g, '');
+    if (/fifa|digitalhub|football|match|statistics|api/i.test(raw)) candidates.push(raw);
+  }
+  for (const match of html.matchAll(/(?:src|href)=["']([^"']+)["']/gi)) {
+    try {
+      const absolute = new URL(match[1], url).toString();
+      if (/fifa|_next|api|match|statistics/i.test(absolute)) candidates.push(absolute);
+    } catch {}
+  }
+  if (ids) {
+    const { competitionId, seasonId, stageId, matchId } = ids;
+    candidates.push(
+      `https://api.fifa.com/api/v3/live/football/${matchId}`,
+      `https://api.fifa.com/api/v3/live/football/${matchId}/statistics`,
+      `https://api.fifa.com/api/v3/live/football/${matchId}/stats`,
+      `https://api.fifa.com/api/v3/match/${matchId}`,
+      `https://api.fifa.com/api/v3/matches/${matchId}`,
+      `https://api.fifa.com/api/v3/calendar/matches/${matchId}`,
+      `https://api.fifa.com/api/v3/calendar/matches?competition=${competitionId}&season=${seasonId}&stage=${stageId}&match=${matchId}`,
+      `https://api.fifa.com/api/v3/calendar/matches?competitionId=${competitionId}&seasonId=${seasonId}&stageId=${stageId}&matchId=${matchId}`,
+    );
+  }
+  return unique(candidates).slice(0, 40);
+}
+
+async function fetchEndpoint(url: string): Promise<EndpointResult> {
+  try {
+    const response = await fetch(url, {
+      cache: 'no-store',
+      headers: {
+        accept: 'application/json,text/plain,*/*',
+        'accept-language': 'pt-BR,pt;q=0.9,en;q=0.8',
+        origin: 'https://www.fifa.com',
+        referer: 'https://www.fifa.com/',
+        'user-agent': 'Mozilla/5.0 CantosEstatisticas/1.0',
+      },
+    });
+    const contentType = response.headers.get('content-type') ?? '';
+    const text = await response.text();
+    let json: unknown | null = null;
+    if (/json/i.test(contentType) || /^[\[{]/.test(text.trim())) {
+      try { json = JSON.parse(text); } catch {}
+    }
+    return { url, ok: response.ok, status: response.status, contentType, length: text.length, json };
+  } catch (error) {
+    return { url, ok: false, status: 0, contentType: '', length: 0, json: null, error: error instanceof Error ? error.message : 'Erro ao acessar endpoint.' };
+  }
+}
+
+async function discoverInternalPayloads(url: string, html: string) {
+  const firstCandidates = endpointCandidates(url, html);
+  const jsCandidates = firstCandidates.filter((candidate) => /\.(js)(\?|$)/i.test(candidate)).slice(0, 12);
+  const moreCandidates: string[] = [];
+
+  for (const jsUrl of jsCandidates) {
+    const js = await fetchEndpoint(jsUrl);
+    if (!js.ok || !js.json && js.length === 0) continue;
+    const jsText = typeof js.json === 'string' ? js.json : '';
+    for (const match of jsText.matchAll(/https?:\\?\/\\?\/[^\s"'<>]+/gi)) {
+      const raw = match[0].replace(/\\\//g, '/').replace(/[),.;]+$/g, '');
+      if (/api|match|stats|statistics|football|fifa/i.test(raw)) moreCandidates.push(raw);
+    }
+  }
+
+  const candidates = unique([...firstCandidates, ...moreCandidates]).filter((candidate) => /api|match|stats|statistics|football/i.test(candidate)).slice(0, 25);
+  const results: EndpointResult[] = [];
+  for (const candidate of candidates) results.push(await fetchEndpoint(candidate));
+  const jsonPayloads = results.filter((result) => result.json !== null).map((result) => ({ url: result.url, json: result.json }));
+  return { candidates, results, jsonPayloads };
+}
+
 async function savePair(match: MatchRow, stat: StatCandidate, url: string, reversed: boolean) {
   const homeTeamId = reversed ? match.away_team_id : match.home_team_id;
   const awayTeamId = reversed ? match.home_team_id : match.away_team_id;
@@ -130,7 +213,7 @@ async function savePair(match: MatchRow, stat: StatCandidate, url: string, rever
     if (!side.teamId || side.value === null) continue;
     await sql`
       INSERT INTO world_cup_match_statistics (match_id, team_id, period, metric_key, metric_name, value_numeric, source_key, source_payload, source_updated_at)
-      VALUES (${match.id}, ${side.teamId}, 'match', ${stat.metricKey}, ${stat.metricName}, ${side.value}, 'fifa', ${JSON.stringify({ importedBy: 'fifa-match-centre', matchCentreUrl: url, side: side.side, raw: stat.raw, path: stat.path })}::jsonb, NOW())
+      VALUES (${match.id}, ${side.teamId}, 'match', ${stat.metricKey}, ${stat.metricName}, ${side.value}, 'fifa', ${JSON.stringify({ importedBy: 'fifa-match-centre-internal-endpoint', matchCentreUrl: url, internalEndpoint: stat.sourceUrl, side: side.side, raw: stat.raw, path: stat.path })}::jsonb, NOW())
       ON CONFLICT ON CONSTRAINT world_cup_match_statistics_unique
       DO UPDATE SET metric_name = EXCLUDED.metric_name, value_numeric = EXCLUDED.value_numeric, source_payload = EXCLUDED.source_payload, source_updated_at = EXCLUDED.source_updated_at
     `;
@@ -148,7 +231,10 @@ async function runImport(body: ImportBody) {
   if (!response.ok) return NextResponse.json({ success: false, error: `Falha ao acessar FIFA Match Centre: HTTP ${response.status}` }, { status: 502 });
   const html = await response.text();
   const jsonBlocks = extractJsonBlocks(html);
-  const extractedStats = dedupeStats(jsonBlocks.flatMap((block, index) => collectStats(block, `$json[${index}]`)));
+  const discovery = await discoverInternalPayloads(url, html);
+  const htmlStats = jsonBlocks.flatMap((block, index) => collectStats(block, `$htmlJson[${index}]`, [], url));
+  const endpointStats = discovery.jsonPayloads.flatMap((payload, index) => collectStats(payload.json, `$endpointJson[${index}]`, [], payload.url));
+  const extractedStats = dedupeStats([...htmlStats, ...endpointStats]);
   const match = await findMatch(homeTeamName, awayTeamName);
   if (!match) return NextResponse.json({ success: false, error: 'Partida não encontrada no banco.', detected: { homeTeamName, awayTeamName }, extractedStats }, { status: 404 });
   const reversed = sameTeam(match.home_team_name, awayTeamName) && sameTeam(match.away_team_name, homeTeamName);
@@ -158,10 +244,17 @@ async function runImport(body: ImportBody) {
     success: true,
     dryRun: Boolean(body.dryRun),
     match,
-    parser: { htmlLength: html.length, jsonBlocks: jsonBlocks.length, strategy: 'fifa-match-centre-json-recursive' },
+    parser: {
+      htmlLength: html.length,
+      htmlJsonBlocks: jsonBlocks.length,
+      internalCandidates: discovery.candidates.length,
+      internalJsonPayloads: discovery.jsonPayloads.length,
+      strategy: 'fifa-match-centre-internal-endpoint-discovery',
+    },
     extractedStats,
     savedValues,
-    warning: extractedStats.length === 0 ? 'A página foi acessada, mas não encontrei estatísticas estruturadas no HTML inicial. Pode exigir endpoint interno da FIFA ou renderização client-side.' : null,
+    warning: extractedStats.length === 0 ? 'A página foi acessada, mas ainda não encontrei estatísticas estruturadas. Confira debug.endpointResults para identificar o endpoint interno correto da FIFA.' : null,
+    debug: body.debug ? { endpointResults: discovery.results.map(({ json, ...rest }) => rest) } : undefined,
     source: url,
     lastUpdated: new Date().toISOString(),
   });
@@ -175,6 +268,7 @@ export async function GET(request: NextRequest) {
       homeTeamName: params.get('homeTeamName') || 'Turquia',
       awayTeamName: params.get('awayTeamName') || 'EUA',
       dryRun: params.get('dryRun') !== 'false',
+      debug: params.get('debug') === 'true',
     });
   } catch (error) {
     return NextResponse.json({ success: false, error: error instanceof Error ? error.message : 'Erro ao importar FIFA Match Centre.' }, { status: 500 });
