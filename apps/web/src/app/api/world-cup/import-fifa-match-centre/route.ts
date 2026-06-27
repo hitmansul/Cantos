@@ -4,9 +4,11 @@ import sql from '@/app/api/utils/sql';
 export const dynamic = 'force-dynamic';
 
 const WORLD_CUP_2026_KEY = 'world_cup_2026';
+const DEFAULT_MATCH_CENTRE_URL = 'https://www.fifa.com/pt/match-centre/match/17/285023/289273/400021459';
 
 type MatchRow = { id: number; home_team_id: number | null; away_team_id: number | null; home_team_name: string; away_team_name: string; fixture_key: string };
 type StatCandidate = { metricKey: string; metricName: string; home: number | null; away: number | null; raw?: unknown; path?: string };
+type ImportBody = { url?: string; homeTeamName?: string; awayTeamName?: string; dryRun?: boolean };
 
 const TEAM_ALIASES: Record<string, string[]> = {
   turkiye: ['turkey', 'turkiye', 'turquia', 'türkiye', 'tur'],
@@ -54,7 +56,6 @@ function metricKeyFromName(name: unknown) {
   return null;
 }
 function metricName(key: string, fallback?: unknown) { return METRIC_ALIASES[key] ?? String(fallback ?? key).replace(/_/g, ' '); }
-
 function teamKey(name: unknown) {
   const n = normalize(name);
   for (const [canonical, aliases] of Object.entries(TEAM_ALIASES)) if (aliases.some((a) => n === normalize(a) || n.includes(normalize(a)))) return canonical;
@@ -114,8 +115,7 @@ function dedupeStats(stats: StatCandidate[]) {
   const byKey = new Map<string, StatCandidate>();
   for (const stat of stats) {
     if (stat.home === null || stat.away === null) continue;
-    const key = stat.metricKey;
-    if (!byKey.has(key)) byKey.set(key, stat);
+    if (!byKey.has(stat.metricKey)) byKey.set(stat.metricKey, stat);
   }
   return Array.from(byKey.values());
 }
@@ -139,34 +139,51 @@ async function savePair(match: MatchRow, stat: StatCandidate, url: string, rever
   return saved;
 }
 
+async function runImport(body: ImportBody) {
+  const url = body.url || DEFAULT_MATCH_CENTRE_URL;
+  if (!/^https:\/\/www\.fifa\.com\//i.test(url)) return NextResponse.json({ success: false, error: 'Informe a URL oficial do Match Centre da FIFA.' }, { status: 400 });
+  const homeTeamName = body.homeTeamName ?? 'Turquia';
+  const awayTeamName = body.awayTeamName ?? 'EUA';
+  const response = await fetch(url, { cache: 'no-store', headers: { 'user-agent': 'Mozilla/5.0 CantosEstatisticas/1.0' } });
+  if (!response.ok) return NextResponse.json({ success: false, error: `Falha ao acessar FIFA Match Centre: HTTP ${response.status}` }, { status: 502 });
+  const html = await response.text();
+  const jsonBlocks = extractJsonBlocks(html);
+  const extractedStats = dedupeStats(jsonBlocks.flatMap((block, index) => collectStats(block, `$json[${index}]`)));
+  const match = await findMatch(homeTeamName, awayTeamName);
+  if (!match) return NextResponse.json({ success: false, error: 'Partida não encontrada no banco.', detected: { homeTeamName, awayTeamName }, extractedStats }, { status: 404 });
+  const reversed = sameTeam(match.home_team_name, awayTeamName) && sameTeam(match.away_team_name, homeTeamName);
+  let savedValues = 0;
+  if (!body.dryRun) for (const stat of extractedStats) savedValues += await savePair(match, stat, url, reversed);
+  return NextResponse.json({
+    success: true,
+    dryRun: Boolean(body.dryRun),
+    match,
+    parser: { htmlLength: html.length, jsonBlocks: jsonBlocks.length, strategy: 'fifa-match-centre-json-recursive' },
+    extractedStats,
+    savedValues,
+    warning: extractedStats.length === 0 ? 'A página foi acessada, mas não encontrei estatísticas estruturadas no HTML inicial. Pode exigir endpoint interno da FIFA ou renderização client-side.' : null,
+    source: url,
+    lastUpdated: new Date().toISOString(),
+  });
+}
+
+export async function GET(request: NextRequest) {
+  try {
+    const params = request.nextUrl.searchParams;
+    return await runImport({
+      url: params.get('url') || DEFAULT_MATCH_CENTRE_URL,
+      homeTeamName: params.get('homeTeamName') || 'Turquia',
+      awayTeamName: params.get('awayTeamName') || 'EUA',
+      dryRun: params.get('dryRun') !== 'false',
+    });
+  } catch (error) {
+    return NextResponse.json({ success: false, error: error instanceof Error ? error.message : 'Erro ao importar FIFA Match Centre.' }, { status: 500 });
+  }
+}
+
 export async function POST(request: NextRequest) {
   try {
-    const body = (await request.json()) as { url?: string; homeTeamName?: string; awayTeamName?: string; dryRun?: boolean };
-    const url = body.url;
-    if (!url || !/^https:\/\/www\.fifa\.com\//i.test(url)) return NextResponse.json({ success: false, error: 'Informe a URL oficial do Match Centre da FIFA.' }, { status: 400 });
-    const homeTeamName = body.homeTeamName ?? 'Turquia';
-    const awayTeamName = body.awayTeamName ?? 'EUA';
-    const response = await fetch(url, { cache: 'no-store', headers: { 'user-agent': 'Mozilla/5.0 CantosEstatisticas/1.0' } });
-    if (!response.ok) return NextResponse.json({ success: false, error: `Falha ao acessar FIFA Match Centre: HTTP ${response.status}` }, { status: 502 });
-    const html = await response.text();
-    const jsonBlocks = extractJsonBlocks(html);
-    const extractedStats = dedupeStats(jsonBlocks.flatMap((block, index) => collectStats(block, `$json[${index}]`)));
-    const match = await findMatch(homeTeamName, awayTeamName);
-    if (!match) return NextResponse.json({ success: false, error: 'Partida não encontrada no banco.', detected: { homeTeamName, awayTeamName }, extractedStats }, { status: 404 });
-    const reversed = sameTeam(match.home_team_name, awayTeamName) && sameTeam(match.away_team_name, homeTeamName);
-    let savedValues = 0;
-    if (!body.dryRun) for (const stat of extractedStats) savedValues += await savePair(match, stat, url, reversed);
-    return NextResponse.json({
-      success: true,
-      dryRun: Boolean(body.dryRun),
-      match,
-      parser: { htmlLength: html.length, jsonBlocks: jsonBlocks.length, strategy: 'fifa-match-centre-json-recursive' },
-      extractedStats,
-      savedValues,
-      warning: extractedStats.length === 0 ? 'A página foi acessada, mas não encontrei estatísticas estruturadas no HTML inicial. Pode exigir endpoint interno da FIFA ou renderização client-side.' : null,
-      source: url,
-      lastUpdated: new Date().toISOString(),
-    });
+    return await runImport((await request.json()) as ImportBody);
   } catch (error) {
     return NextResponse.json({ success: false, error: error instanceof Error ? error.message : 'Erro ao importar FIFA Match Centre.' }, { status: 500 });
   }
