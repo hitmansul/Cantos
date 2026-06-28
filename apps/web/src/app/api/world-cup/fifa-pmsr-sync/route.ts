@@ -39,11 +39,12 @@ function pdfKey(url: string) { return decodeURIComponent(url.split('/').pop() ??
 
 function extractPmsrLinks(html: string) {
   const links: string[] = [];
+  const decoded = html.replace(/\\u002F/g, '/').replace(/\\\//g, '/').replace(/&quot;/g, '"').replace(/&amp;/g, '&');
   const hrefRegex = /href=["']([^"']+PMSR[^"']+\.pdf(?:\?[^"']*)?)["']/gi;
   let match: RegExpExecArray | null;
-  while ((match = hrefRegex.exec(html))) links.push(absoluteUrl(match[1]));
+  while ((match = hrefRegex.exec(decoded))) links.push(absoluteUrl(match[1]));
   const rawPdfRegex = /(https?:\/\/[^\s"'<>]+PMSR[^\s"'<>]+\.pdf(?:\?[^\s"'<>]*)?|\/media\/[^\s"'<>]+PMSR[^\s"'<>]+\.pdf(?:\?[^\s"'<>]*)?)/gi;
-  while ((match = rawPdfRegex.exec(html))) links.push(absoluteUrl(match[1]));
+  while ((match = rawPdfRegex.exec(decoded))) links.push(absoluteUrl(match[1]));
   return unique(links.map((url) => url.replace(/&amp;/g, '&'))).filter((url) => /PMSR/i.test(url) && /\.pdf($|\?)/i.test(url));
 }
 
@@ -109,7 +110,7 @@ async function runSync(request: NextRequest, body: SyncBody) {
   const maxMatchNumber = Math.max(minMatchNumber, Math.min(Number(body.maxMatchNumber ?? 104), 104));
   const origin = request.nextUrl.origin;
   const includeAllHub = all || body.onlyMissing === false;
-  const missing = body.onlyMissing === false ? null : await fetchMissingFifa(origin);
+  const missing = includeAllHub ? null : await fetchMissingFifa(origin);
   const importedMap = dryRun || force ? new Map() : await alreadyImportedMap();
   const selected: Array<{ url: string; missingMatch?: MissingMatch; source: ImportResult['source'] }> = [];
   let hubDiscoveredCount = 0, statisticsDiscoveredCount = 0, statisticsHintCount = 0;
@@ -123,7 +124,7 @@ async function runSync(request: NextRequest, body: SyncBody) {
       statisticsDiscoveredCount = stats.discovered.length; statisticsHintCount = stats.hints.length; statisticsError = stats.error; selected.push(...stats.selected);
     }
   }
-  if ((mode === 'backfill' || mode === 'both') && selected.length < limit) {
+  if (!includeAllHub && (mode === 'backfill' || mode === 'both') && selected.length < limit) {
     const backfill = await discoverByBackfill(missing, limit - selected.length, minMatchNumber, maxMatchNumber);
     selected.push(...backfill.map((item) => ({ url: item.url, missingMatch: item.missingMatch, source: 'backfill' as const })));
   }
