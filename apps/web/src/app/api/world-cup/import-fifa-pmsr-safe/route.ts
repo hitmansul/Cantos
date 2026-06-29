@@ -90,7 +90,7 @@ async function parseWithCurrentImporter(origin: string, pdfUrl: string) {
   const response = await fetch(`${origin}/api/world-cup/import-fifa-pmsr`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ pdfUrl, dryRun: true, allowCreateMatch: false }),
+    body: JSON.stringify({ pdfUrl, dryRun: true, allowCreateMatch: true }),
     cache: 'no-store',
   });
   let payload: ParsedPayload;
@@ -139,8 +139,8 @@ export async function POST(request: NextRequest) {
       extractedStats: stats,
       savedValues,
       warning: payload.warning ?? null,
-      strategy: 'safe-delete-all-sources-before-insert-no-create-match',
-      scope: 'Somente Copa do Mundo: grava em world_cup_match_statistics.',
+      strategy: 'safe-delete-before-insert-create-missing-world-cup-match',
+      scope: 'Somente Copa do Mundo: grava em world_cup_matches, world_cup_teams e world_cup_match_statistics.',
       lastUpdated: new Date().toISOString(),
     });
   } catch (error) {
