@@ -51,7 +51,7 @@ function toBracketFromPersistent(m: PersistentMatch, index: number): BracketMatc
 function toBracketFromMatch(m: Match, index: number): BracketMatch { return { label:`Jogo ${index+1}`, home:m.homeTeam, away:m.awayTeam, kickoffAt:m.startTime, homeScore:m.homeScore ?? null, awayScore:m.awayScore ?? null, status:m.statusText, source:'oficial' }; }
 function toBracketFromPrediction(p: Prediction, index: number): BracketMatch { return { label:`Jogo ${index+1}`, home:p.homeTeamName, away:p.awayTeamName, kickoffAt:p.kickoffAt, source:'oficial' }; }
 function stageOf(value?: string | null) { const r = norm(value); if (r.includes('round of 32') || r.includes('fase 32') || r.includes('fase de 32') || r.includes('32avos')) return 'Fase 32'; if (r.includes('round of 16') || r.includes('oitava')) return 'Oitavas'; if (r.includes('quarter') || r.includes('quarta')) return 'Quartas'; if (r.includes('semi')) return 'Semifinais'; if (r.includes('final')) return 'Final'; return null; }
-function winnerOf(m?: BracketMatch) { if (!m) return null; if (typeof m.homeScore === 'number' && typeof m.awayScore === 'number' && m.homeScore !== m.awayScore) return m.homeScore > m.awayScore ? m.home : m.away; if (hasFinishedStatus(m.status)) return null; return null; }
+function winnerOf(m?: BracketMatch) { if (!m || typeof m.homeScore !== 'number' || typeof m.awayScore !== 'number' || m.homeScore === m.awayScore) return null; return m.homeScore > m.awayScore ? m.home : m.away; }
 function sortBracket(a: BracketMatch, b: BracketMatch) { return Date.parse(a.kickoffAt || '9999-12-31') - Date.parse(b.kickoffAt || '9999-12-31') || a.label.localeCompare(b.label); }
 function dedupeBracket(items: BracketMatch[]) { return Array.from(new Map(items.map((m)=>[`${matchKey(m.home,m.away)}|${(m.kickoffAt || '').slice(0,10)}`,m])).values()).sort(sortBracket); }
 
@@ -102,9 +102,9 @@ export function WorldCupPage() {
   async function importFinishedGames(){
     setSyncing(true); setSyncMsg(null);
     try {
-      const res = await fetch('/api/world-cup/fifa-pmsr-sync?dryRun=false&onlyMissing=true&mode=both&limit=all&all=true&maxMatchNumber=104',{cache:'no-store'});
+      const res = await fetch('/api/world-cup/fifa-pmsr-sync?dryRun=false&onlyMissing=true&mode=both&limit=5&maxMatchNumber=104',{cache:'no-store'});
       const json = await res.json().catch(()=>({}));
-      setSyncMsg(res.ok ? `Importação concluída: ${json.importedOk ?? 0} PDFs importados, ${json.skipped ?? 0} já existiam, ${json.totalSavedValues ?? 0} valores salvos.` : 'Não foi possível importar agora. Veja a rota de teste.');
+      setSyncMsg(res.ok ? `Importação em lote concluída: ${json.importedOk ?? 0} PDFs processados, ${json.skipped ?? 0} já existiam, ${json.totalSavedValues ?? 0} valores salvos. Clique novamente para processar o próximo lote.` : 'Não foi possível importar agora. Use a rota de teste em lote menor.');
       await load();
     } finally { setSyncing(false); }
   }
