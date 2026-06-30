@@ -1,0 +1,3 @@
+Teste de acesso do ChatGPT ao repositório Cantos.
+Data: 2026-06-29
+Objetivo: validar permissão de escrita no GitHub.
