@@ -5,279 +5,54 @@ export const dynamic = 'force-dynamic';
 
 const WORLD_CUP_2026_KEY = 'world_cup_2026';
 
-type MatchRow = { id: number; home_team_id: number | null; away_team_id: number | null; home_team_name: string; away_team_name: string; fixture_key: string; kickoff_at?: string | null };
+type MatchRow = { id: number; home_team_id: number | null; away_team_id: number | null; home_team_name: string; away_team_name: string; fixture_key: string; fifa_match_id?: string | null; kickoff_at?: string | null };
 type ExtractedStat = { metricKey: string; metricName: string; home: number | null; away: number | null; period: string; parser: string; rawLine?: string };
 type MetricDefinition = { key: string; name: string; aliases: string[]; max?: number; percent?: boolean; decimal?: boolean };
-
 type TeamInfo = { fifa: string; code: string };
 
 const TEAMS: Record<string, TeamInfo> = {
-  bra: { fifa: 'Brazil', code: 'BRA' }, brazil: { fifa: 'Brazil', code: 'BRA' }, brasil: { fifa: 'Brazil', code: 'BRA' },
-  sco: { fifa: 'Scotland', code: 'SCO' }, scotland: { fifa: 'Scotland', code: 'SCO' }, escocia: { fifa: 'Scotland', code: 'SCO' },
-  cze: { fifa: 'Czechia', code: 'CZE' }, czechia: { fifa: 'Czechia', code: 'CZE' }, tchequia: { fifa: 'Czechia', code: 'CZE' }, 'czech republic': { fifa: 'Czechia', code: 'CZE' },
-  mex: { fifa: 'Mexico', code: 'MEX' }, mexico: { fifa: 'Mexico', code: 'MEX' },
-  kor: { fifa: 'Korea Republic', code: 'KOR' }, korea: { fifa: 'Korea Republic', code: 'KOR' }, 'korea republic': { fifa: 'Korea Republic', code: 'KOR' }, 'south korea': { fifa: 'Korea Republic', code: 'KOR' }, 'coreia do sul': { fifa: 'Korea Republic', code: 'KOR' },
-  rsa: { fifa: 'South Africa', code: 'RSA' }, zaf: { fifa: 'South Africa', code: 'RSA' }, 'south africa': { fifa: 'South Africa', code: 'RSA' }, 'africa do sul': { fifa: 'South Africa', code: 'RSA' },
-  mar: { fifa: 'Morocco', code: 'MAR' }, morocco: { fifa: 'Morocco', code: 'MAR' }, marrocos: { fifa: 'Morocco', code: 'MAR' },
-  hai: { fifa: 'Haiti', code: 'HAI' }, haiti: { fifa: 'Haiti', code: 'HAI' },
-  sui: { fifa: 'Switzerland', code: 'SUI' }, switzerland: { fifa: 'Switzerland', code: 'SUI' }, suica: { fifa: 'Switzerland', code: 'SUI' },
-  can: { fifa: 'Canada', code: 'CAN' }, canada: { fifa: 'Canada', code: 'CAN' },
-  usa: { fifa: 'USA', code: 'USA' }, eua: { fifa: 'USA', code: 'USA' }, 'united states': { fifa: 'USA', code: 'USA' },
-  tur: { fifa: 'Turkiye', code: 'TUR' }, turkiye: { fifa: 'Turkiye', code: 'TUR' }, turkey: { fifa: 'Turkiye', code: 'TUR' }, turquia: { fifa: 'Turkiye', code: 'TUR' },
-  par: { fifa: 'Paraguay', code: 'PAR' }, paraguay: { fifa: 'Paraguay', code: 'PAR' }, paraguai: { fifa: 'Paraguay', code: 'PAR' },
-  aus: { fifa: 'Australia', code: 'AUS' }, australia: { fifa: 'Australia', code: 'AUS' },
-  nor: { fifa: 'Norway', code: 'NOR' }, norway: { fifa: 'Norway', code: 'NOR' }, noruega: { fifa: 'Norway', code: 'NOR' },
-  fra: { fifa: 'France', code: 'FRA' }, france: { fifa: 'France', code: 'FRA' }, franca: { fifa: 'France', code: 'FRA' },
-  sen: { fifa: 'Senegal', code: 'SEN' }, senegal: { fifa: 'Senegal', code: 'SEN' },
-  irq: { fifa: 'Iraq', code: 'IRQ' }, iraq: { fifa: 'Iraq', code: 'IRQ' }, iraque: { fifa: 'Iraq', code: 'IRQ' },
-  uru: { fifa: 'Uruguay', code: 'URU' }, uruguay: { fifa: 'Uruguay', code: 'URU' }, uruguai: { fifa: 'Uruguay', code: 'URU' },
-  esp: { fifa: 'Spain', code: 'ESP' }, spain: { fifa: 'Spain', code: 'ESP' }, espanha: { fifa: 'Spain', code: 'ESP' },
-  ksa: { fifa: 'Saudi Arabia', code: 'KSA' }, 'saudi arabia': { fifa: 'Saudi Arabia', code: 'KSA' }, 'arabia saudita': { fifa: 'Saudi Arabia', code: 'KSA' },
-  cpv: { fifa: 'Cape Verde Islands', code: 'CPV' }, 'cape verde': { fifa: 'Cape Verde Islands', code: 'CPV' }, 'cabo verde': { fifa: 'Cape Verde Islands', code: 'CPV' },
-  egy: { fifa: 'Egypt', code: 'EGY' }, egypt: { fifa: 'Egypt', code: 'EGY' }, egito: { fifa: 'Egypt', code: 'EGY' },
-  irn: { fifa: 'IR Iran', code: 'IRN' }, iran: { fifa: 'IR Iran', code: 'IRN' }, ira: { fifa: 'IR Iran', code: 'IRN' }, 'ir iran': { fifa: 'IR Iran', code: 'IRN' },
-  nzl: { fifa: 'New Zealand', code: 'NZL' }, 'new zealand': { fifa: 'New Zealand', code: 'NZL' }, 'nova zelandia': { fifa: 'New Zealand', code: 'NZL' },
-  bel: { fifa: 'Belgium', code: 'BEL' }, belgium: { fifa: 'Belgium', code: 'BEL' }, belgica: { fifa: 'Belgium', code: 'BEL' },
-  cro: { fifa: 'Croatia', code: 'CRO' }, croatia: { fifa: 'Croatia', code: 'CRO' }, croacia: { fifa: 'Croatia', code: 'CRO' },
-  gha: { fifa: 'Ghana', code: 'GHA' }, ghana: { fifa: 'Ghana', code: 'GHA' }, gana: { fifa: 'Ghana', code: 'GHA' },
-  pan: { fifa: 'Panama', code: 'PAN' }, panama: { fifa: 'Panama', code: 'PAN' },
-  eng: { fifa: 'England', code: 'ENG' }, england: { fifa: 'England', code: 'ENG' }, inglaterra: { fifa: 'England', code: 'ENG' },
-  col: { fifa: 'Colombia', code: 'COL' }, colombia: { fifa: 'Colombia', code: 'COL' },
-  por: { fifa: 'Portugal', code: 'POR' }, portugal: { fifa: 'Portugal', code: 'POR' },
-  cod: { fifa: 'Congo DR', code: 'COD' }, 'congo dr': { fifa: 'Congo DR', code: 'COD' }, 'rd congo': { fifa: 'Congo DR', code: 'COD' }, 'dr congo': { fifa: 'Congo DR', code: 'COD' },
-  uzb: { fifa: 'Uzbekistan', code: 'UZB' }, uzbekistan: { fifa: 'Uzbekistan', code: 'UZB' }, uzbequistao: { fifa: 'Uzbekistan', code: 'UZB' },
-  alg: { fifa: 'Algeria', code: 'ALG' }, algeria: { fifa: 'Algeria', code: 'ALG' }, argelia: { fifa: 'Algeria', code: 'ALG' },
-  aut: { fifa: 'Austria', code: 'AUT' }, austria: { fifa: 'Austria', code: 'AUT' },
-  jor: { fifa: 'Jordan', code: 'JOR' }, jordan: { fifa: 'Jordan', code: 'JOR' }, jordania: { fifa: 'Jordan', code: 'JOR' },
-  arg: { fifa: 'Argentina', code: 'ARG' }, argentina: { fifa: 'Argentina', code: 'ARG' },
-  jpn: { fifa: 'Japan', code: 'JPN' }, japan: { fifa: 'Japan', code: 'JPN' }, japao: { fifa: 'Japan', code: 'JPN' },
-  swe: { fifa: 'Sweden', code: 'SWE' }, sweden: { fifa: 'Sweden', code: 'SWE' }, suecia: { fifa: 'Sweden', code: 'SWE' },
-  tun: { fifa: 'Tunisia', code: 'TUN' }, tunisia: { fifa: 'Tunisia', code: 'TUN' },
-  ned: { fifa: 'Netherlands', code: 'NED' }, netherlands: { fifa: 'Netherlands', code: 'NED' }, holanda: { fifa: 'Netherlands', code: 'NED' },
-  ger: { fifa: 'Germany', code: 'GER' }, germany: { fifa: 'Germany', code: 'GER' }, alemanha: { fifa: 'Germany', code: 'GER' },
-  ecu: { fifa: 'Ecuador', code: 'ECU' }, ecuador: { fifa: 'Ecuador', code: 'ECU' }, equador: { fifa: 'Ecuador', code: 'ECU' },
-  cuw: { fifa: 'Curacao', code: 'CUW' }, curacao: { fifa: 'Curacao', code: 'CUW' }, curacau: { fifa: 'Curacao', code: 'CUW' },
-  civ: { fifa: "Cote d'Ivoire", code: 'CIV' }, 'cote d ivoire': { fifa: "Cote d'Ivoire", code: 'CIV' }, 'ivory coast': { fifa: "Cote d'Ivoire", code: 'CIV' }, 'costa do marfim': { fifa: "Cote d'Ivoire", code: 'CIV' },
-  qat: { fifa: 'Qatar', code: 'QAT' }, qatar: { fifa: 'Qatar', code: 'QAT' }, catar: { fifa: 'Qatar', code: 'QAT' },
-  bih: { fifa: 'Bosnia and Herzegovina', code: 'BIH' }, 'bosnia and herzegovina': { fifa: 'Bosnia and Herzegovina', code: 'BIH' }, 'bosnia e herzegovina': { fifa: 'Bosnia and Herzegovina', code: 'BIH' },
+  bra:{fifa:'Brazil',code:'BRA'}, brazil:{fifa:'Brazil',code:'BRA'}, brasil:{fifa:'Brazil',code:'BRA'}, jpn:{fifa:'Japan',code:'JPN'}, japan:{fifa:'Japan',code:'JPN'}, japao:{fifa:'Japan',code:'JPN'},
+  civ:{fifa:"Cote d'Ivoire",code:'CIV'}, 'cote d ivoire':{fifa:"Cote d'Ivoire",code:'CIV'}, 'ivory coast':{fifa:"Cote d'Ivoire",code:'CIV'}, 'costa do marfim':{fifa:"Cote d'Ivoire",code:'CIV'}, nor:{fifa:'Norway',code:'NOR'}, norway:{fifa:'Norway',code:'NOR'}, noruega:{fifa:'Norway',code:'NOR'},
+  fra:{fifa:'France',code:'FRA'}, france:{fifa:'France',code:'FRA'}, franca:{fifa:'France',code:'FRA'}, swe:{fifa:'Sweden',code:'SWE'}, sweden:{fifa:'Sweden',code:'SWE'}, suecia:{fifa:'Sweden',code:'SWE'}, mex:{fifa:'Mexico',code:'MEX'}, mexico:{fifa:'Mexico',code:'MEX'}, ecu:{fifa:'Ecuador',code:'ECU'}, ecuador:{fifa:'Ecuador',code:'ECU'}, equador:{fifa:'Ecuador',code:'ECU'},
+  eng:{fifa:'England',code:'ENG'}, england:{fifa:'England',code:'ENG'}, inglaterra:{fifa:'England',code:'ENG'}, cod:{fifa:'Congo DR',code:'COD'}, 'congo dr':{fifa:'Congo DR',code:'COD'}, 'rd congo':{fifa:'Congo DR',code:'COD'}, 'dr congo':{fifa:'Congo DR',code:'COD'},
+  bel:{fifa:'Belgium',code:'BEL'}, belgium:{fifa:'Belgium',code:'BEL'}, belgica:{fifa:'Belgium',code:'BEL'}, sen:{fifa:'Senegal',code:'SEN'}, senegal:{fifa:'Senegal',code:'SEN'}, usa:{fifa:'USA',code:'USA'}, eua:{fifa:'USA',code:'USA'}, 'united states':{fifa:'USA',code:'USA'}, bih:{fifa:'Bosnia and Herzegovina',code:'BIH'}, 'bosnia and herzegovina':{fifa:'Bosnia and Herzegovina',code:'BIH'}, 'bosnia e herzegovina':{fifa:'Bosnia and Herzegovina',code:'BIH'}, bosnia:{fifa:'Bosnia and Herzegovina',code:'BIH'},
+  esp:{fifa:'Spain',code:'ESP'}, spain:{fifa:'Spain',code:'ESP'}, espanha:{fifa:'Spain',code:'ESP'}, aut:{fifa:'Austria',code:'AUT'}, austria:{fifa:'Austria',code:'AUT'}, por:{fifa:'Portugal',code:'POR'}, portugal:{fifa:'Portugal',code:'POR'}, cro:{fifa:'Croatia',code:'CRO'}, croatia:{fifa:'Croatia',code:'CRO'}, croacia:{fifa:'Croatia',code:'CRO'},
+  sui:{fifa:'Switzerland',code:'SUI'}, switzerland:{fifa:'Switzerland',code:'SUI'}, suica:{fifa:'Switzerland',code:'SUI'}, alg:{fifa:'Algeria',code:'ALG'}, algeria:{fifa:'Algeria',code:'ALG'}, argelia:{fifa:'Algeria',code:'ALG'}, aus:{fifa:'Australia',code:'AUS'}, australia:{fifa:'Australia',code:'AUS'}, egy:{fifa:'Egypt',code:'EGY'}, egypt:{fifa:'Egypt',code:'EGY'}, egito:{fifa:'Egypt',code:'EGY'},
+  arg:{fifa:'Argentina',code:'ARG'}, argentina:{fifa:'Argentina',code:'ARG'}, cpv:{fifa:'Cape Verde Islands',code:'CPV'}, 'cape verde':{fifa:'Cape Verde Islands',code:'CPV'}, 'cabo verde':{fifa:'Cape Verde Islands',code:'CPV'}, col:{fifa:'Colombia',code:'COL'}, colombia:{fifa:'Colombia',code:'COL'}, gha:{fifa:'Ghana',code:'GHA'}, ghana:{fifa:'Ghana',code:'GHA'}, gana:{fifa:'Ghana',code:'GHA'},
+  can:{fifa:'Canada',code:'CAN'}, canada:{fifa:'Canada',code:'CAN'}, mar:{fifa:'Morocco',code:'MAR'}, morocco:{fifa:'Morocco',code:'MAR'}, marrocos:{fifa:'Morocco',code:'MAR'}, ned:{fifa:'Netherlands',code:'NED'}, netherlands:{fifa:'Netherlands',code:'NED'}, holanda:{fifa:'Netherlands',code:'NED'}, ger:{fifa:'Germany',code:'GER'}, germany:{fifa:'Germany',code:'GER'}, alemanha:{fifa:'Germany',code:'GER'}, par:{fifa:'Paraguay',code:'PAR'}, paraguay:{fifa:'Paraguay',code:'PAR'}, paraguai:{fifa:'Paraguay',code:'PAR'},
+  kor:{fifa:'Korea Republic',code:'KOR'}, korea:{fifa:'Korea Republic',code:'KOR'}, 'korea republic':{fifa:'Korea Republic',code:'KOR'}, 'south korea':{fifa:'Korea Republic',code:'KOR'}, 'coreia do sul':{fifa:'Korea Republic',code:'KOR'}, cze:{fifa:'Czechia',code:'CZE'}, czechia:{fifa:'Czechia',code:'CZE'}, tchequia:{fifa:'Czechia',code:'CZE'}, 'czech republic':{fifa:'Czechia',code:'CZE'}, rsa:{fifa:'South Africa',code:'RSA'}, zaf:{fifa:'South Africa',code:'RSA'}, 'south africa':{fifa:'South Africa',code:'RSA'}, 'africa do sul':{fifa:'South Africa',code:'RSA'},
+  hai:{fifa:'Haiti',code:'HAI'}, haiti:{fifa:'Haiti',code:'HAI'}, tur:{fifa:'Turkiye',code:'TUR'}, turkiye:{fifa:'Turkiye',code:'TUR'}, turkey:{fifa:'Turkiye',code:'TUR'}, turquia:{fifa:'Turkiye',code:'TUR'}, irq:{fifa:'Iraq',code:'IRQ'}, iraq:{fifa:'Iraq',code:'IRQ'}, iraque:{fifa:'Iraq',code:'IRQ'}, uru:{fifa:'Uruguay',code:'URU'}, uruguay:{fifa:'Uruguay',code:'URU'}, uruguai:{fifa:'Uruguay',code:'URU'}, ksa:{fifa:'Saudi Arabia',code:'KSA'}, 'saudi arabia':{fifa:'Saudi Arabia',code:'KSA'}, 'arabia saudita':{fifa:'Saudi Arabia',code:'KSA'}, irn:{fifa:'IR Iran',code:'IRN'}, iran:{fifa:'IR Iran',code:'IRN'}, ira:{fifa:'IR Iran',code:'IRN'}, 'ir iran':{fifa:'IR Iran',code:'IRN'}, nzl:{fifa:'New Zealand',code:'NZL'}, 'new zealand':{fifa:'New Zealand',code:'NZL'}, 'nova zelandia':{fifa:'New Zealand',code:'NZL'}, pan:{fifa:'Panama',code:'PAN'}, panama:{fifa:'Panama',code:'PAN'}, uzb:{fifa:'Uzbekistan',code:'UZB'}, uzbekistan:{fifa:'Uzbekistan',code:'UZB'}, uzbequistao:{fifa:'Uzbekistan',code:'UZB'}, jor:{fifa:'Jordan',code:'JOR'}, jordan:{fifa:'Jordan',code:'JOR'}, jordania:{fifa:'Jordan',code:'JOR'}, tun:{fifa:'Tunisia',code:'TUN'}, tunisia:{fifa:'Tunisia',code:'TUN'}, qat:{fifa:'Qatar',code:'QAT'}, qatar:{fifa:'Qatar',code:'QAT'}, catar:{fifa:'Qatar',code:'QAT'}, cuw:{fifa:'Curacao',code:'CUW'}, curacao:{fifa:'Curacao',code:'CUW'}, curacau:{fifa:'Curacao',code:'CUW'},
 };
-
 const CODE_ALIASES: Record<string, TeamInfo> = Object.fromEntries(Object.values(TEAMS).map((team) => [team.code, team]));
-
 const METRICS: MetricDefinition[] = [
-  { key: 'possession', name: 'Posse de bola', aliases: ['possession', 'posse de bola', 'ball possession'], max: 100, percent: true },
-  { key: 'shots', name: 'Finalizações', aliases: ['total attempts', 'total shots', 'shots', 'attempts', 'finalizacoes', 'finalizações'], max: 80 },
-  { key: 'shots_on_target', name: 'Finalizações no gol', aliases: ['attempts on target', 'shots on target', 'shots goal', 'on target', 'chutes no gol', 'finalizacoes no gol'], max: 50 },
-  { key: 'corners', name: 'Escanteios', aliases: ['corners', 'corner kicks', 'escanteios'], max: 30 },
-  { key: 'yellow_cards', name: 'Cartões amarelos', aliases: ['yellow cards', 'cartoes amarelos'], max: 15 },
-  { key: 'red_cards', name: 'Cartões vermelhos', aliases: ['red cards', 'cartoes vermelhos'], max: 5 },
-  { key: 'fouls', name: 'Faltas', aliases: ['fouls committed', 'fouls', 'faltas'], max: 60 },
-  { key: 'offsides', name: 'Impedimentos', aliases: ['offsides', 'impedimentos'], max: 20 },
-  { key: 'passes', name: 'Passes totais', aliases: ['total passes', 'passes', 'passes totais'], max: 1500 },
-  { key: 'pass_accuracy', name: 'Precisão de passes', aliases: ['passing accuracy', 'pass accuracy', 'precisao de passes'], max: 100, percent: true },
-  { key: 'goalkeeper_saves', name: 'Defesas do goleiro', aliases: ['goalkeeper saves', 'saves', 'defesas do goleiro'], max: 30 },
-  { key: 'expected_goals', name: 'Gols esperados (xG)', aliases: ['expected goals', 'xg', 'gols esperados'], max: 10, decimal: true },
-  { key: 'crosses', name: 'Cruzamentos', aliases: ['crosses', 'cruzamentos'], max: 80 },
-  { key: 'tackles', name: 'Desarmes', aliases: ['tackles', 'desarmes'], max: 80 },
-  { key: 'interceptions', name: 'Interceptações', aliases: ['interceptions', 'interceptacoes'], max: 80 },
-  { key: 'recoveries', name: 'Recuperações', aliases: ['recoveries', 'recuperacoes'], max: 120 },
-  { key: 'clearances', name: 'Cortes defensivos', aliases: ['clearances', 'cortes'], max: 100 },
+  { key:'possession', name:'Posse de bola', aliases:['possession','ball possession','posse de bola'], max:100, percent:true }, { key:'shots', name:'Finalizações', aliases:['total attempts','total shots','shots','attempts','finalizacoes','finalizações'], max:80 }, { key:'shots_on_target', name:'Finalizações no gol', aliases:['attempts on target','shots on target','on target','chutes no gol','finalizacoes no gol'], max:50 }, { key:'corners', name:'Escanteios', aliases:['corners','corner kicks','escanteios'], max:40 }, { key:'yellow_cards', name:'Cartões amarelos', aliases:['yellow cards','cartoes amarelos'], max:15 }, { key:'red_cards', name:'Cartões vermelhos', aliases:['red cards','cartoes vermelhos'], max:5 }, { key:'fouls', name:'Faltas', aliases:['fouls committed','fouls','faltas'], max:60 }, { key:'offsides', name:'Impedimentos', aliases:['offsides','impedimentos'], max:20 }, { key:'passes', name:'Passes totais', aliases:['total passes','passes','passes totais'], max:1500 }, { key:'pass_accuracy', name:'Precisão de passes', aliases:['passing accuracy','pass accuracy','precisao de passes'], max:100, percent:true }, { key:'goalkeeper_saves', name:'Defesas do goleiro', aliases:['goalkeeper saves','saves','defesas do goleiro'], max:30 }, { key:'expected_goals', name:'Gols esperados (xG)', aliases:['expected goals','xg','gols esperados'], max:10, decimal:true }, { key:'crosses', name:'Cruzamentos', aliases:['crosses','cruzamentos'], max:90 }, { key:'tackles', name:'Desarmes', aliases:['tackles','desarmes'], max:90 }, { key:'interceptions', name:'Interceptações', aliases:['interceptions','interceptacoes'], max:90 }, { key:'recoveries', name:'Recuperações', aliases:['recoveries','recuperacoes'], max:140 }, { key:'clearances', name:'Cortes defensivos', aliases:['clearances','cortes'], max:120 },
 ];
 
-function normalize(value: unknown) {
-  return String(value ?? '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9.,%]+/g, ' ').replace(/\s+/g, ' ').trim();
-}
-
-function textKey(value: unknown) {
-  return normalize(value).replace(/[.,%]/g, '').trim();
-}
-
-function teamInfo(value: unknown): TeamInfo {
-  const key = textKey(value);
-  return TEAMS[key] ?? CODE_ALIASES[String(value ?? '').toUpperCase()] ?? { fifa: String(value ?? '').trim(), code: key.toUpperCase().slice(0, 3) || 'UNK' };
-}
-
-function numberValue(value: string | undefined) {
-  if (!value) return null;
-  const parsed = Number(value.replace('%', '').replace(',', '.'));
-  return Number.isFinite(parsed) ? parsed : null;
-}
-
-function isPlausible(metric: MetricDefinition, value: number | null) {
-  return value !== null && value >= 0 && (metric.max === undefined || value <= metric.max);
-}
-
-function extractCodesFromUrl(url: string) {
-  const fileName = decodeURIComponent(url.split('/').pop() ?? '').toUpperCase();
-  const match = fileName.match(/M(\d+)[-_ ]+([A-Z]{3})[-_ ]+V[-_ ]+([A-Z]{3})/i) ?? fileName.match(/([A-Z]{3})[-_ ]+V[-_ ]+([A-Z]{3})/i);
-  if (!match) return null;
-  const hasMatchNumber = match.length === 4;
-  const matchNumber = hasMatchNumber ? Number(match[1]) : null;
-  const homeCode = hasMatchNumber ? match[2] : match[1];
-  const awayCode = hasMatchNumber ? match[3] : match[2];
-  const home = CODE_ALIASES[homeCode] ?? teamInfo(homeCode);
-  const away = CODE_ALIASES[awayCode] ?? teamInfo(awayCode);
-  return { homeName: home.fifa, awayName: away.fifa, homeCode, awayCode, matchNumber, fileName };
-}
-
-async function parsePdfText(buffer: Buffer) {
-  try {
-    const pdfParse = (await import('pdf-parse')).default;
-    const parsed = await pdfParse(buffer);
-    return parsed.text || '';
-  } catch {
-    return '';
-  }
-}
-
-function numbersFromLine(line: string) {
-  return Array.from(line.matchAll(/-?\d+(?:[\.,]\d+)?\s*%?/g)).map((match) => numberValue(match[0])).filter((value): value is number => value !== null);
-}
-
-function lineContainsMetric(line: string, metric: MetricDefinition) {
-  const normalized = textKey(line);
-  return metric.aliases.some((alias) => normalized.includes(textKey(alias)));
-}
-
-function makeStat(metric: MetricDefinition, values: Array<number | null>, parser: string, rawLine: string): ExtractedStat | null {
-  const plausible = values.filter((value): value is number => isPlausible(metric, value));
-  if (plausible.length < 2) return null;
-  return { metricKey: metric.key, metricName: metric.name, home: plausible[0], away: plausible[1], period: 'match', parser, rawLine };
-}
-
-function mergeStats(stats: ExtractedStat[]) {
-  const byKey = new Map<string, ExtractedStat>();
-  for (const stat of stats) {
-    const key = `${stat.period}:${stat.metricKey}`;
-    if (!byKey.has(key)) byKey.set(key, stat);
-  }
-  return Array.from(byKey.values());
-}
-
-function extractStats(text: string) {
-  const lines = text.split(/\n+/).map((line) => line.replace(/\s+/g, ' ').trim()).filter(Boolean);
-  const compact = lines.join(' ');
-  const stats: ExtractedStat[] = [];
-
-  for (const metric of METRICS) {
-    for (const alias of metric.aliases) {
-      const escaped = alias.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s+');
-      const regex = new RegExp(`${escaped}[^0-9-]{0,90}(-?\\d+(?:[\\.,]\\d+)?\\s*%?)[^0-9-]{1,90}(-?\\d+(?:[\\.,]\\d+)?\\s*%?)`, 'i');
-      const found = compact.match(regex);
-      if (found) {
-        const stat = makeStat(metric, [numberValue(found[1]), numberValue(found[2])], 'plain-text', found[0]);
-        if (stat) stats.push(stat);
-        break;
-      }
-    }
-  }
-
-  for (let index = 0; index < lines.length; index += 1) {
-    const windowText = [lines[index - 1], lines[index], lines[index + 1]].filter(Boolean).join(' | ');
-    for (const metric of METRICS) {
-      if (!lineContainsMetric(windowText, metric)) continue;
-      const stat = makeStat(metric, numbersFromLine(windowText), 'line-window', windowText);
-      if (stat) stats.push(stat);
-    }
-  }
-
-  return { stats: mergeStats(stats), lineCount: lines.length, plainTextLength: text.length };
-}
-
-function slug(value: unknown) {
-  return textKey(value).replace(/\s+/g, '_') || 'unknown';
-}
-
-function rowText(row: MatchRow) {
-  return textKey(`${row.fixture_key} ${row.home_team_name} ${row.away_team_name}`);
-}
-
-function matchScore(row: MatchRow, homeName: string, awayName: string, matchNumber: number | null) {
-  const text = rowText(row);
-  const home = teamInfo(homeName);
-  const away = teamInfo(awayName);
-  let score = 0;
-  if (text.includes(textKey(home.fifa))) score += 4;
-  if (text.includes(textKey(away.fifa))) score += 4;
-  if (text.includes(textKey(home.code))) score += 2;
-  if (text.includes(textKey(away.code))) score += 2;
-  if (matchNumber && text.includes(`m${matchNumber}`)) score += 2;
-  return score;
-}
-
-async function ensureTeam(name: string, code: string) {
-  const existing = await sql`SELECT id FROM world_cup_teams WHERE competition_key = ${WORLD_CUP_2026_KEY} AND fifa_code = ${code} LIMIT 1`;
-  if (existing[0]?.id) {
-    await sql`UPDATE world_cup_teams SET name = ${name}, source_key = 'fifa', source_payload = ${JSON.stringify({ code, name, importedBy: 'pmsr-3' })}::jsonb, source_updated_at = NOW(), updated_at = NOW() WHERE id = ${Number(existing[0].id)}`;
-    return Number(existing[0].id);
-  }
-  const rows = await sql`
-    INSERT INTO world_cup_teams (competition_key, fifa_code, name, source_key, source_payload, source_updated_at)
-    VALUES (${WORLD_CUP_2026_KEY}, ${code}, ${name}, 'fifa', ${JSON.stringify({ code, name, importedBy: 'pmsr-3' })}::jsonb, NOW())
-    RETURNING id
-  `;
-  return Number(rows[0]?.id);
-}
-
-async function createOrUpdateFifaPdfMatch(homeName: string, awayName: string, homeCode: string, awayCode: string, matchNumber: number | null, pdfUrl: string): Promise<MatchRow> {
-  const homeTeamId = await ensureTeam(homeName, homeCode);
-  const awayTeamId = await ensureTeam(awayName, awayCode);
-  const fixtureKey = `fifa:pdf:M${matchNumber ?? 'unknown'}:${slug(homeName)}:${slug(awayName)}`;
-  const existing = await sql`SELECT id FROM world_cup_matches WHERE competition_key = ${WORLD_CUP_2026_KEY} AND fixture_key = ${fixtureKey} LIMIT 1`;
-  if (existing[0]?.id) {
-    const rows = await sql`
-      UPDATE world_cup_matches SET fifa_match_id = ${matchNumber ? `M${matchNumber}` : null}, home_team_id = ${homeTeamId}, away_team_id = ${awayTeamId}, home_team_name = ${homeName}, away_team_name = ${awayName}, source_key = 'fifa', source_payload = ${JSON.stringify({ pdfUrl, importedBy: 'pmsr-3', reconciled: true })}::jsonb, source_updated_at = NOW(), updated_at = NOW()
-      WHERE id = ${Number(existing[0].id)}
-      RETURNING id, home_team_id, away_team_id, home_team_name, away_team_name, fixture_key, kickoff_at
-    `;
-    return rows[0] as MatchRow;
-  }
-  const rows = await sql`
-    INSERT INTO world_cup_matches (competition_key, fixture_key, fifa_match_id, home_team_id, away_team_id, home_team_name, away_team_name, stage, round_name, status, source_key, source_payload, source_updated_at)
-    VALUES (${WORLD_CUP_2026_KEY}, ${fixtureKey}, ${matchNumber ? `M${matchNumber}` : null}, ${homeTeamId}, ${awayTeamId}, ${homeName}, ${awayName}, 'Copa do Mundo 2026', 'FIFA PMSR', 'Fim', 'fifa', ${JSON.stringify({ pdfUrl, importedBy: 'pmsr-3', reconciled: true })}::jsonb, NOW())
-    RETURNING id, home_team_id, away_team_id, home_team_name, away_team_name, fixture_key, kickoff_at
-  `;
-  return rows[0] as MatchRow;
-}
-
-async function findOrCreateMatch(homeName: string, awayName: string, homeCode: string, awayCode: string, matchNumber: number | null, pdfUrl: string, allowCreate: boolean): Promise<{ match: MatchRow | null; created: boolean; bestScore: number }> {
-  const rows = (await sql`
-    SELECT id, home_team_id, away_team_id, home_team_name, away_team_name, fixture_key, kickoff_at
-    FROM world_cup_matches
-    WHERE competition_key = ${WORLD_CUP_2026_KEY}
-    ORDER BY kickoff_at DESC NULLS LAST, id DESC
-    LIMIT 600
-  `) as MatchRow[];
-  const ranked = rows.map((row) => ({ row, score: matchScore(row, homeName, awayName, matchNumber) })).sort((a, b) => b.score - a.score);
-  if (ranked[0] && ranked[0].score >= 8) return { match: ranked[0].row, created: false, bestScore: ranked[0].score };
-  if (!allowCreate) return { match: null, created: false, bestScore: ranked[0]?.score ?? 0 };
-  return { match: await createOrUpdateFifaPdfMatch(homeName, awayName, homeCode, awayCode, matchNumber, pdfUrl), created: true, bestScore: ranked[0]?.score ?? 0 };
-}
-
-async function saveOne(matchId: number, teamId: number | null, stat: ExtractedStat, value: number | null, pdfUrl: string, side: 'home' | 'away') {
-  if (!teamId || value === null) return 0;
-  const payload = { pdfUrl, parser: stat.parser, rawLine: stat.rawLine, importedBy: 'pmsr-3', side };
-  await sql`
-    DELETE FROM world_cup_match_statistics
-    WHERE match_id = ${matchId} AND team_id = ${teamId} AND period = ${stat.period} AND metric_key = ${stat.metricKey} AND source_key = 'fifa'
-  `;
-  await sql`
-    INSERT INTO world_cup_match_statistics (match_id, team_id, period, metric_key, metric_name, value_numeric, source_key, source_payload, source_updated_at)
-    VALUES (${matchId}, ${teamId}, ${stat.period}, ${stat.metricKey}, ${stat.metricName}, ${value}, 'fifa', ${JSON.stringify(payload)}::jsonb, NOW())
-  `;
-  return 1;
-}
-
-async function saveStat(match: MatchRow, stat: ExtractedStat, homeName: string, awayName: string, pdfUrl: string) {
-  const home = teamInfo(homeName);
-  const away = teamInfo(awayName);
-  const reversed = textKey(match.home_team_name) === textKey(away.fifa) && textKey(match.away_team_name) === textKey(home.fifa);
-  const homeTeamId = reversed ? match.away_team_id : match.home_team_id;
-  const awayTeamId = reversed ? match.home_team_id : match.away_team_id;
-  const homeValue = reversed ? stat.away : stat.home;
-  const awayValue = reversed ? stat.home : stat.away;
-  return (await saveOne(match.id, homeTeamId, stat, homeValue, pdfUrl, 'home')) + (await saveOne(match.id, awayTeamId, stat, awayValue, pdfUrl, 'away'));
-}
+function normalize(value: unknown) { return String(value ?? '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9.,%]+/g, ' ').replace(/\s+/g, ' ').trim(); }
+function textKey(value: unknown) { return normalize(value).replace(/[.,%]/g, '').trim(); }
+function teamInfo(value: unknown): TeamInfo { const key = textKey(value); return TEAMS[key] ?? CODE_ALIASES[String(value ?? '').toUpperCase()] ?? { fifa: String(value ?? '').trim(), code: key.toUpperCase().slice(0, 3) || 'UNK' }; }
+function numberValue(value: string | undefined) { if (!value) return null; const parsed = Number(value.replace('%', '').replace(',', '.')); return Number.isFinite(parsed) ? parsed : null; }
+function isPlausible(metric: MetricDefinition, value: number | null) { return value !== null && value >= 0 && (metric.max === undefined || value <= metric.max); }
+function slug(value: unknown) { return textKey(value).replace(/\s+/g, '_') || 'unknown'; }
+function rowText(row: MatchRow) { return textKey(`${row.fixture_key} ${row.fifa_match_id ?? ''} ${row.home_team_name} ${row.away_team_name}`); }
+function fileNameFromUrl(url: string) { return decodeURIComponent(url.split('/').pop() ?? '').replace(/\.pdf(?:\?.*)?$/i, '').trim(); }
+function matchIdFromNumber(matchNumber: number | null) { return matchNumber ? `M${matchNumber}` : null; }
+function extractCodesFromUrl(url: string) { const fileName = fileNameFromUrl(url).toUpperCase(); const match = fileName.match(/M(\d+)[-_ ]+([A-Z]{3})[-_ ]+V[-_ ]+([A-Z]{3})/i) ?? fileName.match(/([A-Z]{3})[-_ ]+V[-_ ]+([A-Z]{3})/i); if (!match) return null; const hasMatchNumber = match.length === 4; const matchNumber = hasMatchNumber ? Number(match[1]) : null; const homeCode = hasMatchNumber ? match[2] : match[1]; const awayCode = hasMatchNumber ? match[3] : match[2]; const home = CODE_ALIASES[homeCode] ?? teamInfo(homeCode); const away = CODE_ALIASES[awayCode] ?? teamInfo(awayCode); return { homeName: home.fifa, awayName: away.fifa, homeCode, awayCode, matchNumber, fileName }; }
+async function parsePdfText(buffer: Buffer) { try { const pdfParse = (await import('pdf-parse')).default; const parsed = await pdfParse(buffer); return parsed.text || ''; } catch { return ''; } }
+function numbersFromLine(line: string) { return Array.from(line.matchAll(/-?\d+(?:[\.,]\d+)?\s*%?/g)).map((match) => numberValue(match[0])).filter((value): value is number => value !== null); }
+function lineContainsMetric(line: string, metric: MetricDefinition) { const normalized = textKey(line); return metric.aliases.some((alias) => normalized.includes(textKey(alias))); }
+function makeStat(metric: MetricDefinition, values: Array<number | null>, parser: string, rawLine: string): ExtractedStat | null { const plausible = values.filter((value): value is number => isPlausible(metric, value)); if (plausible.length < 2) return null; return { metricKey: metric.key, metricName: metric.name, home: plausible[0], away: plausible[1], period: 'match', parser, rawLine }; }
+function mergeStats(stats: ExtractedStat[]) { const byKey = new Map<string, ExtractedStat>(); for (const stat of stats) { const key = `${stat.period}:${stat.metricKey}`; if (!byKey.has(key)) byKey.set(key, stat); } return Array.from(byKey.values()); }
+function extractStats(text: string) { const lines = text.split(/\n+/).map((line) => line.replace(/\s+/g, ' ').trim()).filter(Boolean); const compact = lines.join(' '); const stats: ExtractedStat[] = []; for (const metric of METRICS) { for (const alias of metric.aliases) { const escaped = alias.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s+'); const regex = new RegExp(`${escaped}[^0-9-]{0,90}(-?\\d+(?:[\\.,]\\d+)?\\s*%?)[^0-9-]{1,90}(-?\\d+(?:[\\.,]\\d+)?\\s*%?)`, 'i'); const found = compact.match(regex); if (found) { const stat = makeStat(metric, [numberValue(found[1]), numberValue(found[2])], 'plain-text', found[0]); if (stat) stats.push(stat); break; } } } for (let index = 0; index < lines.length; index += 1) { const windowText = [lines[index - 1], lines[index], lines[index + 1]].filter(Boolean).join(' | '); for (const metric of METRICS) { if (!lineContainsMetric(windowText, metric)) continue; const stat = makeStat(metric, numbersFromLine(windowText), 'line-window', windowText); if (stat) stats.push(stat); } } return { stats: mergeStats(stats), lineCount: lines.length, plainTextLength: text.length }; }
+function matchScore(row: MatchRow, homeName: string, awayName: string, matchNumber: number | null) { const text = rowText(row); const home = teamInfo(homeName); const away = teamInfo(awayName); let score = 0; if (matchNumber && text.includes(`m${matchNumber}`)) score += 20; if (text.includes(textKey(home.fifa))) score += 4; if (text.includes(textKey(away.fifa))) score += 4; if (text.includes(textKey(home.code))) score += 2; if (text.includes(textKey(away.code))) score += 2; return score; }
+async function ensureTeam(name: string, code: string) { const existing = await sql`SELECT id FROM world_cup_teams WHERE competition_key = ${WORLD_CUP_2026_KEY} AND fifa_code = ${code} LIMIT 1`; if (existing[0]?.id) { await sql`UPDATE world_cup_teams SET name = COALESCE(NULLIF(name,''), ${name}), source_key = 'fifa', source_payload = ${JSON.stringify({ code, name, importedBy: 'pmsr-match-number' })}::jsonb, source_updated_at = NOW(), updated_at = NOW() WHERE id = ${Number(existing[0].id)}`; return Number(existing[0].id); } const rows = await sql`INSERT INTO world_cup_teams (competition_key, fifa_code, name, source_key, source_payload, source_updated_at) VALUES (${WORLD_CUP_2026_KEY}, ${code}, ${name}, 'fifa', ${JSON.stringify({ code, name, importedBy: 'pmsr-match-number' })}::jsonb, NOW()) RETURNING id`; return Number(rows[0]?.id); }
+async function createOrUpdateFifaPdfMatch(homeName: string, awayName: string, homeCode: string, awayCode: string, matchNumber: number | null, pdfUrl: string): Promise<MatchRow> { const homeTeamId = await ensureTeam(homeName, homeCode); const awayTeamId = await ensureTeam(awayName, awayCode); const fifaMatchId = matchIdFromNumber(matchNumber); const fixtureKey = `fifa:pdf:${fifaMatchId ?? 'unknown'}:${slug(homeName)}:${slug(awayName)}`; if (fifaMatchId) { const exact = await sql`SELECT id FROM world_cup_matches WHERE competition_key = ${WORLD_CUP_2026_KEY} AND fifa_match_id = ${fifaMatchId} LIMIT 1`; if (exact[0]?.id) { const rows = await sql`UPDATE world_cup_matches SET home_team_id = COALESCE(home_team_id, ${homeTeamId}), away_team_id = COALESCE(away_team_id, ${awayTeamId}), source_payload = COALESCE(source_payload, '{}'::jsonb) || ${JSON.stringify({ pdfUrl, importedBy: 'pmsr-match-number', matchedBy: 'fifa_match_id' })}::jsonb, source_updated_at = NOW(), updated_at = NOW() WHERE id = ${Number(exact[0].id)} RETURNING id, home_team_id, away_team_id, home_team_name, away_team_name, fixture_key, fifa_match_id, kickoff_at`; return rows[0] as MatchRow; } }
+  const existing = await sql`SELECT id FROM world_cup_matches WHERE competition_key = ${WORLD_CUP_2026_KEY} AND fixture_key = ${fixtureKey} LIMIT 1`; if (existing[0]?.id) { const rows = await sql`UPDATE world_cup_matches SET fifa_match_id = ${fifaMatchId}, home_team_id = ${homeTeamId}, away_team_id = ${awayTeamId}, home_team_name = ${homeName}, away_team_name = ${awayName}, source_key = 'fifa', source_payload = ${JSON.stringify({ pdfUrl, importedBy: 'pmsr-match-number', reconciled: true })}::jsonb, source_updated_at = NOW(), updated_at = NOW() WHERE id = ${Number(existing[0].id)} RETURNING id, home_team_id, away_team_id, home_team_name, away_team_name, fixture_key, fifa_match_id, kickoff_at`; return rows[0] as MatchRow; }
+  const rows = await sql`INSERT INTO world_cup_matches (competition_key, fixture_key, fifa_match_id, home_team_id, away_team_id, home_team_name, away_team_name, stage, round_name, status, source_key, source_payload, source_updated_at) VALUES (${WORLD_CUP_2026_KEY}, ${fixtureKey}, ${fifaMatchId}, ${homeTeamId}, ${awayTeamId}, ${homeName}, ${awayName}, 'Copa do Mundo 2026', 'FIFA PMSR', 'Fim', 'fifa', ${JSON.stringify({ pdfUrl, importedBy: 'pmsr-match-number', createdFromPmsr: true })}::jsonb, NOW()) RETURNING id, home_team_id, away_team_id, home_team_name, away_team_name, fixture_key, fifa_match_id, kickoff_at`; return rows[0] as MatchRow; }
+async function findOrCreateMatch(homeName: string, awayName: string, homeCode: string, awayCode: string, matchNumber: number | null, pdfUrl: string, allowCreate: boolean): Promise<{ match: MatchRow | null; created: boolean; bestScore: number; matchedBy: string }> { const fifaMatchId = matchIdFromNumber(matchNumber); if (fifaMatchId) { const exact = (await sql`SELECT id, home_team_id, away_team_id, home_team_name, away_team_name, fixture_key, fifa_match_id, kickoff_at FROM world_cup_matches WHERE competition_key = ${WORLD_CUP_2026_KEY} AND fifa_match_id = ${fifaMatchId} LIMIT 1`) as MatchRow[]; if (exact[0]) return { match: exact[0], created: false, bestScore: 99, matchedBy: 'fifa_match_id' }; }
+  const rows = (await sql`SELECT id, home_team_id, away_team_id, home_team_name, away_team_name, fixture_key, fifa_match_id, kickoff_at FROM world_cup_matches WHERE competition_key = ${WORLD_CUP_2026_KEY} ORDER BY kickoff_at DESC NULLS LAST, id DESC LIMIT 700`) as MatchRow[]; const ranked = rows.map((row) => ({ row, score: matchScore(row, homeName, awayName, matchNumber) })).sort((a, b) => b.score - a.score); if (ranked[0] && ranked[0].score >= 8) return { match: ranked[0].row, created: false, bestScore: ranked[0].score, matchedBy: 'team_score' }; if (!allowCreate) return { match: null, created: false, bestScore: ranked[0]?.score ?? 0, matchedBy: 'none' }; return { match: await createOrUpdateFifaPdfMatch(homeName, awayName, homeCode, awayCode, matchNumber, pdfUrl), created: true, bestScore: ranked[0]?.score ?? 0, matchedBy: 'created_or_reconciled' }; }
+async function saveOne(matchId: number, teamId: number | null, stat: ExtractedStat, value: number | null, pdfUrl: string, side: 'home' | 'away') { if (!teamId || value === null) return 0; const payload = { pdfUrl, parser: stat.parser, rawLine: stat.rawLine, importedBy: 'pmsr-match-number', side }; await sql`DELETE FROM world_cup_match_statistics WHERE match_id = ${matchId} AND team_id = ${teamId} AND period = ${stat.period} AND metric_key = ${stat.metricKey} AND source_key = 'fifa'`; await sql`INSERT INTO world_cup_match_statistics (match_id, team_id, period, metric_key, metric_name, value_numeric, source_key, source_payload, source_updated_at) VALUES (${matchId}, ${teamId}, ${stat.period}, ${stat.metricKey}, ${stat.metricName}, ${value}, 'fifa', ${JSON.stringify(payload)}::jsonb, NOW())`; return 1; }
+async function saveStat(match: MatchRow, stat: ExtractedStat, homeName: string, awayName: string, pdfUrl: string) { const home = teamInfo(homeName); const away = teamInfo(awayName); const reversed = textKey(match.home_team_name) === textKey(away.fifa) && textKey(match.away_team_name) === textKey(home.fifa); const homeTeamId = reversed ? match.away_team_id : match.home_team_id; const awayTeamId = reversed ? match.home_team_id : match.away_team_id; const homeValue = reversed ? stat.away : stat.home; const awayValue = reversed ? stat.home : stat.away; return (await saveOne(match.id, homeTeamId, stat, homeValue, pdfUrl, 'home')) + (await saveOne(match.id, awayTeamId, stat, awayValue, pdfUrl, 'away')); }
 
 export async function POST(request: NextRequest) {
   try {
@@ -285,36 +60,17 @@ export async function POST(request: NextRequest) {
     const pdfUrl = body.pdfUrl ?? body.url;
     if (!pdfUrl || !/^https:\/\//i.test(pdfUrl)) return NextResponse.json({ success: false, error: 'Informe pdfUrl com a URL HTTPS do relatório PMSR da FIFA.' }, { status: 400 });
     const codes = extractCodesFromUrl(pdfUrl);
-    if (!codes) return NextResponse.json({ success: false, error: 'Não foi possível identificar os códigos das seleções pelo nome do PDF.' }, { status: 400 });
-
+    if (!codes) return NextResponse.json({ success: false, error: 'Não foi possível identificar o número do jogo e os códigos das seleções pelo nome do PDF.', fileName: fileNameFromUrl(pdfUrl) }, { status: 400 });
     const response = await fetch(pdfUrl, { cache: 'no-store' });
     if (!response.ok) return NextResponse.json({ success: false, error: `Falha ao baixar PDF FIFA: HTTP ${response.status}` }, { status: 502 });
-
     const buffer = Buffer.from(await response.arrayBuffer());
     const plainText = await parsePdfText(buffer);
     const parsed = extractStats(plainText);
-    const { match, created, bestScore } = await findOrCreateMatch(codes.homeName, codes.awayName, codes.homeCode, codes.awayCode, codes.matchNumber, pdfUrl, body.allowCreateMatch !== false);
-    if (!match) return NextResponse.json({ success: false, error: 'Partida não encontrada no banco persistido.', detected: codes, bestScore, extractedStats: parsed.stats }, { status: 404 });
-
+    const found = await findOrCreateMatch(codes.homeName, codes.awayName, codes.homeCode, codes.awayCode, codes.matchNumber, pdfUrl, body.allowCreateMatch !== false);
+    if (!found.match) return NextResponse.json({ success: false, error: 'Partida não encontrada no banco persistido.', detected: codes, bestScore: found.bestScore, matchedBy: found.matchedBy, extractedStats: parsed.stats }, { status: 404 });
     let savedValues = 0;
-    if (!body.dryRun) {
-      for (const stat of parsed.stats) savedValues += await saveStat(match, stat, codes.homeName, codes.awayName, pdfUrl);
-    }
-
-    return NextResponse.json({
-      success: true,
-      dryRun: Boolean(body.dryRun),
-      match,
-      matchCreatedFromFifaPdf: created,
-      bestExistingMatchScore: bestScore,
-      detected: codes,
-      parser: { plainTextLength: parsed.plainTextLength, lineCount: parsed.lineCount, strategy: 'pmsr-3-delete-insert-no-constraint' },
-      extractedStats: parsed.stats,
-      savedValues,
-      warning: parsed.stats.length === 0 ? 'PDF baixado, mas nenhuma métrica foi identificada. O retorno inclui diagnóstico do parser.' : null,
-      scope: 'Somente Copa do Mundo: world_cup_matches, world_cup_teams e world_cup_match_statistics.',
-      lastUpdated: new Date().toISOString(),
-    });
+    if (!body.dryRun) for (const stat of parsed.stats) savedValues += await saveStat(found.match, stat, codes.homeName, codes.awayName, pdfUrl);
+    return NextResponse.json({ success: true, dryRun: Boolean(body.dryRun), match: found.match, matchCreatedFromFifaPdf: found.created, matchedBy: found.matchedBy, bestExistingMatchScore: found.bestScore, detected: codes, parser: { plainTextLength: parsed.plainTextLength, lineCount: parsed.lineCount, strategy: 'pmsr-match-number-first' }, extractedStats: parsed.stats, savedValues, warning: parsed.stats.length === 0 ? 'PDF baixado, mas nenhuma métrica foi identificada. O retorno inclui diagnóstico do parser.' : null, scope: 'Somente Copa do Mundo: world_cup_matches, world_cup_teams e world_cup_match_statistics.', lastUpdated: new Date().toISOString() });
   } catch (error) {
     return NextResponse.json({ success: false, error: error instanceof Error ? error.message : 'Erro ao importar PMSR FIFA.' }, { status: 500 });
   }
