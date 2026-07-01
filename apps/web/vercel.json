@@ -3,6 +3,10 @@
     {
       "path": "/api/cron/daily-update",
       "schedule": "0 7 * * *"
+    },
+    {
+      "path": "/api/world-cup/fifa-auto-sync",
+      "schedule": "*/30 * * * *"
     }
   ]
 }
