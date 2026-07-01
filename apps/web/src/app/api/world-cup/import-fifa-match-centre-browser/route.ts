@@ -13,14 +13,14 @@ type Stat = { metricKey: string; metricName: string; home: number | null; away: 
 type Body = { url?: string; matchCentreUrl?: string; fifaMatchId?: string | number; localMatchId?: string | number; homeTeamName?: string; awayTeamName?: string; dryRun?: boolean; debug?: boolean };
 type Capture = { pageText: string; snapshots: Array<{ label: string; text: string }>; networkJson: Array<{ url: string; json: unknown }>; networkCount: number; likelyNetworkCount: number };
 
-const METRIC_ALIASES: Record<string, { name: string; aliases: string[]; max?: number }> = {
-  possession: { name: 'Posse de bola', aliases: ['posse de bola', 'possession', 'ball possession'], max: 100 },
+const METRICS: Record<string, { name: string; aliases: string[]; max: number }> = {
+  possession: { name: 'Posse de bola', aliases: ['posse de bola', 'possession'], max: 100 },
   shots: { name: 'Finalizações', aliases: ['finalizações', 'finalizacoes', 'chutes', 'shots', 'total attempts', 'attempts'], max: 80 },
   shotsontarget: { name: 'Finalizações no gol', aliases: ['finalizações no gol', 'finalizacoes no gol', 'chutes no gol', 'shots on target', 'attempts on target', 'on target'], max: 60 },
   corners: { name: 'Escanteios', aliases: ['escanteios', 'corners', 'corner kicks'], max: 40 },
   yellowcards: { name: 'Cartões amarelos', aliases: ['cartões amarelos', 'cartoes amarelos', 'yellow cards'], max: 20 },
   redcards: { name: 'Cartões vermelhos', aliases: ['cartões vermelhos', 'cartoes vermelhos', 'red cards'], max: 10 },
-  fouls: { name: 'Faltas', aliases: ['faltas', 'fouls', 'fouls committed'], max: 80 },
+  fouls: { name: 'Faltas', aliases: ['faltas', 'fouls'], max: 80 },
   offsides: { name: 'Impedimentos', aliases: ['impedimentos', 'offsides'], max: 30 },
   passes: { name: 'Passes totais', aliases: ['passes totais', 'total passes', 'passes'], max: 1500 },
   passaccuracy: { name: 'Precisão de passes', aliases: ['precisão de passes', 'precisao de passes', 'pass accuracy', 'passing accuracy'], max: 100 },
@@ -31,21 +31,21 @@ const METRIC_ALIASES: Record<string, { name: string; aliases: string[]; max?: nu
   interceptions: { name: 'Interceptações', aliases: ['interceptações', 'interceptacoes', 'interceptions'], max: 120 },
   clearances: { name: 'Cortes defensivos', aliases: ['cortes defensivos', 'clearances'], max: 120 },
 };
-const KEYS = Object.keys(METRIC_ALIASES);
+const KEYS = Object.keys(METRICS);
 
 function normalize(value: unknown) { return String(value ?? '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/&/g, ' and ').replace(/[^a-z0-9,.%]+/g, ' ').replace(/\s+/g, ' ').trim(); }
 function compact(value: unknown) { return normalize(value).replace(/[\s,.%]/g, ''); }
 function sameTeam(a: unknown, b: unknown) { const x = normalize(a).replace(/[,.%]/g, ''); const y = normalize(b).replace(/[,.%]/g, ''); return Boolean(x && y && (x === y || x.includes(y) || y.includes(x))); }
 function idsFromUrl(url: string) { const m = url.match(/\/match-centre\/match\/(\d+)\/(\d+)\/(\d+)\/(\d+)/i); return m ? { matchId: m[4] } : null; }
 function urlFromMatchId(matchId: string | number) { return `https://www.fifa.com/pt/match-centre/match/17/285023/289287/${matchId}`; }
-function metricKey(value: unknown) { const c = compact(value); if (!c) return null; for (const key of KEYS) if (METRIC_ALIASES[key].aliases.some((a) => c.includes(compact(a)) || compact(a).includes(c))) return key; return null; }
-function metricName(key: string) { return METRIC_ALIASES[key]?.name ?? key; }
+function metricKey(value: unknown) { const c = compact(value); if (!c) return null; for (const key of KEYS) if (METRICS[key].aliases.some((a) => c.includes(compact(a)) || compact(a).includes(c))) return key; return null; }
+function metricName(key: string) { return METRICS[key]?.name ?? key; }
 function num(value: unknown): number | null { if (typeof value === 'number' && Number.isFinite(value)) return value; if (typeof value === 'string') { const n = Number(value.replace('%', '').replace(',', '.').trim()); return Number.isFinite(n) ? n : null; } if (value && typeof value === 'object' && !Array.isArray(value)) { const obj = value as Record<string, unknown>; for (const key of ['value','Value','statValue','numericValue','total','count','home','away','displayValue']) { const n = num(obj[key]); if (n !== null) return n; } } return null; }
-function valid(key: string, value: number | null) { return value !== null && value >= 0 && value <= (METRIC_ALIASES[key]?.max ?? 2000); }
+function valid(key: string, value: number | null) { return value !== null && value >= 0 && value <= (METRICS[key]?.max ?? 2000); }
 function preview(value: unknown, max = 600) { return String(typeof value === 'string' ? value : JSON.stringify(value) ?? '').slice(0, max); }
 
 function statFromObject(obj: Record<string, unknown>, path: string, sourceUrl?: string): Stat | null {
-  const label = obj.name ?? obj.Name ?? obj.label ?? obj.title ?? obj.statName ?? obj.metricName ?? obj.metric ?? obj.key ?? obj.type ?? obj.typeName ?? path.split('.').pop();
+  const label = obj.name ?? obj.Name ?? obj.label ?? obj.title ?? obj.statName ?? obj.metricName ?? obj.metric ?? obj.key ?? obj.type ?? path.split('.').pop();
   const key = metricKey(label) ?? metricKey(path);
   if (!key) return null;
   const home = num(obj.home) ?? num(obj.homeValue) ?? num(obj.HomeValue) ?? num(obj.homeTeamValue) ?? num(obj.team1Value) ?? num(obj.valueHome) ?? num(obj.homeTeam) ?? num(obj.HomeTeam);
@@ -72,11 +72,7 @@ function collect(value: unknown, path = '$', out: Stat[] = [], sourceUrl?: strin
 }
 function numbersNear(text: string, alias: string) {
   const escaped = alias.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s+');
-  const patterns = [
-    new RegExp(`(-?\\d+(?:[,.]\\d+)?%?)\\s+${escaped}\\s+(-?\\d+(?:[,.]\\d+)?%?)`, 'i'),
-    new RegExp(`${escaped}\\s+(-?\\d+(?:[,.]\\d+)?%?)\\s+(-?\\d+(?:[,.]\\d+)?%?)`, 'i'),
-    new RegExp(`(-?\\d+(?:[,.]\\d+)?%?)\\s+(-?\\d+(?:[,.]\\d+)?%?)\\s+${escaped}`, 'i'),
-  ];
+  const patterns = [new RegExp(`(-?\\d+(?:[,.]\\d+)?%?)\\s+${escaped}\\s+(-?\\d+(?:[,.]\\d+)?%?)`, 'i'), new RegExp(`${escaped}\\s+(-?\\d+(?:[,.]\\d+)?%?)\\s+(-?\\d+(?:[,.]\\d+)?%?)`, 'i'), new RegExp(`(-?\\d+(?:[,.]\\d+)?%?)\\s+(-?\\d+(?:[,.]\\d+)?%?)\\s+${escaped}`, 'i')];
   for (const p of patterns) { const m = text.match(p); const a = num(m?.[1]); const b = num(m?.[2]); if (a !== null && b !== null) return [a, b] as const; }
   return null;
 }
@@ -85,7 +81,7 @@ function extractRenderedTextStats(snapshots: Capture['snapshots'], pageText: str
   const sources = [...snapshots, { label: 'final-body-text', text: pageText }];
   for (const source of sources) {
     const text = source.text.replace(/\s+/g, ' ');
-    for (const [key, def] of Object.entries(METRIC_ALIASES)) for (const alias of def.aliases) {
+    for (const [key, def] of Object.entries(METRICS)) for (const alias of def.aliases) {
       const values = numbersNear(text, alias);
       if (values && valid(key, values[0]) && valid(key, values[1])) stats.push({ metricKey: key, metricName: def.name, home: values[0], away: values[1], path: `rendered-dom:${source.label}:${alias}`, sourceUrl: 'browser-dom' });
     }
@@ -112,8 +108,7 @@ async function captureRendered(url: string): Promise<Capture> {
     const snapshots: Capture['snapshots'] = [];
     async function snap(label: string) { const text = await page.locator('body').innerText({ timeout: 5000 }).catch(() => ''); snapshots.push({ label, text: text.slice(0, 15000) }); }
     await snap('initial');
-    const targets = ['Estatísticas', 'Estatisticas', 'Statistics', 'Dados', 'Match facts', 'Stats'];
-    for (const label of targets) { const locator = page.getByText(label, { exact: false }).first(); if (await locator.count().catch(() => 0)) { await locator.click({ timeout: 2500 }).catch(() => undefined); await page.waitForTimeout(1200); await snap(`clicked-${label}`); } }
+    for (const label of ['Estatísticas', 'Estatisticas', 'Statistics', 'Dados', 'Match facts', 'Stats']) { const locator = page.getByText(label, { exact: false }).first(); if (await locator.count().catch(() => 0)) { await locator.click({ timeout: 2500 }).catch(() => undefined); await page.waitForTimeout(1200); await snap(`clicked-${label}`); } }
     for (let i = 0; i < 4; i += 1) { await page.mouse.wheel(0, 1400).catch(() => undefined); await page.waitForTimeout(700); await snap(`scroll-${i + 1}`); }
     const clickableTexts = await page.locator('button, [role="tab"], [role="button"], a').evaluateAll((els) => Array.from(new Set(els.map((el) => (el.textContent || '').trim()).filter((t) => t && /estat|stat|dados|match|jogo|resumo|summary/i.test(t)).slice(0, 12)))).catch(() => [] as string[]);
     for (const text of clickableTexts) { await page.getByText(text, { exact: false }).first().click({ timeout: 2000 }).catch(() => undefined); await page.waitForTimeout(800); await snap(`auto-click-${text}`); }
@@ -123,25 +118,16 @@ async function captureRendered(url: string): Promise<Capture> {
 }
 async function findMatch(body: Body, url: string): Promise<MatchRow | null> { if (body.localMatchId) { const rows = await sql`SELECT id, home_team_id, away_team_id, home_team_name, away_team_name, fixture_key, fifa_match_id FROM world_cup_matches WHERE id = ${Number(body.localMatchId)} LIMIT 1`; if (rows[0]) return rows[0] as MatchRow; } const officialId = String(body.fifaMatchId ?? idsFromUrl(url)?.matchId ?? ''); if (officialId) { const rows = await sql`SELECT id, home_team_id, away_team_id, home_team_name, away_team_name, fixture_key, fifa_match_id FROM world_cup_matches WHERE competition_key = ${WORLD_CUP_2026_KEY} AND fifa_match_id = ${officialId} LIMIT 1`; if (rows[0]) return rows[0] as MatchRow; } return null; }
 async function save(match: MatchRow, stat: Stat, url: string, officialId: string, reversed: boolean) {
-  const rows = [
-    { teamId: reversed ? match.away_team_id : match.home_team_id, value: reversed ? stat.away : stat.home, side: 'home' },
-    { teamId: reversed ? match.home_team_id : match.away_team_id, value: reversed ? stat.home : stat.away, side: 'away' },
-  ];
+  const rows = [{ teamId: reversed ? match.away_team_id : match.home_team_id, value: reversed ? stat.away : stat.home, side: 'home' }, { teamId: reversed ? match.home_team_id : match.away_team_id, value: reversed ? stat.home : stat.away, side: 'away' }];
   let count = 0;
   for (const row of rows) {
     if (!row.teamId || row.value === null) continue;
-    const payload = JSON.stringify({ importedBy: 'fifa-match-centre-option-3-dom-network-upsert', matchCentreUrl: url, fifaMatchId: officialId, sourceUrl: stat.sourceUrl, path: stat.path, raw: stat.raw, side: row.side });
+    const payload = JSON.stringify({ importedBy: 'fifa-match-centre-option-3-dom-network-upsert-constraint', matchCentreUrl: url, fifaMatchId: officialId, sourceUrl: stat.sourceUrl, path: stat.path, raw: stat.raw, side: row.side });
     await sql`
-      INSERT INTO world_cup_match_statistics
-        (match_id, team_id, period, metric_key, metric_name, value_numeric, source_key, source_payload, source_updated_at)
-      VALUES
-        (${match.id}, ${row.teamId}, 'match', ${stat.metricKey}, ${stat.metricName}, ${Number(row.value)}, 'fifa', ${payload}::jsonb, NOW())
-      ON CONFLICT (match_id, team_id, period, metric_key, source_key)
-      DO UPDATE SET
-        metric_name = EXCLUDED.metric_name,
-        value_numeric = EXCLUDED.value_numeric,
-        source_payload = EXCLUDED.source_payload,
-        source_updated_at = NOW()
+      INSERT INTO world_cup_match_statistics (match_id, team_id, period, metric_key, metric_name, value_numeric, source_key, source_payload, source_updated_at)
+      VALUES (${match.id}, ${row.teamId}, 'match', ${stat.metricKey}, ${stat.metricName}, ${Number(row.value)}, 'fifa', ${payload}::jsonb, NOW())
+      ON CONFLICT ON CONSTRAINT world_cup_match_statistics_unique
+      DO UPDATE SET metric_name = EXCLUDED.metric_name, value_numeric = EXCLUDED.value_numeric, source_key = EXCLUDED.source_key, source_payload = EXCLUDED.source_payload, source_updated_at = NOW()
     `;
     count += 1;
   }
@@ -158,7 +144,7 @@ async function run(body: Body) {
   const reversed = Boolean(body.homeTeamName && body.awayTeamName && sameTeam(match.home_team_name, body.awayTeamName) && sameTeam(match.away_team_name, body.homeTeamName));
   let savedValues = 0;
   if (!body.dryRun) { if (officialId) await sql`UPDATE world_cup_matches SET fifa_match_id = ${officialId}, source_payload = COALESCE(source_payload, '{}'::jsonb) || ${JSON.stringify({ fifaMatchId: officialId, matchCentreUrl: url, option3DomNetwork: true })}::jsonb, source_updated_at = NOW(), updated_at = NOW() WHERE id = ${match.id}`; for (const stat of stats) savedValues += await save(match, stat, url, officialId, reversed); }
-  return NextResponse.json({ success: true, dryRun: Boolean(body.dryRun), strategy: 'Opção 3: API/PMSR + Match Centre + navegador lendo rede e DOM renderizado com UPSERT.', match, detected: { fifaMatchId: officialId, matchCentreUrl: url }, parser: { networkCount: capture.networkCount, likelyNetworkCount: capture.likelyNetworkCount, snapshots: capture.snapshots.length, pageTextLength: capture.pageText.length, strategy: 'rendered-dom-plus-network-upsert' }, extractedStats: stats, savedValues, warning: stats.length === 0 ? 'Navegador carregou a página, mas o DOM renderizado não continha pares reconhecíveis.' : null, debug: body.debug ? { snapshots: capture.snapshots.map((s) => ({ label: s.label, text: s.text.slice(0, 2500) })), networkSamples: capture.networkJson.slice(0, 8).map((n) => ({ url: n.url, preview: preview(n.json) })) } : undefined, lastUpdated: new Date().toISOString() });
+  return NextResponse.json({ success: true, dryRun: Boolean(body.dryRun), strategy: 'Opção 3: DOM renderizado + UPSERT por constraint world_cup_match_statistics_unique.', match, detected: { fifaMatchId: officialId, matchCentreUrl: url }, parser: { networkCount: capture.networkCount, likelyNetworkCount: capture.likelyNetworkCount, snapshots: capture.snapshots.length, pageTextLength: capture.pageText.length, strategy: 'rendered-dom-plus-network-upsert-on-constraint' }, extractedStats: stats, savedValues, warning: stats.length === 0 ? 'Navegador carregou a página, mas o DOM renderizado não continha pares reconhecíveis.' : null, debug: body.debug ? { snapshots: capture.snapshots.map((s) => ({ label: s.label, text: s.text.slice(0, 2500) })), networkSamples: capture.networkJson.slice(0, 8).map((n) => ({ url: n.url, preview: preview(n.json) })) } : undefined, lastUpdated: new Date().toISOString() });
 }
 export async function GET(request: NextRequest) { try { const p = request.nextUrl.searchParams; return await run({ url: p.get('url') ?? undefined, matchCentreUrl: p.get('matchCentreUrl') ?? undefined, fifaMatchId: p.get('fifaMatchId') ?? undefined, localMatchId: p.get('localMatchId') ?? undefined, homeTeamName: p.get('homeTeamName') ?? undefined, awayTeamName: p.get('awayTeamName') ?? undefined, dryRun: p.get('dryRun') !== 'false', debug: p.get('debug') === 'true' }); } catch (error) { return NextResponse.json({ success: false, error: error instanceof Error ? error.message : 'Erro no importador Option 3 Match Centre.' }, { status: 500 }); } }
 export async function POST(request: NextRequest) { try { return await run(await request.json().catch(() => ({}))); } catch (error) { return NextResponse.json({ success: false, error: error instanceof Error ? error.message : 'Erro no importador Option 3 Match Centre.' }, { status: 500 }); } }
