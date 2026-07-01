@@ -7,19 +7,25 @@ export const maxDuration = 60;
 
 const WORLD_CUP_2026_KEY = 'world_cup_2026';
 const MATCH_CENTRE_PREFIX = 'https://www.fifa.com/pt/match-centre/match';
+const COMPETITION_ID = '17';
+const SEASON_ID = '285023';
+const STAGE_ID = '289287';
 
 const FIFA_SOURCES = [
-  'https://api.fifa.com/api/v3/calendar/matches?competition=17&season=285023',
-  'https://api.fifa.com/api/v3/calendar/matches?competitionId=17&seasonId=285023',
+  `https://api.fifa.com/api/v3/calendar/matches?competition=${COMPETITION_ID}&season=${SEASON_ID}&stage=${STAGE_ID}`,
+  `https://api.fifa.com/api/v3/calendar/matches?competitionId=${COMPETITION_ID}&seasonId=${SEASON_ID}&stageId=${STAGE_ID}`,
+  `https://api.fifa.com/api/v3/calendar/matches?competition=${COMPETITION_ID}&season=${SEASON_ID}`,
+  `https://api.fifa.com/api/v3/calendar/matches?competitionId=${COMPETITION_ID}&seasonId=${SEASON_ID}`,
   'https://www.fifa.com/pt/tournaments/mens/worldcup/canadamexicousa2026/scores-fixtures?country=BR&wtw-filter=ALL',
+  'https://www.fifa.com/en/tournaments/mens/worldcup/canadamexicousa2026/scores-fixtures?country=BR&wtw-filter=ALL',
 ];
 
 const TEAM_CODES: Record<string, string[]> = {
-  mexico:['MEX'], equador:['ECU'], ecuador:['ECU'], franca:['FRA'], france:['FRA'], suecia:['SWE'], sweden:['SWE'], 'costa do marfim':['CIV'], noruega:['NOR'], norway:['NOR'], 'africa do sul':['RSA','ZAF'], canada:['CAN'], argelia:['ALG'], algeria:['ALG'], austria:['AUT'], 'rd congo':['COD'], congo:['COD'], uzbequistao:['UZB'], uzbekistan:['UZB'], panama:['PAN'], inglaterra:['ENG'], england:['ENG'], croacia:['CRO'], croatia:['CRO'], gana:['GHA'], ghana:['GHA'], 'nova zelandia':['NZL'], belgium:['BEL'], belgica:['BEL'], egito:['EGY'], egypt:['EGY'], ira:['IRN'], iran:['IRN'], 'cabo verde':['CPV'], 'arabia saudita':['KSA'], uruguai:['URU'], uruguay:['URU'], espanha:['ESP'], spain:['ESP'], portugal:['POR'], brasil:['BRA'], japan:['JPN'], japao:['JPN'], alemanha:['GER'], germany:['GER'], paraguai:['PAR'], paraguay:['PAR'], holanda:['NED'], netherlands:['NED'], marrocos:['MAR'], morocco:['MAR']
+  mexico:['MEX'], equador:['ECU'], ecuador:['ECU'], franca:['FRA'], france:['FRA'], suecia:['SWE'], sweden:['SWE'], 'costa do marfim':['CIV'], norway:['NOR'], noruega:['NOR'], 'africa do sul':['RSA','ZAF'], canada:['CAN'], argelia:['ALG'], algeria:['ALG'], austria:['AUT'], 'rd congo':['COD'], congo:['COD'], uzbequistao:['UZB'], uzbekistan:['UZB'], panama:['PAN'], inglaterra:['ENG'], england:['ENG'], croacia:['CRO'], croatia:['CRO'], gana:['GHA'], ghana:['GHA'], 'nova zelandia':['NZL'], belgium:['BEL'], belgica:['BEL'], egito:['EGY'], egypt:['EGY'], ira:['IRN'], iran:['IRN'], 'cabo verde':['CPV'], 'arabia saudita':['KSA'], uruguai:['URU'], uruguay:['URU'], espanha:['ESP'], spain:['ESP'], portugal:['POR'], brasil:['BRA'], brazil:['BRA'], japan:['JPN'], japao:['JPN'], alemanha:['GER'], germany:['GER'], paraguai:['PAR'], paraguay:['PAR'], holanda:['NED'], netherlands:['NED'], marrocos:['MAR'], morocco:['MAR']
 };
 
 type DbMatch = { id: number; home_team_name: string; away_team_name: string; kickoff_at: string | null; fifa_match_id: string | null; source_payload: unknown };
-type Candidate = { fifaMatchId: string; url: string; context: string; source: string; home?: string | null; away?: string | null; kickoff?: string | null };
+type Candidate = { fifaMatchId: string; url: string; context: string; source: string; home?: string | null; away?: string | null; kickoff?: string | null; score?: string | null };
 
 function normalize(value: unknown) {
   return String(value ?? '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/&/g, ' and ').replace(/[^a-z0-9]+/g, ' ').replace(/\s+/g, ' ').trim();
@@ -30,7 +36,7 @@ function cleanText(value: unknown): string | null {
   if (Array.isArray(value)) return value.map(cleanText).find(Boolean) ?? null;
   if (typeof value === 'object') {
     const obj = value as Record<string, unknown>;
-    for (const key of ['Description','description','Name','name','ShortName','shortName','TeamName','teamName','CountryName','countryName','DisplayName','displayName']) {
+    for (const key of ['Description','description','Name','name','ShortName','shortName','TeamName','teamName','CountryName','countryName','DisplayName','displayName','Abbreviation','abbreviation']) {
       const text = cleanText(obj[key]); if (text) return text;
     }
   }
@@ -57,14 +63,14 @@ function getUrlFromCandidate(id: string, context: string) {
   if (match?.[0]) return match[0];
   const path = context.match(new RegExp(`\\/[^\\s"'<>]*match-centre\\/match\\/[^\\s"'<>]*${id}`));
   if (path?.[0]) return `https://www.fifa.com${path[0]}`;
-  return `${MATCH_CENTRE_PREFIX}/17/285023/289287/${id}`;
+  return `${MATCH_CENTRE_PREFIX}/${COMPETITION_ID}/${SEASON_ID}/${STAGE_ID}/${id}`;
 }
 function extractFromText(text: string, source: string): Candidate[] {
   const decoded = decodePage(text);
   const items: Candidate[] = [];
   for (const match of decoded.matchAll(/4000\d+/g)) {
     const id = match[0];
-    const context = decoded.slice(Math.max(0, match.index! - 2400), Math.min(decoded.length, match.index! + 2400));
+    const context = decoded.slice(Math.max(0, match.index! - 3500), Math.min(decoded.length, match.index! + 3500));
     items.push({ fifaMatchId: id, url: getUrlFromCandidate(id, context), context, source });
   }
   return Array.from(new Map(items.map((i) => [i.fifaMatchId, i])).values());
@@ -75,15 +81,18 @@ function extractId(obj: any): string | null {
   return /^4000\d+/.test(text) ? text : null;
 }
 function readSide(obj: any, side: 'home' | 'away'): string | null {
-  const keys = side === 'home' ? ['HomeTeam','homeTeam','home','Home','team1','Team1'] : ['AwayTeam','awayTeam','away','Away','team2','Team2'];
+  const keys = side === 'home' ? ['HomeTeam','homeTeam','home','Home','team1','Team1','homeCompetitor','HomeCompetitor'] : ['AwayTeam','awayTeam','away','Away','team2','Team2','awayCompetitor','AwayCompetitor'];
   for (const key of keys) { const text = cleanText(obj?.[key]); if (text) return text; }
   return null;
 }
 function readKickoff(obj: any): string | null {
-  for (const key of ['Date','date','MatchDate','matchDate','LocalDate','localDate','kickoff_at','kickoffAt']) {
-    const text = cleanText(obj?.[key]); if (text) return text;
-  }
+  for (const key of ['Date','date','MatchDate','matchDate','LocalDate','localDate','startTime','StartTime','kickoff_at','kickoffAt']) { const text = cleanText(obj?.[key]); if (text) return text; }
   return null;
+}
+function readScore(obj: any): string | null {
+  const h = obj?.homeScore ?? obj?.HomeScore ?? obj?.home_team_score ?? obj?.homeCompetitor?.score;
+  const a = obj?.awayScore ?? obj?.AwayScore ?? obj?.away_team_score ?? obj?.awayCompetitor?.score;
+  return h !== undefined && a !== undefined ? `${h}-${a}` : null;
 }
 function collectObjects(value: unknown, source: string, out: Candidate[] = []) {
   if (!value || typeof value !== 'object') return out;
@@ -92,8 +101,8 @@ function collectObjects(value: unknown, source: string, out: Candidate[] = []) {
   const id = extractId(obj);
   if (id) {
     const home = readSide(obj, 'home'); const away = readSide(obj, 'away'); const kickoff = readKickoff(obj);
-    const context = JSON.stringify(obj).slice(0, 6000);
-    out.push({ fifaMatchId: id, url: getUrlFromCandidate(id, context), context, source, home, away, kickoff });
+    const context = JSON.stringify(obj).slice(0, 9000);
+    out.push({ fifaMatchId: id, url: getUrlFromCandidate(id, context), context, source, home, away, kickoff, score: readScore(obj) });
   }
   Object.values(obj).forEach((v) => collectObjects(v, source, out));
   return out;
@@ -101,10 +110,12 @@ function collectObjects(value: unknown, source: string, out: Candidate[] = []) {
 async function fetchCandidates() {
   const all: Candidate[] = [];
   for (const url of FIFA_SOURCES) {
-    const res = await fetch(url, { cache: 'no-store', headers: { accept: 'application/json,text/html,*/*', 'accept-language': 'pt-BR,pt;q=0.9,en;q=0.8', referer: 'https://www.fifa.com/' } });
-    const text = await res.text().catch(() => '');
-    all.push(...extractFromText(text, url));
-    try { all.push(...collectObjects(JSON.parse(text), url)); } catch {}
+    try {
+      const res = await fetch(url, { cache: 'no-store', headers: { accept: 'application/json,text/html,*/*', 'accept-language': 'pt-BR,pt;q=0.9,en;q=0.8', referer: 'https://www.fifa.com/' } });
+      const text = await res.text().catch(() => '');
+      all.push(...extractFromText(text, url));
+      try { all.push(...collectObjects(JSON.parse(text), url)); } catch {}
+    } catch {}
   }
   return Array.from(new Map(all.map((c) => [c.fifaMatchId, c])).values());
 }
