@@ -5,7 +5,7 @@
       "schedule": "0 7 * * *"
     },
     {
-      "path": "/api/world-cup/fifa-auto-sync",
+      "path": "/api/world-cup/provider-sync",
       "schedule": "*/30 * * * *"
     }
   ]
