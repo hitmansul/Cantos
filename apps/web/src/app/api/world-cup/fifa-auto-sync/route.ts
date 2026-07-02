@@ -1,13 +1,17 @@
-import { NextRequest, NextResponse } from 'next/server';
-
+export const runtime = 'edge';
 export const dynamic = 'force-dynamic';
-export const runtime = 'nodejs';
-export const maxDuration = 60;
 
-export async function GET(request: NextRequest) {
-  const dryRun = request.nextUrl.searchParams.get('dryRun') === 'true';
-  const response = await fetch(`${request.nextUrl.origin}/api/world-cup/fifa-complete-auto-sync?dryRun=${dryRun ? 'true' : 'false'}`, { cache: 'no-store' });
-  let payload: unknown;
-  try { payload = await response.json(); } catch { payload = await response.text(); }
-  return NextResponse.json({ success: response.ok, job: 'fifa-auto-sync', payload, lastUpdated: new Date().toISOString() }, { status: response.ok ? 200 : response.status });
+export async function GET(request: Request) {
+  const origin = new URL(request.url).origin;
+  return new Response(JSON.stringify({
+    success: true,
+    job: 'fifa-auto-sync',
+    message: 'Cron leve. O processamento incremental principal está em /api/world-cup/provider-sync.',
+    providerSync: origin + '/api/world-cup/provider-sync',
+    buildMarker: 'auto-sync-light-v1',
+    lastUpdated: new Date().toISOString()
+  }), {
+    status: 200,
+    headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' }
+  });
 }
