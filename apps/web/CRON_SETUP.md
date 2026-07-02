@@ -1,235 +1,79 @@
 # Configuração da Atualização Automática
 
-O sistema agora atualiza automaticamente os jogos e estatísticas **todos os dias às 7h da manhã**.
+O sistema está configurado para ser compatível com o plano **Vercel Hobby**.
+
+No plano Hobby, cada Cron Job deve executar no máximo **uma vez por dia**. Por isso, o arquivo `vercel.json` usa apenas agendamentos diários.
+
+## Crons ativos na Vercel
+
+### 1. Atualização diária geral
+
+- **Endpoint**: `/api/cron/daily-update`
+- **Agenda**: `0 7 * * *`
+- **Frequência**: uma vez por dia
+- **Objetivo**: atualizar jogos e estatísticas gerais.
+
+### 2. Sincronização incremental da Copa do Mundo
+
+- **Endpoint**: `/api/world-cup/provider-sync`
+- **Agenda**: `30 7 * * *`
+- **Frequência**: uma vez por dia
+- **Objetivo**: executar o pipeline leve de sincronização de provedores, mantendo a FIFA como prioridade e evitando timeouts.
+
+## Regra obrigatória para Vercel Hobby
+
+Não usar expressões como:
+
+```cron
+*/30 * * * *
+0 * * * *
+*/5 * * * *
+```
+
+Essas frequências executam mais de uma vez por dia e fazem o deploy falhar no plano Hobby.
+
+Use somente expressões diárias, por exemplo:
+
+```cron
+0 7 * * *
+30 7 * * *
+```
 
 ## O que é atualizado automaticamente?
 
-### 1. Importação de Jogos Futuros (7h da manhã)
-- Busca automaticamente os próximos jogos das seguintes ligas:
-  - Brasileirão Série A
-  - Brasileirão Série B
-  - Copa Libertadores
-  - Copa Sul-Americana
-  - Copa do Brasil
-- Adiciona apenas jogos novos (não duplica)
-- Fonte: API 365Scores
+### Importação de jogos futuros
 
-### 2. Atualização de Estatísticas (7h da manhã)
-- Busca automaticamente dados de partidas que já aconteceram mas ainda não têm estatísticas
-- Atualiza usando IA:
-  - ⚽ Escanteios (casa e fora)
-  - 👨‍⚖️ Árbitro
-  - 🟨 Cartões amarelos e vermelhos
-  - 🎯 Finalizações e finalizações no gol
-- Processa até 50 partidas pendentes por execução
+- Busca automaticamente os próximos jogos das ligas configuradas.
+- Adiciona apenas jogos novos.
+- Evita duplicação.
 
-## Como funciona?
+### Atualização de estatísticas
 
-### Se você está usando Vercel (Recomendado)
+- Busca dados de partidas já encerradas.
+- Prioriza dados oficiais da FIFA quando disponíveis.
+- Usa provedores complementares quando necessário.
+- O processamento deve ser incremental para evitar timeout.
 
-O arquivo `vercel.json` já está configurado. Quando você fizer deploy na Vercel, o cron será ativado automaticamente.
+## Como testar manualmente
 
-**Nenhuma configuração adicional necessária!**
-
-### Se você NÃO está usando Vercel
-
-Você precisa configurar um serviço de cron externo para chamar a API:
-
-#### Opção 1: cron-job.org (Grátis)
-
-1. Acesse https://cron-job.org
-2. Crie uma conta gratuita
-3. Crie um novo cron job:
-   - **URL**: `https://seu-dominio.com/api/cron/daily-update`
-   - **Schedule**: `0 7 * * *` (todo dia às 7h)
-   - **Method**: GET
-   - **Headers**: Adicione `Authorization: Bearer SEU_CRON_SECRET`
-
-#### Opção 2: EasyCron (Grátis)
-
-1. Acesse https://www.easycron.com
-2. Crie uma conta gratuita
-3. Crie um novo cron job:
-   - **URL**: `https://seu-dominio.com/api/cron/daily-update`
-   - **Cron Expression**: `0 7 * * *`
-   - **HTTP Method**: GET
-   - **Custom Headers**: `Authorization: Bearer SEU_CRON_SECRET`
-
-#### Opção 3: GitHub Actions (Grátis)
-
-Crie `.github/workflows/daily-update.yml`:
-
-```yaml
-name: Daily Update
-on:
-  schedule:
-    - cron: '0 7 * * *'  # 7h UTC (4h BRT)
-  workflow_dispatch:  # Permite executar manualmente
-
-jobs:
-  update:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Trigger daily update
-        run: |
-          curl -X GET \
-            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
-            https://seu-dominio.com/api/cron/daily-update
-```
-
-## Segurança
-
-### Configurar CRON_SECRET (Importante!)
-
-Para proteger o endpoint de cron, configure a variável de ambiente:
-
-1. No Vercel:
-   - Vá em Settings → Environment Variables
-   - Adicione: `CRON_SECRET` = `um-token-secreto-aleatorio-aqui`
-
-2. Localmente (`.env.local`):
-   ```
-   CRON_SECRET=um-token-secreto-aleatorio-aqui
-   ```
-
-**Importante**: Use um token forte e aleatório. Exemplo:
-```bash
-# Gerar um token seguro no terminal:
-openssl rand -base64 32
-```
-
-### Sem CRON_SECRET configurado
-
-Se você não configurar `CRON_SECRET`:
-- ✅ Em desenvolvimento: o endpoint funciona normalmente
-- ❌ Em produção: o endpoint fica desprotegido (qualquer um pode chamar)
-
-**Recomendação**: Sempre configure `CRON_SECRET` em produção!
-
-## Testar manualmente
-
-### Localmente (desenvolvimento)
+### Status do pipeline da Copa
 
 ```bash
-curl http://localhost:3000/api/cron/daily-update
+curl https://cantos-web-final.vercel.app/api/world-cup/provider-sync
 ```
 
-### Em produção (com CRON_SECRET)
+### Backfill incremental
 
 ```bash
-curl -H "Authorization: Bearer SEU_CRON_SECRET" \
-  https://seu-dominio.com/api/cron/daily-update
+curl https://cantos-web-final.vercel.app/api/world-cup/provider-sync?step=backfill
 ```
 
-## Resposta da API
+### Reparo incremental FIFA
 
-Quando executado com sucesso, retorna:
-
-```json
-{
-  "success": true,
-  "duration": "45.23s",
-  "import": {
-    "totalInserted": 15,
-    "leagues": [
-      { "league": "brasileirao_a", "inserted": 5, "skipped": 2 },
-      { "league": "brasileirao_b", "inserted": 3, "skipped": 1 },
-      ...
-    ]
-  },
-  "update": {
-    "totalUpdated": 8,
-    "matches": [
-      {
-        "matchId": 123,
-        "homeTeam": "Flamengo",
-        "awayTeam": "Palmeiras",
-        "success": true
-      },
-      ...
-    ]
-  },
-  "timestamp": "2026-05-18T07:00:00.000Z"
-}
+```bash
+curl https://cantos-web-final.vercel.app/api/world-cup/provider-sync?step=repair
 ```
 
-## Logs
+## Observação
 
-Para ver os logs de execução:
-
-### Vercel
-1. Acesse o dashboard da Vercel
-2. Vá em Deployments → Logs
-3. Filtre por `/api/cron/daily-update`
-
-### Outros serviços
-Verifique os logs do seu serviço de cron (cron-job.org, EasyCron, etc.)
-
-## Mudanças na Interface Admin
-
-As seguintes funcionalidades foram **removidas** da interface porque agora são automáticas:
-
-- ❌ Botão "Importar da API" (aba Partidas)
-- ❌ Botão "Buscar Tudo" (aba Pendências)
-- ❌ Seção de busca automática (aba IA)
-
-Agora você verá **banners informativos** explicando que tudo acontece automaticamente às 7h.
-
-## Ainda é possível atualizar manualmente?
-
-**Sim!** Você ainda pode:
-
-- ✅ Adicionar partidas manualmente (aba Partidas)
-- ✅ Preencher escanteios manualmente (aba Pendências)
-- ✅ Usar o assistente IA para extrair dados de textos (aba IA)
-
-A automação apenas **complementa** o trabalho manual, não o substitui.
-
-## Horário
-
-O cron está configurado para **7h UTC** (horário universal).
-
-**Atenção ao fuso horário:**
-- 7h UTC = 4h BRT (horário de Brasília)
-- Se quiser 7h BRT, configure para `10 * * * *` (10h UTC)
-
-Para alterar o horário, edite `vercel.json`:
-
-```json
-{
-  "crons": [
-    {
-      "path": "/api/cron/daily-update",
-      "schedule": "0 10 * * *"  // 10h UTC = 7h BRT
-    }
-  ]
-}
-```
-
-## Troubleshooting
-
-### O cron não está executando
-
-1. Verifique se `CRON_SECRET` está configurado corretamente
-2. Verifique os logs do serviço de cron
-3. Teste manualmente com curl
-4. Verifique se o domínio está acessível
-
-### Erro 401 Unauthorized
-
-- Verifique se o header `Authorization: Bearer SEU_CRON_SECRET` está correto
-- Confirme que `CRON_SECRET` está configurado no ambiente
-
-### Erro 500 Internal Server Error
-
-- Verifique os logs da aplicação
-- Confirme que as APIs externas (365Scores, Gemini) estão funcionando
-- Verifique se as variáveis de ambiente necessárias estão configuradas
-
-## Suporte
-
-Se tiver problemas, verifique:
-1. Logs da aplicação
-2. Resposta da API de cron
-3. Configuração das variáveis de ambiente
-4. Status das APIs externas
+Se precisar de execução mais frequente que uma vez por dia, será necessário usar um agendador externo gratuito ou migrar para Vercel Pro. No plano atual, a configuração oficial deve permanecer diária para manter o deploy verde.
