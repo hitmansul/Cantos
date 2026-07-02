@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { importWorldCupFrom365Scores } from '@/lib/pipeline/worldCupScores365Importer';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -35,8 +34,8 @@ export async function GET(request: NextRequest) {
       success: true,
       dryRun,
       step,
-      strategy: 'Anti-timeout definitivo: o endpoint padrão não executa tarefas pesadas. Ele apenas retorna o plano e os links das etapas isoladas.',
-      reason: 'Chamadas internas longas para backfill/status/Chromium estavam causando 504 na Vercel. Cada etapa agora deve ser executada separadamente.',
+      strategy: 'Anti-timeout definitivo: endpoint padrão sem imports pesados e sem chamadas internas. Apenas plano de execução.',
+      reason: 'O import estático do 365Scores foi removido; ele agora só carrega quando step=scores365.',
       manualSteps: {
         backfill: `${origin}/api/world-cup/fifa-complete-auto-sync?dryRun=false&step=backfill`,
         repair: `${origin}/api/world-cup/fifa-complete-auto-sync?dryRun=false&step=repair`,
@@ -53,6 +52,7 @@ export async function GET(request: NextRequest) {
   if (step === 'scores365') {
     const t0 = Date.now();
     try {
+      const { importWorldCupFrom365Scores } = await import('@/lib/pipeline/worldCupScores365Importer');
       const scores365 = await importWorldCupFrom365Scores();
       steps.push({ name: '365Scores fallback completo', ok: true, durationMs: Date.now() - t0, detail: scores365 });
     } catch (error) {
