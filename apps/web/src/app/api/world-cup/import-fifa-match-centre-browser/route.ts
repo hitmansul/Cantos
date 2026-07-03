@@ -40,18 +40,28 @@ type DirectCapture = { jsonItems: Array<{ url: string; json: unknown }>; visited
 
 const METRICS: Record<string, { name: string; aliases: string[]; max: number }> = {
   possession: { name: 'Posse de bola', aliases: ['posse de bola', 'possession', 'ball possession'], max: 100 },
+  goals: { name: 'Gols', aliases: ['gols', 'gol', 'goals'], max: 30 },
+  goals_conceded: { name: 'Gols sofridos', aliases: ['gols sofridos', 'sofridos', 'goals conceded'], max: 30 },
+  assists: { name: 'Assistências', aliases: ['assistências', 'assistencias', 'assists'], max: 30 },
   shots: { name: 'Finalizações', aliases: ['finalizações', 'finalizacoes', 'chutes', 'shots', 'total attempts', 'attempts'], max: 80 },
   shotsontarget: { name: 'Finalizações no gol', aliases: ['finalizações no gol', 'finalizacoes no gol', 'chutes no gol', 'shots on target', 'attempts on target', 'on target'], max: 60 },
-  corners: { name: 'Escanteios', aliases: ['escanteios', 'corners', 'corner kicks'], max: 40 },
+  shots_off_target: { name: 'Finalizações para fora', aliases: ['para fora', 'shots off target', 'off target'], max: 60 },
+  corners: { name: 'Escanteios', aliases: ['escanteios', 'cantos', 'corners', 'corner kicks'], max: 40 },
   yellowcards: { name: 'Cartões amarelos', aliases: ['cartões amarelos', 'cartoes amarelos', 'yellow cards', 'yellowcards'], max: 20 },
   redcards: { name: 'Cartões vermelhos', aliases: ['cartões vermelhos', 'cartoes vermelhos', 'red cards', 'redcards'], max: 10 },
-  fouls: { name: 'Faltas', aliases: ['faltas', 'fouls'], max: 80 },
+  fouls: { name: 'Faltas', aliases: ['faltas', 'faltas recebidas', 'fouls'], max: 80 },
   offsides: { name: 'Impedimentos', aliases: ['impedimentos', 'offsides'], max: 30 },
   passes: { name: 'Passes totais', aliases: ['passes totais', 'total passes', 'passes'], max: 1500 },
+  completedpasses: { name: 'Passes concluídos', aliases: ['passes concluídos', 'passes concluidos', 'completed passes'], max: 1500 },
   passaccuracy: { name: 'Precisão de passes', aliases: ['precisão de passes', 'precisao de passes', 'pass accuracy', 'passing accuracy'], max: 100 },
+  crosses: { name: 'Cruzamentos', aliases: ['cruzamentos', 'crosses'], max: 120 },
+  completedcrosses: { name: 'Cruzamentos concluídos', aliases: ['cruzamentos concluídos', 'cruzamentos concluidos', 'completed crosses'], max: 120 },
+  freekicks: { name: 'Livres', aliases: ['livres', 'free kicks'], max: 80 },
+  penaltiesconverted: { name: 'Pênaltis convertidos', aliases: ['pênaltis convertidos', 'penaltis convertidos', 'penalties converted'], max: 20 },
   saves: { name: 'Defesas do goleiro', aliases: ['defesas do goleiro', 'goalkeeper saves', 'saves'], max: 40 },
   expectedgoals: { name: 'Gols esperados (xG)', aliases: ['gols esperados', 'expected goals', 'expected goals xg', 'xg'], max: 15 },
-  crosses: { name: 'Cruzamentos', aliases: ['cruzamentos', 'crosses'], max: 120 },
+  turnoversforced: { name: 'Erros forçados', aliases: ['erros forçados', 'erros forcados', 'forced turnovers'], max: 400 },
+  defensivepressures: { name: 'Pressões defensivas exercidas', aliases: ['pressões defensivas exercidas', 'pressoes defensivas exercidas', 'defensive pressures'], max: 800 },
   tackles: { name: 'Desarmes', aliases: ['desarmes', 'tackles'], max: 120 },
   interceptions: { name: 'Interceptações', aliases: ['interceptações', 'interceptacoes', 'interceptions'], max: 120 },
   clearances: { name: 'Cortes defensivos', aliases: ['cortes defensivos', 'clearances'], max: 120 },
@@ -114,10 +124,72 @@ function numbersNear(text: string, alias: string) {
   for (const p of patterns) { const m = text.match(p); const a = num(m?.[1]); const b = num(m?.[2]); if (a !== null && b !== null) return [a, b] as const; }
   return null;
 }
+function valueLine(line: string) { return /^\d+(?:[,.]\d+)?%?$/.test(line.trim()); }
+function readPair(lines: string[], start: number) {
+  const values: number[] = [];
+  for (let i = start + 1; i < Math.min(lines.length, start + 8); i += 1) {
+    const n = normalize(lines[i]);
+    if (n.includes('em disputa') || n.includes('dispute')) continue;
+    if (valueLine(lines[i])) {
+      const parsed = num(lines[i]);
+      if (parsed !== null) values.push(parsed);
+      if (values.length === 2) return { home: values[0], away: values[1] };
+    } else if (values.length > 0 && !valueLine(lines[i])) break;
+  }
+  return null;
+}
+function keyFromOfficialLabel(label: string, section: string) {
+  const n = normalize(label);
+  const s = normalize(section);
+  if (n === 'posse da bola') return 'possession';
+  if (s === 'gol' && n === 'total') return 'goals';
+  if (s === 'gol' && n === 'sofridos') return 'goals_conceded';
+  if (n === 'assistencias') return 'assists';
+  if (s === 'chutes' && n === 'total') return 'shots';
+  if (s === 'chutes' && n === 'no gol') return 'shotsontarget';
+  if (s === 'chutes' && n === 'para fora') return 'shots_off_target';
+  if (n === 'cartoes amarelos') return 'yellowcards';
+  if (n === 'cartoes vermelhos') return 'redcards';
+  if (n === 'faltas recebidas' || n === 'faltas') return 'fouls';
+  if (n === 'impedimentos') return 'offsides';
+  if (n === 'passes') return 'passes';
+  if (n === 'passes concluidos') return 'completedpasses';
+  if (n === 'cruzamentos') return 'crosses';
+  if (n === 'cruzamentos concluidos') return 'completedcrosses';
+  if (n === 'cantos' || n === 'escanteios') return 'corners';
+  if (n === 'livres') return 'freekicks';
+  if (n === 'penaltis convertidos') return 'penaltiesconverted';
+  if (n === 'erros forcados') return 'turnoversforced';
+  if (n === 'pressoes defensivas exercidas') return 'defensivepressures';
+  return null;
+}
+function extractOfficialStatsFromLines(lines: string[], label: string): Stat[] {
+  const start = lines.findIndex((line) => normalize(line).includes('estatisticas oficiais'));
+  if (start < 0) return [];
+  const stats: Stat[] = [];
+  let section = '';
+  const sectionNames = new Set(['ataque','gol','chutes','penetracoes nas proximidades da area adversaria','pedidos de bola','penetracoes','disciplina','distribuicao de jogo','jogadas de bola parada','defesa']);
+  for (let i = start + 1; i < lines.length; i += 1) {
+    const raw = lines[i].trim();
+    const n = normalize(raw);
+    if (!n) continue;
+    if (n.includes('confrontos diretos') || n.includes('estatisticas do jogador') || n.includes('encontros recentes')) break;
+    if (sectionNames.has(n)) { section = raw; continue; }
+    const key = keyFromOfficialLabel(raw, section);
+    if (!key) continue;
+    const pair = readPair(lines, i);
+    if (!pair || !valid(key, pair.home) || !valid(key, pair.away)) continue;
+    stats.push({ metricKey: key, metricName: metricName(key), home: pair.home, away: pair.away, path: `rendered-official:${label}:${section}:${raw}`, sourceUrl: 'fifa-rendered-official' });
+  }
+  return stats;
+}
 function extractRenderedTextStats(snapshots: Capture['snapshots'], pageText: string): Stat[] {
   const stats: Stat[] = [];
   const sources = [...snapshots, { label: 'final-body-text', text: pageText }];
   for (const source of sources) {
+    const lines = source.text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+    const official = extractOfficialStatsFromLines(lines, source.label);
+    if (official.length > 0) { stats.push(...official); continue; }
     const text = source.text.replace(/\s+/g, ' ');
     for (const [key, def] of Object.entries(METRICS)) for (const alias of def.aliases) {
       const values = numbersNear(text, alias);
@@ -127,7 +199,7 @@ function extractRenderedTextStats(snapshots: Capture['snapshots'], pageText: str
   return stats;
 }
 function dedupe(stats: Stat[]) {
-  const rank = (s: Stat) => s.sourceUrl?.includes('cxm-api.fifa.com') ? 5 : s.sourceUrl === 'browser-dom' ? 3 : s.sourceUrl?.startsWith('http') ? 2 : 1;
+  const rank = (s: Stat) => s.sourceUrl === 'fifa-rendered-official' ? 6 : s.sourceUrl?.includes('cxm-api.fifa.com') ? 5 : s.sourceUrl === 'browser-dom' ? 3 : s.sourceUrl?.startsWith('http') ? 2 : 1;
   const by = new Map<string, Stat>();
   for (const stat of stats) { if (!valid(stat.metricKey, stat.home) || !valid(stat.metricKey, stat.away)) continue; const current = by.get(stat.metricKey); if (!current || rank(stat) > rank(current) || String(stat.path).length < String(current.path).length) by.set(stat.metricKey, stat); }
   return Array.from(by.values());
@@ -268,7 +340,7 @@ async function run(body: Body) {
   const urlIds = idsFromUrl(url);
   const officialId = String(body.fifaMatchId ?? urlIds?.matchId ?? DEFAULT_MATCH_ID);
   const ids = urlIds ?? { competitionId: COMPETITION_ID, seasonId: SEASON_ID, stageId: STAGE_ID, matchId: officialId };
-  const maxStats = Math.max(1, Math.min(Number(body.maxStats ?? 10), 16));
+  const maxStats = Math.max(1, Math.min(Number(body.maxStats ?? 16), 32));
 
   const direct = await captureDirect(ids);
   let allStats = dedupe(direct.jsonItems.flatMap((item, i) => collect(item.json, `$cxm[${i}]`, [], item.url)));
@@ -289,7 +361,7 @@ async function run(body: Body) {
   return NextResponse.json({
     success: true,
     dryRun: Boolean(body.dryRun),
-    strategy: 'FIFA CxM API first: lê pages/sections oficiais, segue entryEndpoint recursivamente e só usa navegador como fallback.',
+    strategy: 'FIFA CxM API first + parser oficial por bloco renderizado: lê pages/sections oficiais e usa DOM apenas para estatísticas oficiais.',
     match,
     detected: { fifaMatchId: officialId, matchCentreUrl: url },
     parser: {
@@ -304,7 +376,7 @@ async function run(body: Body) {
       extractedTotal: allStats.length,
       processedStats: stats.length,
       maxStats,
-      strategy: allStats.length > 0 && !capture ? 'cxm-api-recursive' : 'browser-fallback',
+      strategy: allStats.length > 0 && !capture ? 'cxm-api-recursive' : 'browser-official-stats-block',
     },
     extractedStats: stats,
     savedValues,
