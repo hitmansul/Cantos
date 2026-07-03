@@ -8,9 +8,28 @@ export const maxDuration = 60;
 const WORLD_CUP_2026_KEY = 'world_cup_2026';
 const DEFAULT_URL = 'https://www.fifa.com/pt/match-centre/match/17/285023/289287/400021516';
 
-type MatchRow = { id: number; home_team_id: number | null; away_team_id: number | null; home_team_name: string; away_team_name: string; fixture_key: string; fifa_match_id?: string | null };
+type MatchRow = {
+  id: number;
+  home_team_id: number | null;
+  away_team_id: number | null;
+  home_team_name: string;
+  away_team_name: string;
+  fixture_key: string;
+  fifa_match_id?: string | null;
+};
 type Stat = { metricKey: string; metricName: string; home: number | null; away: number | null; raw?: unknown; path?: string; sourceUrl?: string };
-type Body = { url?: string; matchCentreUrl?: string; fifaMatchId?: string | number; localMatchId?: string | number; homeTeamName?: string; awayTeamName?: string; dryRun?: boolean; debug?: boolean };
+type Body = {
+  url?: string;
+  matchCentreUrl?: string;
+  fifaMatchId?: string | number;
+  localMatchId?: string | number;
+  homeTeamName?: string;
+  awayTeamName?: string;
+  dryRun?: boolean;
+  debug?: boolean;
+  fast?: boolean;
+  maxStats?: string | number;
+};
 type Capture = { pageText: string; snapshots: Array<{ label: string; text: string }>; networkJson: Array<{ url: string; json: unknown }>; networkCount: number; likelyNetworkCount: number };
 
 const METRICS: Record<string, { name: string; aliases: string[]; max: number }> = {
@@ -40,7 +59,15 @@ function idsFromUrl(url: string) { const m = url.match(/\/match-centre\/match\/(
 function urlFromMatchId(matchId: string | number) { return `https://www.fifa.com/pt/match-centre/match/17/285023/289287/${matchId}`; }
 function metricKey(value: unknown) { const c = compact(value); if (!c) return null; for (const key of KEYS) if (METRICS[key].aliases.some((a) => c.includes(compact(a)) || compact(a).includes(c))) return key; return null; }
 function metricName(key: string) { return METRICS[key]?.name ?? key; }
-function num(value: unknown): number | null { if (typeof value === 'number' && Number.isFinite(value)) return value; if (typeof value === 'string') { const n = Number(value.replace('%', '').replace(',', '.').trim()); return Number.isFinite(n) ? n : null; } if (value && typeof value === 'object' && !Array.isArray(value)) { const obj = value as Record<string, unknown>; for (const key of ['value','Value','statValue','numericValue','total','count','home','away','displayValue']) { const n = num(obj[key]); if (n !== null) return n; } } return null; }
+function num(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string') { const n = Number(value.replace('%', '').replace(',', '.').trim()); return Number.isFinite(n) ? n : null; }
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    const obj = value as Record<string, unknown>;
+    for (const key of ['value','Value','statValue','numericValue','total','count','home','away','displayValue']) { const n = num(obj[key]); if (n !== null) return n; }
+  }
+  return null;
+}
 function valid(key: string, value: number | null) { return value !== null && value >= 0 && value <= (METRICS[key]?.max ?? 2000); }
 function preview(value: unknown, max = 600) { return String(typeof value === 'string' ? value : JSON.stringify(value) ?? '').slice(0, max); }
 
@@ -88,7 +115,12 @@ function extractRenderedTextStats(snapshots: Capture['snapshots'], pageText: str
   }
   return stats;
 }
-function dedupe(stats: Stat[]) { const rank = (s: Stat) => s.sourceUrl === 'browser-dom' ? 3 : s.sourceUrl?.startsWith('http') ? 2 : 1; const by = new Map<string, Stat>(); for (const stat of stats) { if (!valid(stat.metricKey, stat.home) || !valid(stat.metricKey, stat.away)) continue; const current = by.get(stat.metricKey); if (!current || rank(stat) > rank(current) || String(stat.path).length < String(current.path).length) by.set(stat.metricKey, stat); } return Array.from(by.values()); }
+function dedupe(stats: Stat[]) {
+  const rank = (s: Stat) => s.sourceUrl === 'browser-dom' ? 3 : s.sourceUrl?.startsWith('http') ? 2 : 1;
+  const by = new Map<string, Stat>();
+  for (const stat of stats) { if (!valid(stat.metricKey, stat.home) || !valid(stat.metricKey, stat.away)) continue; const current = by.get(stat.metricKey); if (!current || rank(stat) > rank(current) || String(stat.path).length < String(current.path).length) by.set(stat.metricKey, stat); }
+  return Array.from(by.values());
+}
 
 async function launchBrowser() {
   const chromium = await import('@sparticuz/chromium');
@@ -96,33 +128,59 @@ async function launchBrowser() {
   const executablePath = await chromium.default.executablePath();
   return playwright.chromium.launch({ args: [...chromium.default.args, '--disable-dev-shm-usage', '--disable-gpu', '--no-zygote', '--no-sandbox'], executablePath, headless: true });
 }
-async function captureRendered(url: string): Promise<Capture> {
+async function captureRendered(url: string, fast = true): Promise<Capture> {
   const browser = await launchBrowser();
   const networkJson: Capture['networkJson'] = []; let networkCount = 0; let likelyNetworkCount = 0;
+  const startedAt = Date.now();
+  const budgetMs = fast ? 15000 : 35000;
   try {
-    const page = await browser.newPage({ userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/122 Safari/537.36', locale: 'pt-BR', viewport: { width: 1366, height: 1800 } });
-    await page.route('**/*', async (route) => { const type = route.request().resourceType(); if (['image','font','media'].includes(type)) return route.abort().catch(() => undefined); return route.continue().catch(() => undefined); });
-    page.on('response', async (response) => { const responseUrl = response.url(); if (!/fifa|match|football|api|graphql|stats|statistics|_next/i.test(responseUrl)) return; try { networkCount += 1; const ct = response.headers()['content-type'] ?? ''; if (!/json|text|javascript/i.test(ct) && !/api|graphql|_next/i.test(responseUrl)) return; const txt = await response.text().catch(() => ''); if (/stat|corner|possession|shot|foul|offside|pass|xg|attempt|escanteio|finaliza/i.test(`${responseUrl}\n${txt.slice(0, 8000)}`)) likelyNetworkCount += 1; let json: unknown = null; try { if (/json/i.test(ct) || /^[\[{]/.test(txt.trim())) json = JSON.parse(txt); } catch {} if (json) networkJson.push({ url: responseUrl, json }); } catch {} });
-    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
-    await page.waitForTimeout(2500);
+    const page = await browser.newPage({ userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/122 Safari/537.36', locale: 'pt-BR', viewport: { width: 1280, height: 1200 } });
+    await page.route('**/*', async (route) => { const type = route.request().resourceType(); if (['image','font','media','stylesheet'].includes(type)) return route.abort().catch(() => undefined); return route.continue().catch(() => undefined); });
+    page.on('response', async (response) => {
+      const responseUrl = response.url();
+      if (!/fifa|match|football|api|graphql|stats|statistics|_next/i.test(responseUrl)) return;
+      try {
+        networkCount += 1;
+        const ct = response.headers()['content-type'] ?? '';
+        if (!/json|text|javascript/i.test(ct) && !/api|graphql|_next/i.test(responseUrl)) return;
+        const txt = await response.text().catch(() => '');
+        if (/stat|corner|possession|shot|foul|offside|pass|xg|attempt|escanteio|finaliza/i.test(`${responseUrl}\n${txt.slice(0, 8000)}`)) likelyNetworkCount += 1;
+        let json: unknown = null;
+        try { if (/json/i.test(ct) || /^[\[{]/.test(txt.trim())) json = JSON.parse(txt); } catch {}
+        if (json) networkJson.push({ url: responseUrl, json });
+      } catch {}
+    });
+    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: fast ? 12000 : 30000 }).catch(() => undefined);
+    await page.waitForTimeout(fast ? 900 : 2500);
     const snapshots: Capture['snapshots'] = [];
-    async function snap(label: string) { const text = await page.locator('body').innerText({ timeout: 5000 }).catch(() => ''); snapshots.push({ label, text: text.slice(0, 15000) }); }
+    async function snap(label: string) { const text = await page.locator('body').innerText({ timeout: 2500 }).catch(() => ''); snapshots.push({ label, text: text.slice(0, 12000) }); }
     await snap('initial');
-    for (const label of ['Estatísticas', 'Estatisticas', 'Statistics', 'Dados', 'Match facts', 'Stats']) { const locator = page.getByText(label, { exact: false }).first(); if (await locator.count().catch(() => 0)) { await locator.click({ timeout: 2500 }).catch(() => undefined); await page.waitForTimeout(1200); await snap(`clicked-${label}`); } }
-    for (let i = 0; i < 4; i += 1) { await page.mouse.wheel(0, 1400).catch(() => undefined); await page.waitForTimeout(700); await snap(`scroll-${i + 1}`); }
-    const clickableTexts = await page.locator('button, [role="tab"], [role="button"], a').evaluateAll((els) => Array.from(new Set(els.map((el) => (el.textContent || '').trim()).filter((t) => t && /estat|stat|dados|match|jogo|resumo|summary/i.test(t)).slice(0, 12)))).catch(() => [] as string[]);
-    for (const text of clickableTexts) { await page.getByText(text, { exact: false }).first().click({ timeout: 2000 }).catch(() => undefined); await page.waitForTimeout(800); await snap(`auto-click-${text}`); }
-    const pageText = await page.locator('body').innerText({ timeout: 5000 }).catch(() => '');
+    for (const label of ['Estatísticas', 'Estatisticas', 'Statistics', 'Stats']) {
+      if (Date.now() - startedAt > budgetMs - 3500) break;
+      const locator = page.getByText(label, { exact: false }).first();
+      if (await locator.count().catch(() => 0)) { await locator.click({ timeout: 1500 }).catch(() => undefined); await page.waitForTimeout(700); await snap(`clicked-${label}`); }
+    }
+    const scrolls = fast ? 1 : 4;
+    for (let i = 0; i < scrolls; i += 1) {
+      if (Date.now() - startedAt > budgetMs - 3000) break;
+      await page.mouse.wheel(0, 1200).catch(() => undefined); await page.waitForTimeout(500); await snap(`scroll-${i + 1}`);
+    }
+    const pageText = await page.locator('body').innerText({ timeout: 2500 }).catch(() => '');
     return { pageText, snapshots, networkJson, networkCount, likelyNetworkCount };
   } finally { await browser.close().catch(() => undefined); }
 }
-async function findMatch(body: Body, url: string): Promise<MatchRow | null> { if (body.localMatchId) { const rows = await sql`SELECT id, home_team_id, away_team_id, home_team_name, away_team_name, fixture_key, fifa_match_id FROM world_cup_matches WHERE id = ${Number(body.localMatchId)} LIMIT 1`; if (rows[0]) return rows[0] as MatchRow; } const officialId = String(body.fifaMatchId ?? idsFromUrl(url)?.matchId ?? ''); if (officialId) { const rows = await sql`SELECT id, home_team_id, away_team_id, home_team_name, away_team_name, fixture_key, fifa_match_id FROM world_cup_matches WHERE competition_key = ${WORLD_CUP_2026_KEY} AND fifa_match_id = ${officialId} LIMIT 1`; if (rows[0]) return rows[0] as MatchRow; } return null; }
+async function findMatch(body: Body, url: string): Promise<MatchRow | null> {
+  if (body.localMatchId) { const rows = await sql`SELECT id, home_team_id, away_team_id, home_team_name, away_team_name, fixture_key, fifa_match_id FROM world_cup_matches WHERE id = ${Number(body.localMatchId)} LIMIT 1`; if (rows[0]) return rows[0] as MatchRow; }
+  const officialId = String(body.fifaMatchId ?? idsFromUrl(url)?.matchId ?? '');
+  if (officialId) { const rows = await sql`SELECT id, home_team_id, away_team_id, home_team_name, away_team_name, fixture_key, fifa_match_id FROM world_cup_matches WHERE competition_key = ${WORLD_CUP_2026_KEY} AND fifa_match_id = ${officialId} LIMIT 1`; if (rows[0]) return rows[0] as MatchRow; }
+  return null;
+}
 async function save(match: MatchRow, stat: Stat, url: string, officialId: string, reversed: boolean) {
   const rows = [{ teamId: reversed ? match.away_team_id : match.home_team_id, value: reversed ? stat.away : stat.home, side: 'home' }, { teamId: reversed ? match.home_team_id : match.away_team_id, value: reversed ? stat.home : stat.away, side: 'away' }];
   let count = 0;
   for (const row of rows) {
     if (!row.teamId || row.value === null) continue;
-    const payload = JSON.stringify({ importedBy: 'fifa-match-centre-option-3-dom-network-upsert-constraint', matchCentreUrl: url, fifaMatchId: officialId, sourceUrl: stat.sourceUrl, path: stat.path, raw: stat.raw, side: row.side });
+    const payload = JSON.stringify({ importedBy: 'fifa-match-centre-timeout-safe-fast', matchCentreUrl: url, fifaMatchId: officialId, sourceUrl: stat.sourceUrl, path: stat.path, raw: stat.raw, side: row.side });
     await sql`
       INSERT INTO world_cup_match_statistics (match_id, team_id, period, metric_key, metric_name, value_numeric, source_key, source_payload, source_updated_at)
       VALUES (${match.id}, ${row.teamId}, 'match', ${stat.metricKey}, ${stat.metricName}, ${Number(row.value)}, 'fifa', ${payload}::jsonb, NOW())
@@ -137,14 +195,24 @@ async function save(match: MatchRow, stat: Stat, url: string, officialId: string
 async function run(body: Body) {
   const url = body.matchCentreUrl ?? body.url ?? (body.fifaMatchId ? urlFromMatchId(body.fifaMatchId) : DEFAULT_URL);
   const officialId = String(body.fifaMatchId ?? idsFromUrl(url)?.matchId ?? '');
-  const capture = await captureRendered(url);
-  const stats = dedupe([...capture.networkJson.flatMap((item, i) => collect(item.json, `$network[${i}]`, [], item.url)), ...extractRenderedTextStats(capture.snapshots, capture.pageText)]);
+  const maxStats = Math.max(1, Math.min(Number(body.maxStats ?? 10), 16));
+  const capture = await captureRendered(url, body.fast !== false);
+  const allStats = dedupe([...capture.networkJson.flatMap((item, i) => collect(item.json, `$network[${i}]`, [], item.url)), ...extractRenderedTextStats(capture.snapshots, capture.pageText)]);
+  const stats = allStats.slice(0, maxStats);
   const match = await findMatch(body, url);
   if (!match) return NextResponse.json({ success: false, error: 'Partida não encontrada no banco.', detected: { officialId, url }, extractedStats: stats, parser: { networkCount: capture.networkCount, likelyNetworkCount: capture.likelyNetworkCount, snapshots: capture.snapshots.length } }, { status: 404 });
   const reversed = Boolean(body.homeTeamName && body.awayTeamName && sameTeam(match.home_team_name, body.awayTeamName) && sameTeam(match.away_team_name, body.homeTeamName));
   let savedValues = 0;
-  if (!body.dryRun) { if (officialId) await sql`UPDATE world_cup_matches SET fifa_match_id = ${officialId}, source_payload = COALESCE(source_payload, '{}'::jsonb) || ${JSON.stringify({ fifaMatchId: officialId, matchCentreUrl: url, option3DomNetwork: true })}::jsonb, source_updated_at = NOW(), updated_at = NOW() WHERE id = ${match.id}`; for (const stat of stats) savedValues += await save(match, stat, url, officialId, reversed); }
-  return NextResponse.json({ success: true, dryRun: Boolean(body.dryRun), strategy: 'Opção 3: DOM renderizado + UPSERT por constraint world_cup_match_statistics_unique.', match, detected: { fifaMatchId: officialId, matchCentreUrl: url }, parser: { networkCount: capture.networkCount, likelyNetworkCount: capture.likelyNetworkCount, snapshots: capture.snapshots.length, pageTextLength: capture.pageText.length, strategy: 'rendered-dom-plus-network-upsert-on-constraint' }, extractedStats: stats, savedValues, warning: stats.length === 0 ? 'Navegador carregou a página, mas o DOM renderizado não continha pares reconhecíveis.' : null, debug: body.debug ? { snapshots: capture.snapshots.map((s) => ({ label: s.label, text: s.text.slice(0, 2500) })), networkSamples: capture.networkJson.slice(0, 8).map((n) => ({ url: n.url, preview: preview(n.json) })) } : undefined, lastUpdated: new Date().toISOString() });
+  if (!body.dryRun) {
+    if (officialId) await sql`UPDATE world_cup_matches SET fifa_match_id = ${officialId}, source_payload = COALESCE(source_payload, '{}'::jsonb) || ${JSON.stringify({ fifaMatchId: officialId, matchCentreUrl: url, option3DomNetwork: true, fastImporter: true })}::jsonb, source_updated_at = NOW(), updated_at = NOW() WHERE id = ${match.id}`;
+    for (const stat of stats) savedValues += await save(match, stat, url, officialId, reversed);
+  }
+  return NextResponse.json({ success: true, dryRun: Boolean(body.dryRun), strategy: 'Importador FIFA timeout-safe: navegador rápido, coleta incremental e limite de estatísticas por execução.', match, detected: { fifaMatchId: officialId, matchCentreUrl: url }, parser: { networkCount: capture.networkCount, likelyNetworkCount: capture.likelyNetworkCount, snapshots: capture.snapshots.length, pageTextLength: capture.pageText.length, extractedTotal: allStats.length, processedStats: stats.length, maxStats, strategy: 'fast-rendered-dom-plus-network-upsert' }, extractedStats: stats, savedValues, warning: stats.length === 0 ? 'Navegador carregou a página, mas o DOM renderizado não continha pares reconhecíveis.' : null, debug: body.debug ? { snapshots: capture.snapshots.map((s) => ({ label: s.label, text: s.text.slice(0, 2500) })), networkSamples: capture.networkJson.slice(0, 8).map((n) => ({ url: n.url, preview: preview(n.json) })) } : undefined, lastUpdated: new Date().toISOString() });
 }
-export async function GET(request: NextRequest) { try { const p = request.nextUrl.searchParams; return await run({ url: p.get('url') ?? undefined, matchCentreUrl: p.get('matchCentreUrl') ?? undefined, fifaMatchId: p.get('fifaMatchId') ?? undefined, localMatchId: p.get('localMatchId') ?? undefined, homeTeamName: p.get('homeTeamName') ?? undefined, awayTeamName: p.get('awayTeamName') ?? undefined, dryRun: p.get('dryRun') !== 'false', debug: p.get('debug') === 'true' }); } catch (error) { return NextResponse.json({ success: false, error: error instanceof Error ? error.message : 'Erro no importador Option 3 Match Centre.' }, { status: 500 }); } }
-export async function POST(request: NextRequest) { try { return await run(await request.json().catch(() => ({}))); } catch (error) { return NextResponse.json({ success: false, error: error instanceof Error ? error.message : 'Erro no importador Option 3 Match Centre.' }, { status: 500 }); } }
+export async function GET(request: NextRequest) {
+  try {
+    const p = request.nextUrl.searchParams;
+    return await run({ url: p.get('url') ?? undefined, matchCentreUrl: p.get('matchCentreUrl') ?? undefined, fifaMatchId: p.get('fifaMatchId') ?? undefined, localMatchId: p.get('localMatchId') ?? undefined, homeTeamName: p.get('homeTeamName') ?? undefined, awayTeamName: p.get('awayTeamName') ?? undefined, dryRun: p.get('dryRun') !== 'false', debug: p.get('debug') === 'true', fast: p.get('fast') !== 'false', maxStats: p.get('maxStats') ?? undefined });
+  } catch (error) { return NextResponse.json({ success: false, error: error instanceof Error ? error.message : 'Erro no importador timeout-safe Match Centre.' }, { status: 500 }); }
+}
+export async function POST(request: NextRequest) { try { return await run(await request.json().catch(() => ({}))); } catch (error) { return NextResponse.json({ success: false, error: error instanceof Error ? error.message : 'Erro no importador timeout-safe Match Centre.' }, { status: 500 }); } }
