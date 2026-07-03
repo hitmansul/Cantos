@@ -24,6 +24,13 @@ const TEAM_CODES: Record<string, string[]> = {
   mexico:['MEX'], equador:['ECU'], ecuador:['ECU'], franca:['FRA'], france:['FRA'], suecia:['SWE'], sweden:['SWE'], 'costa do marfim':['CIV'], norway:['NOR'], noruega:['NOR'], 'africa do sul':['RSA','ZAF'], canada:['CAN'], argelia:['ALG'], algeria:['ALG'], austria:['AUT'], 'rd congo':['COD'], congo:['COD'], uzbequistao:['UZB'], uzbekistan:['UZB'], panama:['PAN'], inglaterra:['ENG'], england:['ENG'], croacia:['CRO'], croatia:['CRO'], gana:['GHA'], ghana:['GHA'], 'nova zelandia':['NZL'], belgium:['BEL'], belgica:['BEL'], egito:['EGY'], egypt:['EGY'], ira:['IRN'], iran:['IRN'], 'cabo verde':['CPV'], 'arabia saudita':['KSA'], uruguai:['URU'], uruguay:['URU'], espanha:['ESP'], spain:['ESP'], portugal:['POR'], brasil:['BRA'], brazil:['BRA'], japan:['JPN'], japao:['JPN'], alemanha:['GER'], germany:['GER'], paraguai:['PAR'], paraguay:['PAR'], holanda:['NED'], netherlands:['NED'], marrocos:['MAR'], morocco:['MAR']
 };
 
+const MANUAL_KNOWN: Array<{ home: string; away: string; id: string }> = [
+  { home: 'Brasil', away: 'Japão', id: '400021516' },
+  { home: 'Alemanha', away: 'Paraguai', id: '400021513' },
+  { home: 'Holanda', away: 'Marrocos', id: '400021522' },
+  { home: 'Inglaterra', away: 'RD Congo', id: '400065454' },
+];
+
 type DbMatch = { id: number; home_team_name: string; away_team_name: string; kickoff_at: string | null; fifa_match_id: string | null; source_payload: unknown };
 type Candidate = { fifaMatchId: string; url: string; context: string; source: string; home?: string | null; away?: string | null; kickoff?: string | null; score?: string | null };
 
@@ -107,8 +114,18 @@ function collectObjects(value: unknown, source: string, out: Candidate[] = []) {
   Object.values(obj).forEach((v) => collectObjects(v, source, out));
   return out;
 }
+function knownCandidates(): Candidate[] {
+  return MANUAL_KNOWN.map((item) => ({
+    fifaMatchId: item.id,
+    url: `${MATCH_CENTRE_PREFIX}/${COMPETITION_ID}/${SEASON_ID}/${STAGE_ID}/${item.id}`,
+    context: `${item.home} ${item.away}`,
+    source: 'manual-known-fifa-match-centre',
+    home: item.home,
+    away: item.away,
+  }));
+}
 async function fetchCandidates() {
-  const all: Candidate[] = [];
+  const all: Candidate[] = [...knownCandidates()];
   for (const url of FIFA_SOURCES) {
     try {
       const res = await fetch(url, { cache: 'no-store', headers: { accept: 'application/json,text/html,*/*', 'accept-language': 'pt-BR,pt;q=0.9,en;q=0.8', referer: 'https://www.fifa.com/' } });
