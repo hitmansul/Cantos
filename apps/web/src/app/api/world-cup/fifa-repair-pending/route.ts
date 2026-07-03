@@ -22,6 +22,7 @@ const MANUAL_KNOWN: Array<{ home: string; away: string; id: string }> = [
   { home: 'Brasil', away: 'Japão', id: '400021516' },
   { home: 'Alemanha', away: 'Paraguai', id: '400021513' },
   { home: 'Holanda', away: 'Marrocos', id: '400021522' },
+  { home: 'Inglaterra', away: 'RD Congo', id: '400065454' },
 ];
 
 function normalize(value: unknown) {
@@ -68,22 +69,33 @@ function inferFifaId(match: Missing, explicit?: string | null) {
 }
 async function importBrowser(origin: string, match: Missing, fifaMatchId: string, dryRun: boolean) {
   const url = matchCentreUrl(fifaMatchId);
-  const response = await fetch(`${origin}/api/world-cup/import-fifa-match-centre-browser`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({
-      dryRun,
-      localMatchId: match.id,
-      fifaMatchId,
-      matchCentreUrl: url,
-      homeTeamName: match.home_team_name,
-      awayTeamName: match.away_team_name,
-    }),
-    cache: 'no-store',
-  });
-  let payload: unknown;
-  try { payload = await response.json(); } catch { payload = await response.text(); }
-  return { ok: response.ok, status: response.status, url, payload };
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 26000);
+  try {
+    const response = await fetch(`${origin}/api/world-cup/import-fifa-match-centre-browser`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        dryRun,
+        fast: true,
+        maxStats: 10,
+        localMatchId: match.id,
+        fifaMatchId,
+        matchCentreUrl: url,
+        homeTeamName: match.home_team_name,
+        awayTeamName: match.away_team_name,
+      }),
+      cache: 'no-store',
+      signal: controller.signal,
+    });
+    let payload: unknown;
+    try { payload = await response.json(); } catch { payload = await response.text(); }
+    return { ok: response.ok, status: response.status, url, payload };
+  } catch (error) {
+    return { ok: false, status: 0, url, payload: { error: error instanceof Error ? error.message : 'timeout ao chamar importador FIFA', timeoutSafe: true } };
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 export async function GET(request: NextRequest) {
@@ -113,7 +125,7 @@ export async function GET(request: NextRequest) {
       success: result.ok,
       dryRun,
       repaired: result.ok,
-      strategy: 'Reparo incremental seguro: processa apenas uma partida por execução para evitar timeout/memória na Vercel.',
+      strategy: 'Reparo incremental timeout-safe: processa uma partida por execução e chama importador FIFA em modo rápido com limite de 10 estatísticas.',
       selected: {
         localMatchId: selected.match.id,
         home: selected.match.home_team_name,
@@ -123,9 +135,9 @@ export async function GET(request: NextRequest) {
         matchCentreUrl: result.url,
       },
       result,
-      nextStep: result.ok ? 'Rode novamente este endpoint para tentar a próxima partida pendente mapeada.' : 'Verifique o payload de erro; se for sem estatísticas, a FIFA provavelmente ainda não publicou dados nessa página.',
+      nextStep: result.ok ? 'Rode novamente este endpoint para tentar a próxima partida pendente mapeada.' : 'O importador respondeu sem estourar a Vercel; verifique o payload para saber se a FIFA publicou estatísticas reconhecíveis.',
       lastUpdated: new Date().toISOString(),
-    }, { status: result.ok ? 200 : 502 });
+    }, { status: result.ok ? 200 : 207 });
   } catch (error) {
     return NextResponse.json({ success: false, error: error instanceof Error ? error.message : 'Erro no reparo incremental FIFA.' }, { status: 500 });
   }
