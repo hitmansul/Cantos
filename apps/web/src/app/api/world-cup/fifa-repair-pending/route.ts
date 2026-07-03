@@ -21,6 +21,8 @@ type Missing = {
 
 type Mapping = { id: string; source: string };
 
+type ImportResult = { ok: boolean; status: number; url: string; payload: unknown };
+
 const MANUAL_KNOWN: Array<{ home: string; away: string; id: string }> = [
   { home: 'Brasil', away: 'Japão', id: '400021516' },
   { home: 'Alemanha', away: 'Paraguai', id: '400021513' },
@@ -113,15 +115,26 @@ async function probeFifaId(match: Missing): Promise<Mapping | null> {
 async function inferFifaId(match: Missing, explicit?: string | null): Promise<Mapping | null> {
   return inferKnownFifaId(match, explicit) ?? (await probeFifaId(match));
 }
-async function importBrowser(origin: string, match: Missing, fifaMatchId: string, dryRun: boolean) {
+function savedValueCount(result: ImportResult) {
+  if (!result.payload || typeof result.payload !== 'object') return 0;
+  const payload = result.payload as Record<string, unknown>;
+  return Number(payload.savedValues ?? 0) || 0;
+}
+function extractedCount(result: ImportResult) {
+  if (!result.payload || typeof result.payload !== 'object') return 0;
+  const payload = result.payload as Record<string, unknown>;
+  const parser = payload.parser && typeof payload.parser === 'object' ? payload.parser as Record<string, unknown> : {};
+  return Number(parser.processedStats ?? parser.extractedTotal ?? 0) || 0;
+}
+async function importBrowser(origin: string, match: Missing, fifaMatchId: string, dryRun: boolean): Promise<ImportResult> {
   const url = matchCentreUrl(fifaMatchId);
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 28000);
+  const timer = setTimeout(() => controller.abort(), 54000);
   try {
     const response = await fetch(`${origin}/api/world-cup/import-fifa-match-centre-browser`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ dryRun, fast: true, maxStats: 24, localMatchId: match.id, fifaMatchId, matchCentreUrl: url, homeTeamName: match.home_team_name, awayTeamName: match.away_team_name }),
+      body: JSON.stringify({ dryRun, fast: false, maxStats: 32, localMatchId: match.id, fifaMatchId, matchCentreUrl: url, homeTeamName: match.home_team_name, awayTeamName: match.away_team_name }),
       cache: 'no-store',
       signal: controller.signal,
     });
@@ -142,40 +155,48 @@ export async function GET(request: NextRequest) {
     const localMatchId = params.get('localMatchId') ?? params.get('matchId');
     const explicitFifaId = params.get('fifaMatchId');
     const rows = await missingRows(localMatchId);
-    let selected: { match: Missing; mapping: Mapping } | null = null;
     const checked: Array<{ localMatchId: number; home: string; away: string; mapping: Mapping | null }> = [];
+    const attempts: Array<{ selected: { localMatchId: number; home: string; away: string; fifaMatchId: string; matchedBy: string; matchCentreUrl: string }; result: ImportResult; savedValues: number; extractedStats: number }> = [];
 
-    for (const match of rows.slice(0, 8)) {
+    for (const match of rows.slice(0, localMatchId ? 1 : 10)) {
       const mapping = await inferFifaId(match, explicitFifaId);
       checked.push({ localMatchId: match.id, home: match.home_team_name, away: match.away_team_name, mapping });
-      if (mapping) { selected = { match, mapping }; break; }
+      if (!mapping) continue;
+      const result = await importBrowser(request.nextUrl.origin, match, mapping.id, dryRun);
+      const attempt = {
+        selected: { localMatchId: match.id, home: match.home_team_name, away: match.away_team_name, fifaMatchId: mapping.id, matchedBy: mapping.source, matchCentreUrl: result.url },
+        result,
+        savedValues: savedValueCount(result),
+        extractedStats: extractedCount(result),
+      };
+      attempts.push(attempt);
+      if ((dryRun && attempt.extractedStats > 0) || (!dryRun && attempt.savedValues > 0)) {
+        return NextResponse.json({
+          success: true,
+          dryRun,
+          repaired: !dryRun,
+          strategy: 'Reparo incremental robusto: tenta até 10 partidas pendentes e só considera reparado quando salva estatísticas FIFA.',
+          selected: attempt.selected,
+          checked,
+          attempts,
+          nextStep: 'Rode novamente este endpoint para reparar a próxima partida pendente.',
+          lastUpdated: new Date().toISOString(),
+        });
+      }
+      if (explicitFifaId || localMatchId) break;
     }
 
-    if (!selected) {
-      return NextResponse.json({
-        success: true,
-        dryRun,
-        repaired: false,
-        reason: 'Nenhuma partida pendente teve fifa_match_id localizado automaticamente nesta execução.',
-        pendingCount: rows.length,
-        checked,
-        pendingSample: rows.slice(0, 20).map((row) => ({ localMatchId: row.id, home: row.home_team_name, away: row.away_team_name, fifaMatchId: row.fifa_match_id, auditUrl: `${request.nextUrl.origin}/api/world-cup/fifa-availability-audit?matchId=${row.id}` })),
-        lastUpdated: new Date().toISOString(),
-      });
-    }
-
-    const result = await importBrowser(request.nextUrl.origin, selected.match, selected.mapping.id, dryRun);
     return NextResponse.json({
-      success: result.ok,
+      success: false,
       dryRun,
-      repaired: result.ok,
-      strategy: 'Reparo incremental timeout-safe: localiza fifa_match_id por mapeamento conhecido ou CxM probe e importa uma partida por execução.',
-      selected: { localMatchId: selected.match.id, home: selected.match.home_team_name, away: selected.match.away_team_name, fifaMatchId: selected.mapping.id, matchedBy: selected.mapping.source, matchCentreUrl: result.url },
+      repaired: false,
+      strategy: 'Reparo incremental robusto: nenhuma tentativa desta execução gravou estatísticas.',
+      pendingCount: rows.length,
       checked,
-      result,
-      nextStep: result.ok ? 'Rode novamente este endpoint para tentar a próxima partida pendente mapeada.' : 'O importador respondeu sem estourar a Vercel; verifique o payload para saber se a FIFA publicou estatísticas reconhecíveis.',
+      attempts,
+      pendingSample: rows.slice(0, 20).map((row) => ({ localMatchId: row.id, home: row.home_team_name, away: row.away_team_name, fifaMatchId: row.fifa_match_id, auditUrl: `${request.nextUrl.origin}/api/world-cup/fifa-availability-audit?matchId=${row.id}` })),
       lastUpdated: new Date().toISOString(),
-    }, { status: result.ok ? 200 : 207 });
+    }, { status: attempts.length ? 207 : 200 });
   } catch (error) {
     return NextResponse.json({ success: false, error: error instanceof Error ? error.message : 'Erro no reparo incremental FIFA.' }, { status: 500 });
   }
