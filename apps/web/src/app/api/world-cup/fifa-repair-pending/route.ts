@@ -126,15 +126,15 @@ function extractedCount(result: ImportResult) {
   const parser = payload.parser && typeof payload.parser === 'object' ? payload.parser as Record<string, unknown> : {};
   return Number(parser.processedStats ?? parser.extractedTotal ?? 0) || 0;
 }
-async function importBrowser(origin: string, match: Missing, fifaMatchId: string, dryRun: boolean): Promise<ImportResult> {
+async function importFifaStats(origin: string, match: Missing, fifaMatchId: string, dryRun: boolean): Promise<ImportResult> {
   const url = matchCentreUrl(fifaMatchId);
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 54000);
   try {
-    const response = await fetch(`${origin}/api/world-cup/import-fifa-match-centre-browser`, {
+    const response = await fetch(`${origin}/api/world-cup/import-fifa-fdh`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ dryRun, fast: false, maxStats: 32, localMatchId: match.id, fifaMatchId, matchCentreUrl: url, homeTeamName: match.home_team_name, awayTeamName: match.away_team_name }),
+      body: JSON.stringify({ dryRun, debug: false, localMatchId: match.id, fifaMatchId, matchCentreUrl: url }),
       cache: 'no-store',
       signal: controller.signal,
     });
@@ -142,7 +142,7 @@ async function importBrowser(origin: string, match: Missing, fifaMatchId: string
     try { payload = await response.json(); } catch { payload = await response.text(); }
     return { ok: response.ok, status: response.status, url, payload };
   } catch (error) {
-    return { ok: false, status: 0, url, payload: { error: error instanceof Error ? error.message : 'timeout ao chamar importador FIFA', timeoutSafe: true } };
+    return { ok: false, status: 0, url, payload: { error: error instanceof Error ? error.message : 'timeout ao chamar importador FIFA FDH', timeoutSafe: true } };
   } finally {
     clearTimeout(timer);
   }
@@ -162,7 +162,7 @@ export async function GET(request: NextRequest) {
       const mapping = await inferFifaId(match, explicitFifaId);
       checked.push({ localMatchId: match.id, home: match.home_team_name, away: match.away_team_name, mapping });
       if (!mapping) continue;
-      const result = await importBrowser(request.nextUrl.origin, match, mapping.id, dryRun);
+      const result = await importFifaStats(request.nextUrl.origin, match, mapping.id, dryRun);
       const attempt = {
         selected: { localMatchId: match.id, home: match.home_team_name, away: match.away_team_name, fifaMatchId: mapping.id, matchedBy: mapping.source, matchCentreUrl: result.url },
         result,
@@ -175,7 +175,7 @@ export async function GET(request: NextRequest) {
           success: true,
           dryRun,
           repaired: !dryRun,
-          strategy: 'Reparo incremental robusto: tenta até 10 partidas pendentes e só considera reparado quando salva estatísticas FIFA.',
+          strategy: 'Reparo incremental via FIFA FDH: tenta até 10 partidas pendentes e só considera reparado quando salva estatísticas.',
           selected: attempt.selected,
           checked,
           attempts,
@@ -190,7 +190,7 @@ export async function GET(request: NextRequest) {
       success: false,
       dryRun,
       repaired: false,
-      strategy: 'Reparo incremental robusto: nenhuma tentativa desta execução gravou estatísticas.',
+      strategy: 'Reparo incremental via FIFA FDH: nenhuma tentativa desta execução gravou estatísticas.',
       pendingCount: rows.length,
       checked,
       attempts,
