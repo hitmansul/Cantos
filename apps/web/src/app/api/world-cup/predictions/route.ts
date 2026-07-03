@@ -58,7 +58,7 @@ function n(value: unknown, fallback = 0) {
 }
 function round(value: number, digits = 1) {
   const factor = 10 ** digits;
-  return Math.round(value * factor) / factor;
+  return Math.floor(value * factor) / factor;
 }
 function clamp(value: number, min: number, max: number) {
   return Math.max(min, Math.min(max, value));
@@ -81,7 +81,7 @@ function matchIdentity(home: unknown, away: unknown, date: unknown) {
 }
 function probabilityOver(mean: number, line: number) {
   const z = (mean - line) / Math.max(1.8, Math.sqrt(Math.max(mean, 1)));
-  return clamp(Math.round(50 + z * 24), 5, 95);
+  return clamp(Math.floor(50 + z * 24), 5, 95);
 }
 function isFinishedStatus(status: unknown) {
   const value = normalize(status);
@@ -149,12 +149,12 @@ function model(home?: TeamAverages, away?: TeamAverages) {
   return {
     corners: { home: round(cornerBounds.home), away: round(cornerBounds.away), total: round(cornerBounds.total), over75: probabilityOver(cornerBounds.total, 7.5), over85: probabilityOver(cornerBounds.total, 8.5), over95: probabilityOver(cornerBounds.total, 9.5), over105: probabilityOver(cornerBounds.total, 10.5) },
     cards: { home: round(cardBounds.home), away: round(cardBounds.away), total: round(cardBounds.total), over35: probabilityOver(cardBounds.total, 3.5), over45: probabilityOver(cardBounds.total, 4.5), over55: probabilityOver(cardBounds.total, 5.5) },
-    goals: { homeXg: round(homeXg, 2), awayXg: round(awayXg, 2), totalXg: round(totalXg, 2), bothTeamsScore: clamp(Math.round(30 + Math.min(homeXg, awayXg) * 24), 10, 78), over25: probabilityOver(totalXg, 2.5) },
+    goals: { homeXg: round(homeXg, 2), awayXg: round(awayXg, 2), totalXg: round(totalXg, 2), bothTeamsScore: clamp(Math.floor(30 + Math.min(homeXg, awayXg) * 24), 10, 78), over25: probabilityOver(totalXg, 2.5) },
     shots: { home: round(homeShots), away: round(awayShots), total: round(homeShots + awayShots) },
     fifaAverages: { homeMatches: homeSamples, awayMatches: awaySamples, homeCornersFor: round(homeCornersFor), awayCornersFor: round(awayCornersFor), homeCardsFor: round(homeCardsFor), awayCardsFor: round(awayCardsFor), homeXgFor: round(homeXgFor, 2), awayXgFor: round(awayXgFor, 2) },
-    recentHistory: { homeMatches: homeSamples, awayMatches: awaySamples, source: sampleQuality > 0 ? 'Banco persistido da Copa, com limites anti-outlier' : 'Média base até a FIFA publicar estatísticas suficientes' },
+    recentHistory: { homeMatches: homeSamples, awayMatches: awaySamples, source: sampleQuality > 0 ? 'Banco persistido da Copa, com limites anti-outlier e arredondamento para baixo' : 'Média base até a FIFA publicar estatísticas suficientes' },
     confidence,
-    note: sampleQuality > 0 ? 'Modelo validado com médias da Copa e limites para evitar outliers como escanteios acima do padrão.' : 'Modelo conservador com média padrão até existir histórico oficial suficiente para as duas seleções.',
+    note: sampleQuality > 0 ? 'Modelo validado com médias da Copa, limites anti-outlier e arredondamento sempre para baixo.' : 'Modelo conservador com média padrão até existir histórico oficial suficiente para as duas seleções.',
   };
 }
 
@@ -267,7 +267,7 @@ export async function GET(request: NextRequest) {
         const away = byTeam.get(teamKey(match.away_team_name));
         return { id: match.id, homeTeamName: match.home_team_name, awayTeamName: match.away_team_name, kickoffAt: match.kickoff_at, groupName: match.group_name, roundName: match.round_name, status: match.status, referee: match.referee ?? null, sourceKey: match.source_key, prediction: model(home, away), samples: { homeMatches: home?.matches ?? 0, awayMatches: away?.matches ?? 0 } };
       });
-    return NextResponse.json({ success: true, predictions, count: predictions.length, validation: { corners: 'totais limitados entre 6.5 e 12.5 para evitar outliers incompatíveis com futebol profissional', cards: 'cartões limitados entre 1.5 e 6.8', sourcePriority: 'FIFA > 365Scores > API-Football > média base' }, sources: { databaseUpcoming: dbUpcoming.length, liveUpcoming: liveUpcoming.length, fallbackUpcoming: usedFallback ? predictions.length : 0, teamAverages: averages.length }, lastUpdated: new Date().toISOString() });
+    return NextResponse.json({ success: true, predictions, count: predictions.length, validation: { rounding: 'médias arredondadas sempre para baixo', corners: 'totais limitados entre 6.5 e 12.5 para evitar outliers incompatíveis com futebol profissional', cards: 'cartões limitados entre 1.5 e 6.8', sourcePriority: 'FIFA > 365Scores > API-Football > média base' }, sources: { databaseUpcoming: dbUpcoming.length, liveUpcoming: liveUpcoming.length, fallbackUpcoming: usedFallback ? predictions.length : 0, teamAverages: averages.length }, lastUpdated: new Date().toISOString() });
   } catch (error) {
     return NextResponse.json({ success: false, error: error instanceof Error ? error.message : 'Erro ao gerar previsões.' }, { status: 500 });
   }
