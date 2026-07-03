@@ -20,6 +20,11 @@ async function callWithTimeout(url: string, timeoutMs: number) {
     clearTimeout(timer);
   }
 }
+function savedCount(payload: unknown) {
+  if (!payload || typeof payload !== 'object') return 0;
+  const record = payload as Record<string, unknown>;
+  return Number(record.totalSaved ?? record.savedValues ?? 0) || 0;
+}
 
 export async function GET(request: Request) {
   const startedAt = Date.now();
@@ -29,26 +34,28 @@ export async function GET(request: Request) {
 
   if (step === 'status') {
     const status = await callWithTimeout(origin + '/api/world-cup/fifa-status', 9000);
+    const coverage = await callWithTimeout(origin + '/api/world-cup/provider-coverage?limit=30', 12000);
     return NextResponse.json({
       success: true,
       route: 'provider-sync',
       mode: 'status-only-safe-tick',
-      policy: 'FIFA first; 365Scores/API fallback remains available, but heavy imports run in isolated endpoints.',
+      policy: '365Scores como fonte principal de estatisticas; FIFA como complemento oficial quando disponivel.',
       status,
+      coverage,
       nextSteps: {
-        backfill: origin + '/api/world-cup/provider-sync?step=backfill',
+        stats365: origin + '/api/world-cup/provider-sync?step=stats365',
         repair: origin + '/api/world-cup/provider-sync?step=repair',
-        pmsr: origin + '/api/world-cup/provider-sync?step=pmsr'
+        all: origin + '/api/world-cup/provider-sync?step=all'
       },
-      buildMarker: 'provider-sync-v2-status-safe',
+      buildMarker: 'provider-sync-v3-365scores-primary',
       durationMs: Date.now() - startedAt,
       lastUpdated: new Date().toISOString()
     });
   }
 
-  if (step === 'backfill') {
-    const backfill = await callWithTimeout(origin + '/api/world-cup/fifa-match-id-backfill?dryRun=false&pendingOnly=true&limit=20', 18000);
-    return NextResponse.json({ success: backfill.ok, route: 'provider-sync', step, backfill, durationMs: Date.now() - startedAt, lastUpdated: new Date().toISOString() }, { status: backfill.ok ? 200 : 207 });
+  if (step === 'stats365') {
+    const stats365 = await callWithTimeout(origin + '/api/world-cup/import-365-pending?dryRun=false&limit=10', 52000);
+    return NextResponse.json({ success: stats365.ok, route: 'provider-sync', step, stats365, durationMs: Date.now() - startedAt, lastUpdated: new Date().toISOString() }, { status: stats365.ok ? 200 : 207 });
   }
 
   if (step === 'repair') {
@@ -56,10 +63,12 @@ export async function GET(request: Request) {
     return NextResponse.json({ success: repair.ok, route: 'provider-sync', step, repair, durationMs: Date.now() - startedAt, lastUpdated: new Date().toISOString() }, { status: repair.ok ? 200 : 207 });
   }
 
-  if (step === 'pmsr') {
-    const pmsr = await callWithTimeout(origin + '/api/world-cup/fifa-sync-latest?dryRun=false&limit=1&mode=both&forceMissing=true', 28000);
-    return NextResponse.json({ success: pmsr.ok, route: 'provider-sync', step, pmsr, durationMs: Date.now() - startedAt, lastUpdated: new Date().toISOString() }, { status: pmsr.ok ? 200 : 207 });
+  if (step === 'all') {
+    const stats365 = await callWithTimeout(origin + '/api/world-cup/import-365-pending?dryRun=false&limit=10', 52000);
+    const statsSaved = savedCount(stats365.payload);
+    const fifaRepair = statsSaved > 0 ? null : await callWithTimeout(origin + '/api/world-cup/fifa-repair-pending?dryRun=false&skipBackfill=true', 28000);
+    return NextResponse.json({ success: stats365.ok || Boolean(fifaRepair?.ok), route: 'provider-sync', step, order: ['365Scores stats primary', 'FIFA complementary'], stats365, fifaRepair, durationMs: Date.now() - startedAt, lastUpdated: new Date().toISOString() }, { status: stats365.ok || fifaRepair?.ok ? 200 : 207 });
   }
 
-  return NextResponse.json({ success: false, error: 'step inválido', allowed: ['status', 'backfill', 'repair', 'pmsr'] }, { status: 400 });
+  return NextResponse.json({ success: false, error: 'step invalido', allowed: ['status', 'stats365', 'repair', 'all'] }, { status: 400 });
 }
