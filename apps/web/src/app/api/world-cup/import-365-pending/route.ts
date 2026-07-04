@@ -167,13 +167,20 @@ async function saveStats(match: MatchRow, gameId: string, stats: Scores365Statis
     });
   }
   if (dryRun || rows.length === 0) return { parsedRows: rows.length, savedRows: 0 };
-  await sql`DELETE FROM world_cup_match_statistics WHERE match_id = ${match.id} AND source_key = ${SOURCE_KEY}`;
   let savedRows = 0;
   for (const row of rows) {
     const payload = JSON.stringify({ ...row.sourcePayload, importedBy: 'import-365-pending', scores365GameId: gameId });
     await sql`
       INSERT INTO world_cup_match_statistics (match_id, team_id, period, metric_key, metric_name, value_numeric, value_text, source_key, source_payload, source_updated_at)
       VALUES (${match.id}, ${row.teamId}, ${row.period}, ${row.metricKey}, ${row.metricName}, ${row.valueNumeric}, ${row.valueText}, ${SOURCE_KEY}, ${payload}::jsonb, NOW())
+      ON CONFLICT ON CONSTRAINT world_cup_match_statistics_unique
+      DO UPDATE SET
+        metric_name = EXCLUDED.metric_name,
+        value_numeric = EXCLUDED.value_numeric,
+        value_text = EXCLUDED.value_text,
+        source_key = EXCLUDED.source_key,
+        source_payload = EXCLUDED.source_payload,
+        source_updated_at = NOW()
     `;
     savedRows += 1;
   }
@@ -184,7 +191,7 @@ export async function GET(request: NextRequest) {
   try {
     const params = request.nextUrl.searchParams;
     const dryRun = params.get('dryRun') !== 'false';
-    const limit = Math.max(1, Math.min(20, Number(params.get('limit') ?? 10)));
+    const limit = Math.max(1, Math.min(5, Number(params.get('limit') ?? 1)));
     const localMatchId = params.get('localMatchId') ?? params.get('matchId');
     const matches = await getMatches(limit, localMatchId);
     const attempts = [] as unknown[];
@@ -211,7 +218,7 @@ export async function GET(request: NextRequest) {
       success: totalParsed > 0 || matches.length === 0,
       dryRun,
       provider: SOURCE_KEY,
-      strategy: 'Backfill robusto 365Scores: usa scores365_event_id/fixture_key, busca estatísticas por jogo individual, resolve competidores e grava no Neon mesmo sem fifaMatchId.',
+      strategy: 'Backfill 365Scores timeout-safe: processa poucos jogos por chamada e usa UPSERT para não falhar com estatísticas já existentes.',
       matchesChecked: matches.length,
       totalParsed,
       totalSaved,
