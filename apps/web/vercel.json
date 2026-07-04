@@ -5,7 +5,7 @@
       "schedule": "0 7 * * *"
     },
     {
-      "path": "/api/world-cup/provider-sync",
+      "path": "/api/world-cup/provider-sync-safe",
       "schedule": "30 7 * * *"
     }
   ]
