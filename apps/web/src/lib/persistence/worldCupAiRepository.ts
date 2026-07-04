@@ -31,6 +31,13 @@ const DISPLAY_NAMES: Record<string, string> = {
 const WORLD_CUP_TEAM_ALIASES = Object.keys(TEAM_KEY);
 
 type MetricAlias = { keys: string[]; label: string; aliases: string[]; combined?: 'cards' };
+type Aggregate = { name: string; key: string; total: number; count: number; source: string; avg: number };
+type StatSnapshot = {
+  hShots: number; aShots: number; hTarget: number; aTarget: number; hPoss: number; aPoss: number;
+  hXg: number; aXg: number; hCorners: number; aCorners: number; hCrosses: number; aCrosses: number;
+  hFouls: number; aFouls: number; hYellow: number; aYellow: number; hRed: number; aRed: number;
+};
+
 const METRICS: MetricAlias[] = [
   { keys: ['corners'], label: 'escanteios', aliases: ['escanteio', 'escanteios', 'corner', 'corners', 'cantos'] },
   { keys: ['shots'], label: 'finalizações', aliases: ['finalizacao', 'finalizacoes', 'chute', 'chutes', 'remate', 'remates', 'arremate', 'arremates', 'shots'] },
@@ -52,8 +59,6 @@ const METRICS: MetricAlias[] = [
   { keys: ['assists'], label: 'assistências', aliases: ['assistencias', 'assistencia', 'assists'] },
 ];
 
-type Aggregate = { name: string; key: string; total: number; count: number; source: string; avg: number };
-
 function teamKey(value: unknown) { const n = normalize(value); return TEAM_KEY[n] ?? n; }
 function teamLabel(value: unknown) { const key = teamKey(value); return DISPLAY_NAMES[key] ?? String(value ?? key); }
 function hasWholeTerm(question: string, term: string) { return ` ${normalize(question)} `.includes(` ${normalize(term)} `); }
@@ -62,9 +67,10 @@ function isWorldCupIntent(question: string) { const q = normalize(question); if 
 function metricScores(question: string) { const q = normalize(question); return METRICS.map((metric) => ({ metric, score: Math.max(...metric.aliases.map((alias) => q.lastIndexOf(normalize(alias)))) })).filter((item) => item.score >= 0).sort((a, b) => b.score - a.score); }
 function metricsFromQuestion(question: string) { const list = metricScores(question).map((item) => item.metric); return list.filter((metric, index) => list.findIndex((m) => m.label === metric.label) === index).slice(0, 4); }
 function metricFromQuestion(question: string) { return metricScores(question)[0]?.metric ?? null; }
-function isStatQuestion(question: string) { const q = normalize(question); return Boolean(metricFromQuestion(question)) || ['estatistica', 'estatisticas', 'quantas', 'quantos', 'quem teve mais', 'quem finalizou mais', 'qual foi', 'analise', 'analisa', 'desempenho', 'dominou', 'mereceu', 'justo', 'melhor', 'over', 'under', 'tendencia', 'ranking', 'top', 'media', 'média', 'comparar', 'compare'].some((term) => q.includes(normalize(term))); }
+function isStatQuestion(question: string) { const q = normalize(question); return Boolean(metricFromQuestion(question)) || ['estatistica', 'estatisticas', 'quantas', 'quantos', 'quem teve mais', 'quem finalizou mais', 'qual foi', 'analise', 'analisa', 'desempenho', 'dominou', 'mereceu', 'justo', 'melhor', 'over', 'under', 'tendencia', 'ranking', 'top', 'media', 'média', 'comparar', 'compare', 'btts', 'ambas marcam', 'aposta', 'apostas'].some((term) => q.includes(normalize(term))); }
 function wantsAnalysis(question: string) { const q = normalize(question); return ['analise', 'analisa', 'desempenho', 'quem foi melhor', 'dominou', 'dominio', 'mereceu', 'justo', 'explica', 'por que', 'porque', 'ofensivamente', 'pressionou', 'criou mais', 'jogo aberto', 'truncado'].some((term) => q.includes(normalize(term))); }
 function wantsCornerSpecialist(question: string) { const q = normalize(question); return (q.includes('escanteio') || q.includes('corner') || q.includes('canto') || q.includes('over') || q.includes('under')) && ['over', 'under', 'tendencia', 'tendência', 'linha'].some((term) => q.includes(normalize(term))); }
+function wantsBetting(question: string) { const q = normalize(question); return ['aposta', 'apostas', 'perfil', 'tendencia', 'tendência', 'over', 'under', 'btts', 'ambas marcam', 'linha', 'mercado'].some((term) => q.includes(normalize(term))); }
 function wantsRanking(question: string) { const q = normalize(question); return ['ranking', 'top', 'quem mais', 'maiores', 'lidera', 'lideram'].some((term) => q.includes(normalize(term))) && !q.includes('quem foi melhor'); }
 function wantsAverage(question: string) { const q = normalize(question); return q.includes('media') || q.includes('média') || q.includes('por jogo'); }
 function wantsComparison(question: string) { const q = normalize(question); return q.includes('compare') || q.includes('comparar') || q.includes('comparacao') || q.includes('comparação'); }
@@ -80,6 +86,9 @@ function bestTeamMetric(rows: any[], wantedTeam: string) { const wanted = teamKe
 function statValue(rows: any[], team: string, keys: string[]) { return numberValue(bestTeamMetric(rows.filter((row) => keys.includes(metricKey(row))), team)); }
 function header(match: any) { return `Copa do Mundo 2026 — ${teamLabel(match.home_team_name)} ${match.home_score ?? '-'} x ${match.away_score ?? '-'} ${teamLabel(match.away_team_name)}.`; }
 function defaultMetric() { return METRICS.find((metric) => metric.keys.includes('corners')) ?? METRICS[0]; }
+function confidenceFromRows(rows: any[]) { const available = new Set(rows.map((row) => metricKey(row))).size; const score = Math.min(98, Math.max(45, 55 + available * 3)); const label = score >= 85 ? 'alta' : score >= 70 ? 'média' : 'baixa'; return `${score}% (${label}, ${available} métricas disponíveis)`; }
+function diffLabel(a: number, b: number, key = '') { const diff = Math.abs(a - b); if (key.includes('possession')) return diff <= 3 ? 'equilíbrio' : a > b ? 'vantagem clara' : 'vantagem clara'; if (diff < 0.15) return 'equilíbrio'; if (diff < Math.max(1, Math.abs(a + b) * 0.08)) return 'leve vantagem'; return 'vantagem clara'; }
+function verdictText(name: string, confidence: string) { return `Veredito da IA: ${name}.\nConfiança da análise: ${confidence}.`; }
 
 async function findAskedMatch(question: string) {
   const matches = await sql`SELECT id, home_team_name, away_team_name, home_score, away_score, status, kickoff_at, group_name, round_name FROM world_cup_matches WHERE competition_key = ${WORLD_CUP_2026_KEY} ORDER BY kickoff_at DESC NULLS LAST, id DESC LIMIT 220`;
@@ -93,6 +102,7 @@ function filterMetricRows(rows: any[], metric: MetricAlias) { return rows.filter
 function dedupeBestRows(rows: any[]) { const grouped = new Map<string, any[]>(); for (const row of rows) { const key = `${row.match_id}:${teamKey(row.team_name)}:${metricKey(row)}`; grouped.set(key, [...(grouped.get(key) ?? []), row]); } return Array.from(grouped.values()).map((items) => items.sort((a, b) => sourcePriority(a.source_key) - sourcePriority(b.source_key))[0]); }
 function aggregateByTeam(rows: any[]): Aggregate[] { const map = new Map<string, Aggregate>(); for (const row of dedupeBestRows(rows)) { const key = teamKey(row.team_name); const current = map.get(key) ?? { name: teamLabel(key), key, total: 0, count: 0, source: row.source_key, avg: 0 }; current.total += numberValue(row); current.count += 1; if (sourcePriority(row.source_key) < sourcePriority(current.source)) current.source = row.source_key; current.name = teamLabel(key); map.set(key, current); } return Array.from(map.values()).map((item) => ({ ...item, avg: item.count ? item.total / item.count : 0 })).sort((a, b) => b.total - a.total); }
 function selectAggregate(aggregates: Aggregate[], key: string) { return aggregates.find((item) => item.key === key); }
+function snapshot(match: any, rows: any[]): StatSnapshot { const sourceRows = pickSourceRows(rows); return { hShots: statValue(sourceRows, match.home_team_name, ['shots']), aShots: statValue(sourceRows, match.away_team_name, ['shots']), hTarget: statValue(sourceRows, match.home_team_name, ['shots_on_target', 'shotsontarget']), aTarget: statValue(sourceRows, match.away_team_name, ['shots_on_target', 'shotsontarget']), hPoss: statValue(sourceRows, match.home_team_name, ['possession']), aPoss: statValue(sourceRows, match.away_team_name, ['possession']), hXg: statValue(sourceRows, match.home_team_name, ['expected_goals', 'xg']), aXg: statValue(sourceRows, match.away_team_name, ['expected_goals', 'xg']), hCorners: statValue(sourceRows, match.home_team_name, ['corners']), aCorners: statValue(sourceRows, match.away_team_name, ['corners']), hCrosses: statValue(sourceRows, match.home_team_name, ['crosses']), aCrosses: statValue(sourceRows, match.away_team_name, ['crosses']), hFouls: statValue(sourceRows, match.home_team_name, ['fouls']), aFouls: statValue(sourceRows, match.away_team_name, ['fouls']), hYellow: statValue(sourceRows, match.home_team_name, ['yellow_cards', 'yellowcards']), aYellow: statValue(sourceRows, match.away_team_name, ['yellow_cards', 'yellowcards']), hRed: statValue(sourceRows, match.home_team_name, ['red_cards', 'redcards']), aRed: statValue(sourceRows, match.away_team_name, ['red_cards', 'redcards']) }; }
 
 async function formatRanking(question: string) {
   const metric = metricFromQuestion(question) ?? defaultMetric();
@@ -103,7 +113,8 @@ async function formatRanking(question: string) {
   const useAvg = wantsAverage(question);
   const ranking = aggregateByTeam(rows).sort((a, b) => useAvg ? b.avg - a.avg : b.total - a.total).slice(0, 10);
   const lines = ranking.map((item, index) => `${index + 1}. ${item.name} — ${useAvg ? `${formatValue(item.avg, metric.keys[0])} por jogo` : `${formatValue(item.total, metric.keys[0])} no total`} (${item.count} jogos com dados)`).join('\n');
-  return `Ranking da Copa do Mundo 2026 — ${metric.label}.\n\n${lines}\n\nFonte: base local da Cantos, priorizando FIFA e usando 365Scores quando necessário.`;
+  const leader = ranking[0];
+  return `Ranking da Copa do Mundo 2026 — ${metric.label}.\n\nResumo executivo: ${leader?.name ?? 'a liderança'} lidera em ${metric.label}${useAvg ? ' por média' : ' no acumulado'}.\n\n${lines}\n\nFonte: base local da Cantos, priorizando FIFA e usando 365Scores quando necessário.`;
 }
 
 async function formatTeamAverage(question: string) {
@@ -116,7 +127,7 @@ async function formatTeamAverage(question: string) {
   if (rows.length === 0) return `Ainda não encontrei ${metric.label} para ${teams.map(teamLabel).join(' e ')} na base da Copa do Mundo.`;
   const aggregates = aggregateByTeam(rows).filter((item) => teams.includes(item.key));
   const lines = teams.map((team) => selectAggregate(aggregates, team)).filter(Boolean).map((item) => `- ${item!.name}: média de ${formatValue(item!.avg, metric.keys[0])} por jogo (${formatValue(item!.total, metric.keys[0])} no total em ${item!.count} jogos com dados)`).join('\n');
-  return `Média da Copa do Mundo 2026 — ${metric.label}.\n\n${lines}\n\nFonte: base local da Cantos, priorizando FIFA e usando 365Scores quando necessário.`;
+  return `Média da Copa do Mundo 2026 — ${metric.label}.\n\n${lines}\n\nLeitura: uso média por jogo para evitar distorção por número diferente de partidas.\n\nFonte: base local da Cantos, priorizando FIFA e usando 365Scores quando necessário.`;
 }
 
 async function formatTeamComparison(question: string) {
@@ -124,14 +135,12 @@ async function formatTeamComparison(question: string) {
   if (teams.length < 2) return null;
   const allRows = await getAllWorldCupStats();
   const summaryMetrics = [
-    METRICS.find((m) => m.keys.includes('corners'))!,
-    METRICS.find((m) => m.keys.includes('shots'))!,
-    METRICS.find((m) => m.keys.includes('shots_on_target'))!,
-    METRICS.find((m) => m.keys.includes('possession'))!,
-    METRICS.find((m) => m.keys.includes('expected_goals'))!,
-    METRICS.find((m) => m.keys.includes('yellow_cards'))!,
+    METRICS.find((m) => m.keys.includes('corners'))!, METRICS.find((m) => m.keys.includes('shots'))!,
+    METRICS.find((m) => m.keys.includes('shots_on_target'))!, METRICS.find((m) => m.keys.includes('possession'))!,
+    METRICS.find((m) => m.keys.includes('expected_goals'))!, METRICS.find((m) => m.keys.includes('yellow_cards'))!,
   ].filter(Boolean);
   const lines: string[] = [];
+  const reasons: string[] = [];
   let firstWins = 0;
   let secondWins = 0;
   for (const metric of summaryMetrics) {
@@ -142,27 +151,68 @@ async function formatTeamComparison(question: string) {
     const leader = a.avg > b.avg ? a.name : b.avg > a.avg ? b.name : 'equilíbrio';
     if (a.avg > b.avg) firstWins += 1;
     if (b.avg > a.avg) secondWins += 1;
-    lines.push(`- ${metric.label}: ${a.name} ${formatValue(a.avg, metric.keys[0])}/jogo x ${formatValue(b.avg, metric.keys[0])}/jogo ${b.name} → ${leader}`);
+    if (leader !== 'equilíbrio') reasons.push(`${leader} levou vantagem em ${metric.label}`);
+    lines.push(`- ${metric.label}: ${a.name} ${formatValue(a.avg, metric.keys[0])}/jogo x ${formatValue(b.avg, metric.keys[0])}/jogo ${b.name} → ${diffLabel(a.avg, b.avg, metric.keys[0])}: ${leader}`);
   }
   if (lines.length === 0) return null;
   const aName = teamLabel(teams[0]);
   const bName = teamLabel(teams[1]);
-  const reading = firstWins > secondWins ? `${aName} aparece melhor no conjunto das métricas comparadas.` : secondWins > firstWins ? `${bName} aparece melhor no conjunto das métricas comparadas.` : 'O comparativo ficou equilibrado no conjunto das métricas.';
-  return `Comparação na Copa do Mundo 2026 — ${aName} x ${bName}.\n\n${lines.join('\n')}\n\nLeitura do analista: ${reading} A comparação usa médias por jogo para evitar distorção por número diferente de partidas.\n\nFonte: base local da Cantos, priorizando FIFA e usando 365Scores quando necessário.`;
+  const winner = firstWins > secondWins ? aName : secondWins > firstWins ? bName : 'equilíbrio';
+  const confidence = `${Math.min(97, 70 + lines.length * 4)}%`;
+  const reading = winner === 'equilíbrio' ? 'O comparativo ficou equilibrado no conjunto das métricas.' : `${winner} aparece melhor no conjunto das métricas comparadas.`;
+  return `Comparação na Copa do Mundo 2026 — ${aName} x ${bName}.\n\nResumo executivo: ${reading}\n\n${lines.join('\n')}\n\nPor que a IA chegou a essa conclusão:\n${reasons.slice(0, 4).map((reason) => `- ${reason}`).join('\n') || '- Indicadores principais ficaram próximos.'}\n\n${verdictText(winner === 'equilíbrio' ? 'comparativo equilibrado' : winner, confidence)}\n\nFonte: base local da Cantos, priorizando FIFA e usando 365Scores quando necessário.`;
 }
 
 function formatCards(match: any, rows: any[]) {
   const sourceRows = pickSourceRows(rows.filter((row) => ['yellow_cards', 'yellowcards', 'red_cards', 'redcards'].includes(metricKey(row))));
-  const hy = statValue(sourceRows, match.home_team_name, ['yellow_cards', 'yellowcards']); const ay = statValue(sourceRows, match.away_team_name, ['yellow_cards', 'yellowcards']); const hr = statValue(sourceRows, match.home_team_name, ['red_cards', 'redcards']); const ar = statValue(sourceRows, match.away_team_name, ['red_cards', 'redcards']);
-  const total = hy + ay + hr + ar; const reading = total >= 7 ? 'Foi um jogo quente disciplinarmente.' : total <= 3 ? 'Foi uma partida relativamente disciplinada.' : 'Foi uma partida com nível moderado de cartões.';
-  return `${header(match)}\n\nCartões:\n- ${teamLabel(match.home_team_name)}: ${hy} amarelos e ${hr} vermelhos\n- ${teamLabel(match.away_team_name)}: ${ay} amarelos e ${ar} vermelhos\n\nTotal: ${hy + ay} amarelos e ${hr + ar} vermelhos. ${reading}\n\nFonte: ${sourceLabel(sourceRows[0]?.source_key)}.`;
+  const hy = statValue(sourceRows, match.home_team_name, ['yellow_cards', 'yellowcards']);
+  const ay = statValue(sourceRows, match.away_team_name, ['yellow_cards', 'yellowcards']);
+  const hr = statValue(sourceRows, match.home_team_name, ['red_cards', 'redcards']);
+  const ar = statValue(sourceRows, match.away_team_name, ['red_cards', 'redcards']);
+  const total = hy + ay + hr + ar;
+  const reading = total >= 7 ? 'Foi um jogo quente disciplinarmente.' : total <= 3 ? 'Foi uma partida relativamente disciplinada.' : 'Foi uma partida com nível moderado de cartões.';
+  return `${header(match)}\n\nResumo: ${reading}\n\nCartões:\n- ${teamLabel(match.home_team_name)}: ${hy} amarelos e ${hr} vermelhos\n- ${teamLabel(match.away_team_name)}: ${ay} amarelos e ${ar} vermelhos\n\nTotal: ${hy + ay} amarelos e ${hr + ar} vermelhos.\n\nConfiança: ${confidenceFromRows(sourceRows)}.\nFonte: ${sourceLabel(sourceRows[0]?.source_key)}.`;
 }
-function naturalMetric(match: any, metric: MetricAlias, homeValue: number, awayValue: number, key: string) { const home = teamLabel(match.home_team_name); const away = teamLabel(match.away_team_name); if (key.includes('possession')) { const leader = homeValue > awayValue ? home : awayValue > homeValue ? away : null; return `Posse de bola:\n- ${home}: ${formatValue(homeValue, key)}\n- ${away}: ${formatValue(awayValue, key)}\n\n${leader ? `${leader} teve mais controle da bola.` : 'A posse ficou equilibrada.'}`; } if (key.includes('expected_goals') || key === 'xg') { const leader = homeValue > awayValue ? home : awayValue > homeValue ? away : null; return `Gols esperados (xG):\n- ${home}: ${formatValue(homeValue, key)}\n- ${away}: ${formatValue(awayValue, key)}\n\n${leader ? `${leader} criou chances de maior qualidade.` : 'O xG ficou equilibrado.'}`; } const total = homeValue + awayValue; const leader = homeValue > awayValue ? home : awayValue > homeValue ? away : null; return `${metric.label[0].toUpperCase()}${metric.label.slice(1)}:\n- ${home}: ${formatValue(homeValue, key)}\n- ${away}: ${formatValue(awayValue, key)}\nTotal: ${formatValue(total, key)}.\n\n${leader ? `${leader} liderou em ${metric.label}.` : `As equipes empataram em ${metric.label}.`}`; }
-function formatSingleMetric(match: any, rows: any[], metric: MetricAlias) { if (metric.combined === 'cards') return formatCards(match, rows); const metricRows = rows.filter((row) => metricMatches(row, metric)); const home = bestTeamMetric(metricRows, match.home_team_name); const away = bestTeamMetric(metricRows, match.away_team_name); if (!home || !away) return `Encontrei ${teamLabel(match.home_team_name)} x ${teamLabel(match.away_team_name)}, mas ainda não há estatística de ${metric.label} gravada para essa partida.`; return `${header(match)}\n\n${naturalMetric(match, metric, numberValue(home), numberValue(away), metricKey(home))}\n\nFonte: ${sourceLabel(home.source_key)}.`; }
-function formatMultipleMetrics(match: any, rows: any[], metrics: MetricAlias[]) { const sourceRows = pickSourceRows(rows); const lines = metrics.filter((m) => !m.combined).map((metric) => { const metricRows = sourceRows.filter((row) => metricMatches(row, metric)); const home = bestTeamMetric(metricRows, match.home_team_name); const away = bestTeamMetric(metricRows, match.away_team_name); if (!home || !away) return null; const key = metricKey(home); return `- ${metric.label}: ${teamLabel(match.home_team_name)} ${formatValue(numberValue(home), key)} x ${formatValue(numberValue(away), key)} ${teamLabel(match.away_team_name)}`; }).filter(Boolean); return lines.length ? `${header(match)}\n\nResumo solicitado:\n${lines.join('\n')}\n\nFonte: ${sourceLabel(sourceRows[0]?.source_key)}.` : null; }
-function formatAllStats(match: any, rows: any[]) { const sourceRows = pickSourceRows(rows); const lines = METRICS.filter((m) => !m.combined).map((metric) => { const metricRows = sourceRows.filter((row) => metricMatches(row, metric)); const home = bestTeamMetric(metricRows, match.home_team_name); const away = bestTeamMetric(metricRows, match.away_team_name); if (!home || !away) return null; const key = metricKey(home); return `- ${metric.label}: ${teamLabel(match.home_team_name)} ${formatValue(numberValue(home), key)} x ${formatValue(numberValue(away), key)} ${teamLabel(match.away_team_name)}`; }).filter(Boolean).slice(0, 14); return lines.length ? `${header(match)}\n\nResumo das principais estatísticas:\n${lines.join('\n')}\n\nFonte: ${sourceLabel(sourceRows[0]?.source_key)}.` : null; }
-function formatAnalysis(match: any, rows: any[]) { const sourceRows = pickSourceRows(rows); const hShots = statValue(sourceRows, match.home_team_name, ['shots']); const aShots = statValue(sourceRows, match.away_team_name, ['shots']); const hTarget = statValue(sourceRows, match.home_team_name, ['shots_on_target', 'shotsontarget']); const aTarget = statValue(sourceRows, match.away_team_name, ['shots_on_target', 'shotsontarget']); const hPoss = statValue(sourceRows, match.home_team_name, ['possession']); const aPoss = statValue(sourceRows, match.away_team_name, ['possession']); const hXg = statValue(sourceRows, match.home_team_name, ['expected_goals', 'xg']); const aXg = statValue(sourceRows, match.away_team_name, ['expected_goals', 'xg']); const hCorners = statValue(sourceRows, match.home_team_name, ['corners']); const aCorners = statValue(sourceRows, match.away_team_name, ['corners']); const homeIndex = hShots + hTarget + hXg * 2 + hCorners * 0.4; const awayIndex = aShots + aTarget + aXg * 2 + aCorners * 0.4; const dominant = homeIndex > awayIndex ? teamLabel(match.home_team_name) : awayIndex > homeIndex ? teamLabel(match.away_team_name) : null; const winner = Number(match.home_score ?? 0) > Number(match.away_score ?? 0) ? teamLabel(match.home_team_name) : Number(match.away_score ?? 0) > Number(match.home_score ?? 0) ? teamLabel(match.away_team_name) : null; const resultText = winner ? `${winner} venceu no placar.` : 'O jogo terminou empatado.'; const reading = dominant ? `${dominant} teve os melhores indicadores ofensivos considerando finalizações, chutes no gol, xG e escanteios.` : 'Os principais indicadores ofensivos ficaram equilibrados.'; return `${header(match)}\n\nAnálise do jogo:\n${resultText} ${reading}\n\nNúmeros-chave:\n- Finalizações: ${teamLabel(match.home_team_name)} ${hShots} x ${aShots} ${teamLabel(match.away_team_name)}\n- Finalizações no gol: ${teamLabel(match.home_team_name)} ${hTarget} x ${aTarget} ${teamLabel(match.away_team_name)}\n- Posse: ${teamLabel(match.home_team_name)} ${hPoss}% x ${aPoss}% ${teamLabel(match.away_team_name)}\n- xG: ${teamLabel(match.home_team_name)} ${formatValue(hXg, 'xg')} x ${formatValue(aXg, 'xg')} ${teamLabel(match.away_team_name)}\n- Escanteios: ${teamLabel(match.home_team_name)} ${hCorners} x ${aCorners} ${teamLabel(match.away_team_name)}\n\nFonte: ${sourceLabel(sourceRows[0]?.source_key)}.`; }
-function formatCornersSpecialist(match: any, rows: any[]) { const sourceRows = pickSourceRows(rows); const hCorners = statValue(sourceRows, match.home_team_name, ['corners']); const aCorners = statValue(sourceRows, match.away_team_name, ['corners']); const hCrosses = statValue(sourceRows, match.home_team_name, ['crosses']); const aCrosses = statValue(sourceRows, match.away_team_name, ['crosses']); const hShots = statValue(sourceRows, match.home_team_name, ['shots']); const aShots = statValue(sourceRows, match.away_team_name, ['shots']); const total = hCorners + aCorners; const profile = total >= 10 ? 'perfil de over 9.5 escanteios' : total >= 8 ? 'jogo próximo da linha principal de escanteios' : 'perfil baixo de escanteios'; const leader = hCorners > aCorners ? teamLabel(match.home_team_name) : aCorners > hCorners ? teamLabel(match.away_team_name) : 'equilíbrio nos cantos'; return `${header(match)}\n\nLeitura de escanteios:\nO jogo teve ${total} escanteios: ${teamLabel(match.home_team_name)} ${hCorners} x ${aCorners} ${teamLabel(match.away_team_name)}. Foi um ${profile}.\n\nIndicadores relacionados:\n- Cruzamentos: ${teamLabel(match.home_team_name)} ${hCrosses} x ${aCrosses} ${teamLabel(match.away_team_name)}\n- Finalizações: ${teamLabel(match.home_team_name)} ${hShots} x ${aShots} ${teamLabel(match.away_team_name)}\n\nEquipe mais forte em cantos: ${leader}.\n\nFonte: ${sourceLabel(sourceRows[0]?.source_key)}.`; }
+
+function naturalMetric(match: any, metric: MetricAlias, homeValue: number, awayValue: number, key: string) {
+  const home = teamLabel(match.home_team_name); const away = teamLabel(match.away_team_name);
+  if (key.includes('possession')) { const leader = homeValue > awayValue ? home : awayValue > homeValue ? away : null; return `Posse de bola:\n- ${home}: ${formatValue(homeValue, key)}\n- ${away}: ${formatValue(awayValue, key)}\n\n${leader ? `${leader} teve mais controle da bola.` : 'A posse ficou equilibrada.'}`; }
+  if (key.includes('expected_goals') || key === 'xg') { const leader = homeValue > awayValue ? home : awayValue > homeValue ? away : null; return `Gols esperados (xG):\n- ${home}: ${formatValue(homeValue, key)}\n- ${away}: ${formatValue(awayValue, key)}\n\n${leader ? `${leader} criou chances de maior qualidade.` : 'O xG ficou equilibrado.'}`; }
+  const total = homeValue + awayValue; const leader = homeValue > awayValue ? home : awayValue > homeValue ? away : null;
+  return `${metric.label[0].toUpperCase()}${metric.label.slice(1)}:\n- ${home}: ${formatValue(homeValue, key)}\n- ${away}: ${formatValue(awayValue, key)}\nTotal: ${formatValue(total, key)}.\n\n${leader ? `${leader} liderou em ${metric.label}.` : `As equipes empataram em ${metric.label}.`}`;
+}
+function formatSingleMetric(match: any, rows: any[], metric: MetricAlias) { if (metric.combined === 'cards') return formatCards(match, rows); const metricRows = rows.filter((row) => metricMatches(row, metric)); const home = bestTeamMetric(metricRows, match.home_team_name); const away = bestTeamMetric(metricRows, match.away_team_name); if (!home || !away) return `Encontrei ${teamLabel(match.home_team_name)} x ${teamLabel(match.away_team_name)}, mas ainda não há estatística de ${metric.label} gravada para essa partida.`; return `${header(match)}\n\n${naturalMetric(match, metric, numberValue(home), numberValue(away), metricKey(home))}\n\nConfiança: ${confidenceFromRows(metricRows)}.\nFonte: ${sourceLabel(home.source_key)}.`; }
+function formatMultipleMetrics(match: any, rows: any[], metrics: MetricAlias[]) { const sourceRows = pickSourceRows(rows); const lines = metrics.filter((m) => !m.combined).map((metric) => { const metricRows = sourceRows.filter((row) => metricMatches(row, metric)); const home = bestTeamMetric(metricRows, match.home_team_name); const away = bestTeamMetric(metricRows, match.away_team_name); if (!home || !away) return null; const key = metricKey(home); return `- ${metric.label}: ${teamLabel(match.home_team_name)} ${formatValue(numberValue(home), key)} x ${formatValue(numberValue(away), key)} ${teamLabel(match.away_team_name)}`; }).filter(Boolean); return lines.length ? `${header(match)}\n\nResumo solicitado:\n${lines.join('\n')}\n\nConfiança: ${confidenceFromRows(sourceRows)}.\nFonte: ${sourceLabel(sourceRows[0]?.source_key)}.` : null; }
+function formatAllStats(match: any, rows: any[]) { const sourceRows = pickSourceRows(rows); const lines = METRICS.filter((m) => !m.combined).map((metric) => { const metricRows = sourceRows.filter((row) => metricMatches(row, metric)); const home = bestTeamMetric(metricRows, match.home_team_name); const away = bestTeamMetric(metricRows, match.away_team_name); if (!home || !away) return null; const key = metricKey(home); return `- ${metric.label}: ${teamLabel(match.home_team_name)} ${formatValue(numberValue(home), key)} x ${formatValue(numberValue(away), key)} ${teamLabel(match.away_team_name)}`; }).filter(Boolean).slice(0, 14); return lines.length ? `${header(match)}\n\nResumo das principais estatísticas:\n${lines.join('\n')}\n\nConfiança: ${confidenceFromRows(sourceRows)}.\nFonte: ${sourceLabel(sourceRows[0]?.source_key)}.` : null; }
+
+function formatAnalysis(match: any, rows: any[]) {
+  const sourceRows = pickSourceRows(rows); const s = snapshot(match, rows); const home = teamLabel(match.home_team_name); const away = teamLabel(match.away_team_name);
+  const homeIndex = s.hShots + s.hTarget * 1.5 + s.hXg * 2 + s.hCorners * 0.45 + Math.max(0, s.hPoss - 50) * 0.12;
+  const awayIndex = s.aShots + s.aTarget * 1.5 + s.aXg * 2 + s.aCorners * 0.45 + Math.max(0, s.aPoss - 50) * 0.12;
+  const dominant = homeIndex > awayIndex ? home : awayIndex > homeIndex ? away : 'equilíbrio';
+  const winner = Number(match.home_score ?? 0) > Number(match.away_score ?? 0) ? home : Number(match.away_score ?? 0) > Number(match.home_score ?? 0) ? away : 'empate';
+  const reasons = [
+    s.hShots !== s.aShots ? `${s.hShots > s.aShots ? home : away} finalizou mais` : 'finalizações equilibradas',
+    s.hTarget !== s.aTarget ? `${s.hTarget > s.aTarget ? home : away} acertou mais o gol` : 'chutes no gol equilibrados',
+    s.hXg !== s.aXg ? `${s.hXg > s.aXg ? home : away} teve melhor xG` : 'xG equilibrado',
+    s.hCorners !== s.aCorners ? `${s.hCorners > s.aCorners ? home : away} pressionou mais pelos lados em escanteios` : 'escanteios equilibrados',
+  ];
+  const resultText = winner === 'empate' ? 'O jogo terminou empatado.' : `${winner} venceu no placar.`;
+  const reading = dominant === 'equilíbrio' ? 'Os indicadores gerais ficaram equilibrados.' : `${dominant} teve o melhor desempenho geral pelos indicadores ofensivos e territoriais.`;
+  return `${header(match)}\n\nResumo executivo:\n- ${resultText}\n- ${reading}\n- ${dominant === winner ? 'O placar foi coerente com os principais números.' : 'O placar não reflete totalmente todos os indicadores do jogo.'}\n\nNúmeros-chave:\n- Finalizações: ${home} ${s.hShots} x ${s.aShots} ${away}\n- Finalizações no gol: ${home} ${s.hTarget} x ${s.aTarget} ${away}\n- Posse: ${home} ${s.hPoss}% x ${s.aPoss}% ${away}\n- xG: ${home} ${formatValue(s.hXg, 'xg')} x ${formatValue(s.aXg, 'xg')} ${away}\n- Escanteios: ${home} ${s.hCorners} x ${s.aCorners} ${away}\n\nPor que:\n${reasons.map((reason) => `- ${reason}`).join('\n')}\n\n${verdictText(dominant, confidenceFromRows(sourceRows))}\nFonte: ${sourceLabel(sourceRows[0]?.source_key)}.`;
+}
+
+function formatBettingProfile(match: any, rows: any[]) {
+  const sourceRows = pickSourceRows(rows); const s = snapshot(match, rows); const home = teamLabel(match.home_team_name); const away = teamLabel(match.away_team_name);
+  const cornerTotal = s.hCorners + s.aCorners; const goals = Number(match.home_score ?? 0) + Number(match.away_score ?? 0); const cards = s.hYellow + s.aYellow + s.hRed + s.aRed; const xgTotal = s.hXg + s.aXg;
+  const cornerProfile = cornerTotal >= 10 ? 'forte tendência de Over 9.5 escanteios' : cornerTotal >= 8 ? 'tendência moderada para linha principal de escanteios' : 'perfil mais baixo para over escanteios';
+  const goalProfile = goals >= 3 || xgTotal >= 2.6 ? 'bom perfil para gols/Over 2.5' : xgTotal >= 1.8 ? 'perfil médio para gols' : 'perfil mais baixo para gols';
+  const cardsProfile = cards >= 6 ? 'jogo quente para cartões' : cards >= 4 ? 'perfil médio para cartões' : 'perfil baixo para cartões';
+  const btts = Number(match.home_score ?? 0) > 0 && Number(match.away_score ?? 0) > 0 ? 'BTTS confirmado no placar' : xgTotal >= 2.2 && s.hXg > 0.7 && s.aXg > 0.7 ? 'BTTS tinha sustentação estatística' : 'BTTS com sustentação limitada pelos números';
+  return `${header(match)}\n\nPerfil estatístico do jogo:\n- Escanteios: ${cornerTotal} no total (${home} ${s.hCorners} x ${s.aCorners} ${away}) → ${cornerProfile}.\n- Gols/xG: ${goals} gols e ${formatValue(xgTotal, 'xg')} xG somado → ${goalProfile}.\n- Cartões: ${cards} no total → ${cardsProfile}.\n- Ambas marcam: ${btts}.\n\nLeitura para apostas: é análise estatística, não garantia de resultado. A melhor sustentação neste jogo ficou em ${cornerTotal >= 10 ? 'escanteios' : xgTotal >= 2.6 ? 'gols' : cards >= 6 ? 'cartões' : 'mercados conservadores'}.\n\nConfiança: ${confidenceFromRows(sourceRows)}.\nFonte: ${sourceLabel(sourceRows[0]?.source_key)}.`;
+}
+
+function formatCornersSpecialist(match: any, rows: any[]) { const sourceRows = pickSourceRows(rows); const s = snapshot(match, rows); const home = teamLabel(match.home_team_name); const away = teamLabel(match.away_team_name); const total = s.hCorners + s.aCorners; const profile = total >= 10 ? 'perfil de Over 9.5 escanteios' : total >= 8 ? 'jogo próximo da linha principal de escanteios' : 'perfil baixo de escanteios'; const leader = s.hCorners > s.aCorners ? home : s.aCorners > s.hCorners ? away : 'equilíbrio nos cantos'; return `${header(match)}\n\nLeitura de escanteios:\nO jogo teve ${total} escanteios: ${home} ${s.hCorners} x ${s.aCorners} ${away}. Foi um ${profile}.\n\nIndicadores relacionados:\n- Cruzamentos: ${home} ${s.hCrosses} x ${s.aCrosses} ${away}\n- Finalizações: ${home} ${s.hShots} x ${s.aShots} ${away}\n\nEquipe mais forte em cantos: ${leader}.\n\nConfiança: ${confidenceFromRows(sourceRows)}.\nFonte: ${sourceLabel(sourceRows[0]?.source_key)}.`; }
 
 export async function answerWorldCupFromDatabase(question: string): Promise<string | null> {
   const q = normalize(question);
@@ -184,6 +234,7 @@ export async function answerWorldCupFromDatabase(question: string): Promise<stri
   if (!isStatQuestion(question)) return null;
   const rows = await getMatchStats(Number(match.id));
   if (rows.length === 0) return `Encontrei ${teamLabel(match.home_team_name)} x ${teamLabel(match.away_team_name)}, mas ainda não há estatísticas gravadas para esse jogo.`;
+  if (wantsBetting(question)) return formatBettingProfile(match, rows);
   if (wantsAnalysis(question)) return formatAnalysis(match, rows);
   if (wantsCornerSpecialist(question)) return formatCornersSpecialist(match, rows);
   const requested = metricsFromQuestion(question);
