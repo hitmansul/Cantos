@@ -47,14 +47,14 @@ export async function GET(request: Request) {
         repair: origin + '/api/world-cup/provider-sync?step=repair',
         all: origin + '/api/world-cup/provider-sync?step=all'
       },
-      buildMarker: 'provider-sync-v3-365scores-primary',
+      buildMarker: 'provider-sync-v4-one-match-upsert',
       durationMs: Date.now() - startedAt,
       lastUpdated: new Date().toISOString()
     });
   }
 
   if (step === 'stats365') {
-    const stats365 = await callWithTimeout(origin + '/api/world-cup/import-365-pending?dryRun=false&limit=10', 52000);
+    const stats365 = await callWithTimeout(origin + '/api/world-cup/import-365-pending?dryRun=false&limit=1', 30000);
     return NextResponse.json({ success: stats365.ok, route: 'provider-sync', step, stats365, durationMs: Date.now() - startedAt, lastUpdated: new Date().toISOString() }, { status: stats365.ok ? 200 : 207 });
   }
 
@@ -64,10 +64,10 @@ export async function GET(request: Request) {
   }
 
   if (step === 'all') {
-    const stats365 = await callWithTimeout(origin + '/api/world-cup/import-365-pending?dryRun=false&limit=10', 52000);
+    const stats365 = await callWithTimeout(origin + '/api/world-cup/import-365-pending?dryRun=false&limit=1', 30000);
     const statsSaved = savedCount(stats365.payload);
     const fifaRepair = statsSaved > 0 ? null : await callWithTimeout(origin + '/api/world-cup/fifa-repair-pending?dryRun=false&skipBackfill=true', 28000);
-    return NextResponse.json({ success: stats365.ok || Boolean(fifaRepair?.ok), route: 'provider-sync', step, order: ['365Scores stats primary', 'FIFA complementary'], stats365, fifaRepair, durationMs: Date.now() - startedAt, lastUpdated: new Date().toISOString() }, { status: stats365.ok || fifaRepair?.ok ? 200 : 207 });
+    return NextResponse.json({ success: stats365.ok || Boolean(fifaRepair?.ok), route: 'provider-sync', step, order: ['365Scores stats primary one match per tick', 'FIFA complementary'], stats365, fifaRepair, durationMs: Date.now() - startedAt, lastUpdated: new Date().toISOString() }, { status: stats365.ok || fifaRepair?.ok ? 200 : 207 });
   }
 
   return NextResponse.json({ success: false, error: 'step invalido', allowed: ['status', 'stats365', 'repair', 'all'] }, { status: 400 });
