@@ -18,20 +18,86 @@ function normalize(value: string): string {
 
 function context(messages: ChatMessage[]): string {
   return messages
-    .filter((message) => message.role === 'user')
     .slice(0, -1)
-    .slice(-6)
-    .map((message) => message.content)
-    .join(' ');
+    .slice(-10)
+    .map((message) => `${message.role === 'user' ? 'Usuário' : 'IA'}: ${message.content}`)
+    .join('\n');
 }
 
 function isShortFollowUp(question: string) {
   const q = normalize(question);
-  return ['e os cartoes', 'e cartões', 'e escanteios', 'e finalizacoes', 'e posse', 'e faltas', 'e passes', 'e no primeiro tempo', 'e no segundo tempo'].some((item) => q.includes(normalize(item))) || q.split(' ').length <= 4;
+  return [
+    'e os cartoes',
+    'e cartoes',
+    'e cartões',
+    'e escanteios',
+    'e corners',
+    'e finalizacoes',
+    'e finalizações',
+    'e posse',
+    'e faltas',
+    'e passes',
+    'e xg',
+    'quem foi melhor',
+    'quem dominou',
+    'foi justo',
+    'foi aberto',
+    'foi truncado',
+    'tendencia de over',
+    'tendência de over',
+  ].some((item) => q.includes(normalize(item))) || q.split(' ').length <= 5;
+}
+
+function isClubCompetitionQuestion(question: string) {
+  const q = normalize(question);
+  return [
+    'brasileirao',
+    'brasileiro',
+    'serie a',
+    'serie b',
+    'libertadores',
+    'sul americana',
+    'sulamericana',
+    'copa do brasil',
+    'champions',
+    'premier league',
+    'la liga',
+    'bundesliga',
+    'ligue 1',
+    'mundial de clubes',
+    'flamengo',
+    'palmeiras',
+    'fluminense',
+    'corinthians',
+    'sao paulo',
+    'vasco',
+    'botafogo',
+    'real madrid',
+    'barcelona',
+    'liverpool',
+    'river plate',
+    'boca juniors',
+  ].some((term) => q.includes(term));
+}
+
+function buildScopedQuestion(question: string, ctx: string) {
+  if (!ctx) return question;
+  if (isShortFollowUp(question)) return `${ctx}\nPergunta atual: ${question}`;
+  return question;
 }
 
 async function localReply(question: string, ctx: string): Promise<string | null> {
-  const scopedQuestion = isShortFollowUp(question) && ctx ? `${ctx} ${question}` : question;
+  const scopedQuestion = buildScopedQuestion(question, ctx);
+
+  if (isClubCompetitionQuestion(scopedQuestion)) {
+    const football = await answerFootballFromDatabase(scopedQuestion);
+    if (football) return humanize(football);
+
+    const worldCup = await answerWorldCupFromDatabase(scopedQuestion);
+    if (worldCup) return humanize(worldCup);
+
+    return null;
+  }
 
   const worldCup = await answerWorldCupFromDatabase(scopedQuestion);
   if (worldCup) return humanize(worldCup);
@@ -58,6 +124,8 @@ Regras obrigatorias:
 - Quando a pergunta pedir uma metrica especifica, responda somente a metrica pedida.
 - Considere competicao, times, temporada, data e periodo quando forem citados.
 - Se faltarem dados, diga exatamente o que falta.
+- Se a pergunta for continuidade da conversa, use o historico para identificar o jogo ou a competicao.
+- Nunca responda com um jogo diferente do perguntado.
 
 Pergunta atual:
 ${question}
@@ -78,7 +146,7 @@ async function geminiReply(question: string, ctx: string) {
       body: JSON.stringify({
         system_instruction: { parts: [{ text: geminiPrompt(question, ctx) }] },
         contents: [{ role: 'user', parts: [{ text: question }] }],
-        generationConfig: { maxOutputTokens: 1200, temperature: 0.25 },
+        generationConfig: { maxOutputTokens: 1200, temperature: 0.2 },
       }),
     }
   );
