@@ -8,6 +8,7 @@ export const maxDuration = 60;
 
 const WORLD_CUP_2026_KEY = 'world_cup_2026';
 const SOURCE_KEY = '365scores';
+const SAFE_RUNTIME_MS = 45000;
 
 type MatchRow = {
   id: number;
@@ -112,6 +113,22 @@ async function getMatches(limit: number, localMatchId?: string | null) {
     LIMIT ${limit}
   `) as MatchRow[];
 }
+async function countPending() {
+  const rows = (await sql`
+    SELECT COUNT(*) AS pending
+    FROM (
+      SELECT m.id
+      FROM world_cup_matches m
+      LEFT JOIN world_cup_match_statistics s ON s.match_id = m.id AND s.source_key = ${SOURCE_KEY}
+      WHERE m.competition_key = ${WORLD_CUP_2026_KEY}
+        AND (m.status ILIKE '%fim%' OR m.status ILIKE '%final%' OR m.status ILIKE '%finished%' OR m.status ILIKE '%prorroga%' OR m.status ILIKE '%penalt%' OR m.home_score IS NOT NULL OR m.away_score IS NOT NULL)
+        AND (m.scores365_event_id IS NOT NULL OR m.fixture_key LIKE 'scores365:%')
+      GROUP BY m.id
+      HAVING COUNT(s.id) < 20
+    ) pending_matches
+  `) as Array<{ pending: string | number }>;
+  return Number(rows[0]?.pending ?? 0);
+}
 async function fetchGame(gameId: string): Promise<Scores365Game | null> {
   const attempts = [
     ['/web/game/', { gameId }],
@@ -156,15 +173,7 @@ async function saveStats(match: MatchRow, gameId: string, stats: Scores365Statis
     const dedupe = `${teamId}:match:${key}`;
     if (seen.has(dedupe)) continue;
     seen.add(dedupe);
-    rows.push({
-      teamId: Number(teamId),
-      period: 'match',
-      metricKey: key,
-      metricName: stat.name ?? 'Estatística',
-      valueNumeric,
-      valueText: valueNumeric === null ? String(stat.value ?? '') : null,
-      sourcePayload: stat,
-    });
+    rows.push({ teamId: Number(teamId), period: 'match', metricKey: key, metricName: stat.name ?? 'Estatística', valueNumeric, valueText: valueNumeric === null ? String(stat.value ?? '') : null, sourcePayload: stat });
   }
   if (dryRun || rows.length === 0) return { parsedRows: rows.length, savedRows: 0 };
   let savedRows = 0;
@@ -188,16 +197,24 @@ async function saveStats(match: MatchRow, gameId: string, stats: Scores365Statis
   return { parsedRows: rows.length, savedRows };
 }
 export async function GET(request: NextRequest) {
+  const startedAt = Date.now();
   try {
     const params = request.nextUrl.searchParams;
     const dryRun = params.get('dryRun') !== 'false';
-    const limit = Math.max(1, Math.min(5, Number(params.get('limit') ?? 1)));
+    const auto = params.get('auto') === 'true' || params.get('mode') === 'auto';
+    const requestedLimit = Number(params.get('limit') ?? (auto ? 50 : 1));
+    const limit = auto ? Math.max(1, Math.min(80, requestedLimit)) : Math.max(1, Math.min(5, requestedLimit));
     const localMatchId = params.get('localMatchId') ?? params.get('matchId');
     const matches = await getMatches(limit, localMatchId);
     const attempts = [] as unknown[];
     let totalSaved = 0;
     let totalParsed = 0;
+    let stoppedReason: string | null = null;
     for (const match of matches) {
+      if (auto && Date.now() - startedAt > SAFE_RUNTIME_MS) {
+        stoppedReason = 'safe-time-budget';
+        break;
+      }
       const gameId = String(match.scores365_event_id ?? score365IdFromFixtureKey(match.fixture_key) ?? '');
       if (!/^\d+$/.test(gameId)) {
         attempts.push({ localMatchId: match.id, home: match.home_team_name, away: match.away_team_name, skipped: 'sem scores365GameId' });
@@ -214,16 +231,22 @@ export async function GET(request: NextRequest) {
       totalParsed += saved.parsedRows;
       attempts.push({ localMatchId: match.id, gameId, home: match.home_team_name, away: match.away_team_name, statsFetched: stats.length, competitors, ...saved });
     }
+    const remaining = auto ? await countPending() : null;
     return NextResponse.json({
       success: totalParsed > 0 || matches.length === 0,
       dryRun,
+      auto,
       provider: SOURCE_KEY,
-      strategy: 'Backfill 365Scores timeout-safe: processa poucos jogos por chamada e usa UPSERT para não falhar com estatísticas já existentes.',
+      strategy: auto ? 'Backfill automático 365Scores: processa todos os pendentes possíveis até o limite seguro da Vercel e continua em nova execução se necessário.' : 'Backfill 365Scores timeout-safe: processa poucos jogos por chamada e usa UPSERT para não falhar com estatísticas já existentes.',
       matchesChecked: matches.length,
+      processedThisRun: attempts.length,
+      remainingPending: remaining,
+      shouldRunAgain: Boolean(auto && remaining && remaining > 0),
+      stoppedReason,
       totalParsed,
       totalSaved,
       attempts,
-      nextStep: totalSaved > 0 ? 'Rode novamente até totalSaved zerar e a tela Resultados não mostrar jogos com 0 dados.' : null,
+      nextStep: auto && remaining && remaining > 0 ? 'A aplicação ainda tem pendências; rode novamente ou aguarde a próxima sincronização automática.' : totalSaved > 0 ? 'Rode novamente até totalSaved zerar e a tela Resultados não mostrar jogos com 0 dados.' : null,
       lastUpdated: new Date().toISOString(),
     }, { status: totalParsed > 0 || matches.length === 0 ? 200 : 207 });
   } catch (error) {
