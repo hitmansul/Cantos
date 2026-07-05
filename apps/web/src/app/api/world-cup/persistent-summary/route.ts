@@ -50,6 +50,7 @@ const METRICS: MetricConfig[] = [
   { order: 240, keys: ['tackles'], label: 'Desarmes' },
   { order: 250, keys: ['interceptions'], label: 'Interceptações' },
   { order: 260, keys: ['clearances'], label: 'Cortes defensivos' },
+  { order: 270, keys: ['stoppagetime', 'stoppageTime', 'stoppage_time', 'addedtime', 'addedTime', 'added_time', 'injurytime', 'injuryTime', 'injury_time', 'acrescimos', 'acrescimo', 'tempoacrescimo', 'tempoDeAcrescimo', 'tempo_de_acrescimo', 'addedminutes', 'addedMinutes', 'added_minutes'], label: 'Acréscimos' },
 ];
 
 const ORDER_BY_LABEL = new Map(METRICS.map((metric) => [metric.label, metric.order]));
@@ -112,6 +113,10 @@ function validate(label: string, pair: StatPair): StatPair {
     if (home === null || away === null || home < 0 || away < 0 || home > 100 || away > 100) return { home: null, away: null };
     if (home + away < 80 || home + away > 105) return { home: null, away: null };
     return { home: Math.round(home), away: Math.round(away) };
+  }
+  if (label === 'Acréscimos') {
+    if ((home !== null && home < 0) || (away !== null && away < 0)) return { home: null, away: null };
+    if ((home !== null && home > 40) || (away !== null && away > 40)) return { home: null, away: null };
   }
   if (label === 'Passes totais' && home !== null && away !== null && home <= 5 && away <= 5) return { home: null, away: null };
   return pair;
@@ -219,13 +224,17 @@ export async function GET() {
     });
 
     return NextResponse.json({
-      competition: WORLD_CUP_2026_KEY,
-      priority: 'FIFA first. 365Scores and API-Football only fill metrics missing from FIFA.',
+      success: true,
+      source: 'persistent',
       matches: formattedMatches,
       lastUpdated: new Date().toISOString(),
     });
   } catch (error) {
-    console.error('world cup persistent summary error:', error);
-    return NextResponse.json({ error: 'Failed to load persistent World Cup data', matches: [] }, { status: 500 });
+    return NextResponse.json({
+      success: false,
+      matches: [],
+      error: error instanceof Error ? error.message : 'Erro ao carregar estatísticas persistidas da Copa.',
+      lastUpdated: new Date().toISOString(),
+    }, { status: 200 });
   }
 }
