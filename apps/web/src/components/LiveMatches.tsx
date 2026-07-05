@@ -117,9 +117,13 @@ function periodSummary(match: LiveMatch, period: PeriodKey): PeriodSummary | nul
   return match.periodStoppage?.[period] ?? match.stoppage?.periods?.[period] ?? null;
 }
 
+function hasPositive(value?: number | null) {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0;
+}
+
 function formatMinutes(value?: number | null, prefix = '') {
-  if (value === null || value === undefined || value <= 0) return 'não informado';
-  return `${prefix}${value.toFixed(1).replace('.0', '')} min`;
+  if (!hasPositive(value)) return 'não informado';
+  return `${prefix}${value!.toFixed(1).replace('.0', '')} min`;
 }
 
 function sourceLabel(source?: string) {
@@ -132,14 +136,13 @@ function sourceLabel(source?: string) {
 
 function refereeAddedMinutes(summary?: PeriodSummary | null) {
   const actual = summary?.actualAddedMinutes ?? null;
-  if (!actual || actual <= 0) return null;
-  return actual;
+  return hasPositive(actual) ? actual : null;
 }
 
 function summaryHasData(summary?: PeriodSummary | null) {
   return !!summary && (
-    (summary.totalStoppedMinutes ?? 0) > 0 ||
-    (summary.predictedAddedMinutes ?? 0) > 0 ||
+    hasPositive(summary.totalStoppedMinutes) ||
+    hasPositive(summary.predictedAddedMinutes) ||
     refereeAddedMinutes(summary) !== null ||
     (summary.incidents?.length ?? 0) > 0
   );
@@ -233,22 +236,28 @@ function PeriodCard({ title, summary }: { title: string; summary: PeriodSummary 
   return (
     <div className="rounded-lg border bg-background/40 p-3">
       <p className="mb-3 text-sm font-semibold">{title}</p>
-      <div className="grid gap-2 sm:grid-cols-3">
-        <div className="rounded-md bg-cyan-500/10 p-3">
-          <p className="text-xs text-muted-foreground">Tempo que o jogo ficou parado</p>
-          <p className="text-lg font-bold text-cyan-300">{formatMinutes(summary?.totalStoppedMinutes)}</p>
-        </div>
-        <div className="rounded-md bg-amber-500/10 p-3">
-          <p className="text-xs text-muted-foreground">Previsão de Acréscimo</p>
-          <p className="text-lg font-bold text-amber-300">{formatMinutes(summary?.predictedAddedMinutes, '+')}</p>
-        </div>
-        <div className="rounded-md bg-emerald-500/10 p-3">
-          <p className="text-xs text-muted-foreground">Acréscimo dado pelo Árbitro</p>
-          <p className="text-lg font-bold text-emerald-300">{formatMinutes(actual, '+')}</p>
-        </div>
-      </div>
-      <IncidentList summary={summary} />
-      <p className="mt-3 text-xs text-muted-foreground">{has ? `Fonte: ${sourceLabel(summary?.source)}.` : 'Fonte ainda não informou acréscimo para este período.'}</p>
+      {has ? (
+        <>
+          <div className="grid gap-2 sm:grid-cols-3">
+            <div className="rounded-md bg-cyan-500/10 p-3">
+              <p className="text-xs text-muted-foreground">Tempo que o jogo ficou parado</p>
+              <p className="text-lg font-bold text-cyan-300">{formatMinutes(summary?.totalStoppedMinutes)}</p>
+            </div>
+            <div className="rounded-md bg-amber-500/10 p-3">
+              <p className="text-xs text-muted-foreground">Previsão de Acréscimo</p>
+              <p className="text-lg font-bold text-amber-300">{formatMinutes(summary?.predictedAddedMinutes, '+')}</p>
+            </div>
+            <div className="rounded-md bg-emerald-500/10 p-3">
+              <p className="text-xs text-muted-foreground">Acréscimo dado pelo Árbitro</p>
+              <p className="text-lg font-bold text-emerald-300">{formatMinutes(actual, '+')}</p>
+            </div>
+          </div>
+          <IncidentList summary={summary} />
+          <p className="mt-3 text-xs text-muted-foreground">Fonte: {sourceLabel(summary?.source)}.</p>
+        </>
+      ) : (
+        <p className="rounded-md border border-dashed border-border/50 p-3 text-xs text-muted-foreground">A fonte ao vivo ainda não publicou tempo parado ou acréscimo para este período.</p>
+      )}
     </div>
   );
 }
@@ -258,6 +267,7 @@ function LiveMatchCard({ match, selected, onClick }: { match: LiveMatch; selecte
   const info = minuteInfo(match);
   const firstActual = refereeAddedMinutes(info.firstHalf);
   const secondActual = refereeAddedMinutes(info.secondHalf);
+  const hasStoppage = hasPositive(info.stopped) || hasPositive(info.predicted) || hasPositive(info.actual) || hasPositive(firstActual) || hasPositive(secondActual);
 
   return (
     <Card role="button" tabIndex={0} onClick={onClick} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick?.(); } }} className={`cursor-pointer border-emerald-500/30 bg-gradient-to-br from-emerald-500/5 to-green-500/5 p-4 transition-all hover:border-emerald-400/50 ${selected ? 'ring-2 ring-emerald-500/60 border-emerald-400' : ''}`}>
@@ -270,13 +280,17 @@ function LiveMatchCard({ match, selected, onClick }: { match: LiveMatch; selecte
         <div className="flex min-w-[180px] flex-col items-center">
           <div className="flex gap-2 text-2xl font-bold"><span className={match.homeTeam.score > match.awayTeam.score ? 'text-emerald-400' : ''}>{match.homeTeam.score}</span><span className="text-muted-foreground">-</span><span className={match.awayTeam.score > match.homeTeam.score ? 'text-emerald-400' : ''}>{match.awayTeam.score}</span></div>
           <Badge variant="outline" className="mt-1 border-emerald-500/20 bg-emerald-500/10 text-emerald-400"><Clock className="mr-1 h-3 w-3" />{info.display}</Badge>
-          <div className="mt-2 grid gap-1 text-[11px]">
-            <Badge variant="outline" className="justify-center bg-cyan-500/10 text-cyan-300 border-cyan-500/20">Tempo parado: {formatMinutes(info.stopped)}</Badge>
-            <Badge variant="outline" className="justify-center bg-amber-500/10 text-amber-300 border-amber-500/20">Previsão de Acréscimo: {formatMinutes(info.predicted, '+')}</Badge>
-            <Badge variant="outline" className="justify-center border-emerald-500/20 bg-emerald-500/10 text-emerald-300">Acréscimo dado pelo Árbitro: {formatMinutes(info.actual, '+')}</Badge>
-            {info.period === 'secondHalf' && firstActual && <Badge variant="outline" className="justify-center border-emerald-500/20 bg-emerald-500/10 text-emerald-300">1ºT - acréscimo dado: {formatMinutes(firstActual, '+')}</Badge>}
-            {info.period === 'secondHalf' && secondActual && <Badge variant="outline" className="justify-center border-emerald-500/20 bg-emerald-500/10 text-emerald-300">2ºT - acréscimo dado: {formatMinutes(secondActual, '+')}</Badge>}
-          </div>
+          {hasStoppage ? (
+            <div className="mt-2 grid gap-1 text-[11px]">
+              {hasPositive(info.stopped) && <Badge variant="outline" className="justify-center bg-cyan-500/10 text-cyan-300 border-cyan-500/20">Tempo parado: {formatMinutes(info.stopped)}</Badge>}
+              {hasPositive(info.predicted) && <Badge variant="outline" className="justify-center bg-amber-500/10 text-amber-300 border-amber-500/20">Previsão de Acréscimo: {formatMinutes(info.predicted, '+')}</Badge>}
+              {hasPositive(info.actual) && <Badge variant="outline" className="justify-center border-emerald-500/20 bg-emerald-500/10 text-emerald-300">Acréscimo dado pelo Árbitro: {formatMinutes(info.actual, '+')}</Badge>}
+              {info.period === 'secondHalf' && firstActual && <Badge variant="outline" className="justify-center border-emerald-500/20 bg-emerald-500/10 text-emerald-300">1ºT - acréscimo dado: {formatMinutes(firstActual, '+')}</Badge>}
+              {info.period === 'secondHalf' && secondActual && <Badge variant="outline" className="justify-center border-emerald-500/20 bg-emerald-500/10 text-emerald-300">2ºT - acréscimo dado: {formatMinutes(secondActual, '+')}</Badge>}
+            </div>
+          ) : (
+            <Badge variant="outline" className="mt-2 justify-center border-border/60 bg-background/30 text-muted-foreground">Acréscimos aguardando fonte</Badge>
+          )}
         </div>
         <p className="font-semibold">{match.awayTeam.name}</p>
       </div>
