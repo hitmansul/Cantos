@@ -133,13 +133,6 @@ function sourceLabel(source?: string) {
 function refereeAddedMinutes(summary?: PeriodSummary | null) {
   const actual = summary?.actualAddedMinutes ?? null;
   if (!actual || actual <= 0) return null;
-
-  // Evita mostrar o relógio corrido no acréscimo como se fosse o acréscimo dado pelo árbitro.
-  // Ex.: se o app recebe 45+2, isso é apenas o tempo já jogado após 45', não necessariamente +2 dado pelo juiz.
-  // Quando temos previsão calculada maior que o valor recebido, tratamos o valor como relógio decorrido e escondemos.
-  const predicted = summary?.predictedAddedMinutes ?? null;
-  if (predicted && predicted > 0 && actual < Math.max(3, Math.round(predicted))) return null;
-
   return actual;
 }
 
@@ -280,7 +273,7 @@ function LiveMatchCard({ match, selected, onClick }: { match: LiveMatch; selecte
           <div className="mt-2 grid gap-1 text-[11px]">
             <Badge variant="outline" className="justify-center bg-cyan-500/10 text-cyan-300 border-cyan-500/20">Tempo parado: {formatMinutes(info.stopped)}</Badge>
             <Badge variant="outline" className="justify-center bg-amber-500/10 text-amber-300 border-amber-500/20">Previsão de Acréscimo: {formatMinutes(info.predicted, '+')}</Badge>
-            <Badge variant="outline" className="justify-center border-border/70 bg-background/40 text-muted-foreground">Acréscimo dado pelo Árbitro: {formatMinutes(info.actual, '+')}</Badge>
+            <Badge variant="outline" className="justify-center border-emerald-500/20 bg-emerald-500/10 text-emerald-300">Acréscimo dado pelo Árbitro: {formatMinutes(info.actual, '+')}</Badge>
             {info.period === 'secondHalf' && firstActual && <Badge variant="outline" className="justify-center border-emerald-500/20 bg-emerald-500/10 text-emerald-300">1ºT - acréscimo dado: {formatMinutes(firstActual, '+')}</Badge>}
             {info.period === 'secondHalf' && secondActual && <Badge variant="outline" className="justify-center border-emerald-500/20 bg-emerald-500/10 text-emerald-300">2ºT - acréscimo dado: {formatMinutes(secondActual, '+')}</Badge>}
           </div>
