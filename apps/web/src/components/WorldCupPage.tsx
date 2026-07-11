@@ -97,7 +97,7 @@ export function WorldCupPage() {
       </Card>
 
       <Tabs value={tab} onValueChange={setTab} className="space-y-4">
-        <TabsList className="grid h-auto w-full grid-cols-2 gap-1 p-1 sm:grid-cols-4 xl:grid-cols-7">
+        <TabsList className="grid h-auto w-full grid-cols-2 gap-1 p-1 sm:grid-cols-4 xl:grid-cols-8">
           <TabsTrigger value="visao-geral">Visão geral</TabsTrigger>
           <TabsTrigger value="grupos"><Users className="mr-1 h-4 w-4"/>Grupos</TabsTrigger>
           <TabsTrigger value="jogos"><CalendarDays className="mr-1 h-4 w-4"/>Jogos</TabsTrigger>
@@ -105,6 +105,7 @@ export function WorldCupPage() {
           <TabsTrigger value="estatisticas"><BarChart3 className="mr-1 h-4 w-4"/>Estatísticas</TabsTrigger>
           <TabsTrigger value="previsoes"><Sparkles className="mr-1 h-4 w-4"/>Previsões</TabsTrigger>
           <TabsTrigger value="mata-mata"><Trophy className="mr-1 h-4 w-4"/>Mata-mata</TabsTrigger>
+          <TabsTrigger value="odds">Odds</TabsTrigger>
         </TabsList>
 
         <TabsContent value="visao-geral"><Overview /></TabsContent>
@@ -119,10 +120,8 @@ export function WorldCupPage() {
           <Card className="p-4"><h3 className="font-bold">Previsões dos próximos jogos</h3><p className="text-sm text-muted-foreground">As previsões usam somente a base específica da Copa; médias de outras competições não são reaproveitadas.</p></Card>
           <Scores365UpcomingMatches league="copa_do_mundo" />
         </TabsContent>
-        <TabsContent value="mata-mata" className="space-y-4">
-          <WorldCupBracket />
-          <WorldCupOddsAlerts />
-        </TabsContent>
+        <TabsContent value="mata-mata"><WorldCupBracket /></TabsContent>
+        <TabsContent value="odds"><WorldCupOddsAlerts /></TabsContent>
       </Tabs>
     </div>
   );
