@@ -5,44 +5,53 @@ import {
   THESPORTSDB_HEADERS,
   type TheSportsDBEvent,
 } from '@/app/api/utils/thesportsdb';
-import { brazilianFixtures } from '@/data/brazilianFixtures';
-import { currentUpcomingMatches } from '@/data/currentFixtures';
 import { SCORES365_COMPETITIONS, scores365Get } from '@/app/api/utils/scores365';
-import sql from '@/app/api/utils/sql';
+import { currentUpcomingMatches } from '@/data/currentFixtures';
 
-function saoPauloDateParts(date = new Date()) {
-  const parts = new Intl.DateTimeFormat('en-CA', {
+function saoPauloDateString(date = new Date()): string {
+  return new Intl.DateTimeFormat('en-CA', {
     timeZone: 'America/Sao_Paulo',
     year: 'numeric',
     month: '2-digit',
     day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false,
-  }).formatToParts(date);
-
-  const get = (type: string) => parts.find((part) => part.type === type)?.value ?? '00';
-  return {
-    year: get('year'),
-    month: get('month'),
-    day: get('day'),
-    hour: get('hour'),
-    minute: get('minute'),
-  };
-}
-
-function saoPauloDateString(date = new Date()): string {
-  const parts = saoPauloDateParts(date);
-  return `${parts.year}-${parts.month}-${parts.day}`;
+  }).format(date);
 }
 
 function saoPauloTimeString(date: Date): string {
-  const parts = saoPauloDateParts(date);
-  return `${parts.hour}:${parts.minute}`;
+  return new Intl.DateTimeFormat('pt-BR', {
+    timeZone: 'America/Sao_Paulo',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).format(date);
 }
 
-function dateOnly(value: string): string {
-  return value.split(/[ T]/)[0] || value;
+function localFallback(leagueKey: string) {
+  const now = Date.now() - 6 * 60 * 60 * 1000;
+  return currentUpcomingMatches
+    .filter((match) => match.leagueKey === leagueKey)
+    .filter((match) => {
+      const parsed = Date.parse(`${match.date.replace(' ', 'T')}:00-03:00`);
+      return Number.isFinite(parsed) && parsed >= now;
+    })
+    .map((match, index) => ({
+      id: `local-${index}-${match.homeTeam}-${match.awayTeam}`,
+      homeTeam: match.homeTeam,
+      awayTeam: match.awayTeam,
+      homeTeamId: '',
+      awayTeamId: '',
+      homeTeamBadge: null,
+      awayTeamBadge: null,
+      date: match.date.slice(0, 10),
+      time: match.date.slice(11, 16),
+      timestamp: `${match.date.replace(' ', 'T')}:00`,
+      round: match.round || 'Próximos jogos',
+      referee: match.referee || null,
+      venue: match.venue || null,
+      status: null,
+      homeScore: null,
+      awayScore: null,
+    }));
 }
 
 export async function GET(
@@ -56,176 +65,72 @@ export async function GET(
     return NextResponse.json({ error: 'League not found' }, { status: 404 });
   }
 
-  // For Brazilian leagues: try DB first, then 365Scores live API, then fall back to static file
-  if (
-    leagueKey === 'brasileirao_a' ||
-    leagueKey === 'brasileirao_b' ||
-    leagueKey === 'copa_do_brasil'
-  ) {
+  const isBrazilian = ['brasileirao_a', 'brasileirao_b', 'copa_do_brasil'].includes(leagueKey);
+
+  if (isBrazilian) {
     try {
-      const today = saoPauloDateString();
-      const dbMatches = await sql`
-        SELECT home_team, away_team, match_date, match_time, round, referee, venue
-        FROM upcoming_matches
-        WHERE league = ${leagueKey}
-          AND match_date >= ${today}
-          AND (is_completed = 0 OR is_completed IS NULL)
-        ORDER BY match_date ASC, match_time ASC
-        LIMIT 60
-      `;
-
-      if ((dbMatches as unknown[]).length > 0) {
-        const fixtures = (
-          dbMatches as Array<{
-            home_team: string;
-            away_team: string;
-            match_date: string;
-            match_time: string | null;
-            round: string | null;
-            referee: string | null;
-            venue: string | null;
-          }>
-        ).map((m, idx) => ({
-          id: String(idx + 1),
-          homeTeam: m.home_team,
-          awayTeam: m.away_team,
-          homeTeamId: '',
-          awayTeamId: '',
-          homeTeamBadge: null,
-          awayTeamBadge: null,
-          date: m.match_date,
-          time: m.match_time || '00:00',
-          timestamp: `${m.match_date}T${m.match_time || '00:00'}:00`,
-          round: m.round
-            ? m.round.startsWith('Rodada')
-              ? m.round
-              : `Rodada ${m.round}`
-            : 'Rodada',
-          referee: m.referee || null,
-          venue: m.venue || null,
-        }));
-
-        if (leagueKey !== 'brasileirao_b' || fixtures.length >= 6) {
-          return NextResponse.json({
-            league: leagueKey,
-            leagueName: league.name,
-            season: league.season,
-            fixtures,
-            source: 'database',
-            lastUpdated: new Date().toISOString(),
-          });
-        }
-      }
-    } catch (e) {
-      console.error('DB fetch error for Brazilian fixtures, trying 365Scores:', e);
-    }
-
-    // Intermediate fallback: 365Scores live API (fresh data, no static/outdated games)
-    try {
-      const todayStr = saoPauloDateString();
-      const comp365 = SCORES365_COMPETITIONS[leagueKey];
-      if (comp365) {
-        const data365 = (await scores365Get(
-          `/web/games/scheduled/?competitions=${comp365.id}&sports=1`,
-          {}
-        )) as {
+      const competition = SCORES365_COMPETITIONS[leagueKey];
+      if (competition) {
+        const data = (await scores365Get('/web/games/', {
+          competitions: String(competition.id),
+          statuses: '1,2',
+        })) as {
           games?: Array<{
             id: number;
             startTime: string;
+            statusGroup?: number;
             roundNum?: number;
             roundName?: string;
-            statusGroup?: number;
             homeCompetitor: { id: number; name: string };
             awayCompetitor: { id: number; name: string };
           }>;
         };
 
-        if (data365.games && data365.games.length > 0) {
-          const upcoming = data365.games.filter((g) => {
-            if (g.statusGroup === 3) return false;
-            return saoPauloDateString(new Date(g.startTime)) >= todayStr;
+        const today = saoPauloDateString();
+        const fixtures = (data.games || [])
+          .filter((game) => game.statusGroup !== 3)
+          .filter((game) => saoPauloDateString(new Date(game.startTime)) >= today)
+          .map((game) => {
+            const start = new Date(game.startTime);
+            const date = saoPauloDateString(start);
+            const time = saoPauloTimeString(start);
+            return {
+              id: String(game.id),
+              homeTeam: game.homeCompetitor.name,
+              awayTeam: game.awayCompetitor.name,
+              homeTeamId: String(game.homeCompetitor.id),
+              awayTeamId: String(game.awayCompetitor.id),
+              homeTeamBadge: null,
+              awayTeamBadge: null,
+              date,
+              time,
+              timestamp: `${date}T${time}:00`,
+              round: game.roundNum ? `Rodada ${game.roundNum}` : game.roundName || 'Rodada',
+              referee: null,
+              venue: null,
+              status: null,
+              homeScore: null,
+              awayScore: null,
+            };
+          })
+          .sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+
+        if (fixtures.length > 0) {
+          return NextResponse.json({
+            league: leagueKey,
+            leagueName: league.name,
+            season: league.season,
+            fixtures,
+            source: '365scores',
+            lastUpdated: new Date().toISOString(),
           });
-
-          if (upcoming.length > 0) {
-            const fixtures365 = upcoming.map((g, idx) => {
-              const dt = new Date(g.startTime);
-              const dateStr = saoPauloDateString(dt);
-              const timeStr = saoPauloTimeString(dt);
-              return {
-                id: String(g.id || idx + 1),
-                homeTeam: g.homeCompetitor.name,
-                awayTeam: g.awayCompetitor.name,
-                homeTeamId: '',
-                awayTeamId: '',
-                homeTeamBadge: null,
-                awayTeamBadge: null,
-                date: dateStr,
-                time: timeStr,
-                timestamp: `${dateStr}T${timeStr}:00`,
-                round: g.roundNum ? `Rodada ${g.roundNum}` : g.roundName || 'Rodada',
-                referee: null,
-                venue: null,
-              };
-            });
-
-            fixtures365.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
-
-            if (leagueKey !== 'brasileirao_b' || fixtures365.length >= 6) {
-              return NextResponse.json({
-                league: leagueKey,
-                leagueName: league.name,
-                season: league.season,
-                fixtures: fixtures365,
-                source: '365scores',
-                lastUpdated: new Date().toISOString(),
-              });
-            }
-          }
         }
       }
-    } catch (e) {
-      console.error('365Scores fallback error for Brazilian fixtures:', e);
+    } catch (error) {
+      console.error('365Scores upcoming fallback error:', error);
     }
 
-    // Final fallback to static file
-    const currentLocalMatches = currentUpcomingMatches.filter((match) => match.leagueKey === leagueKey);
-    const localMatches = (currentLocalMatches.length > 0
-      ? currentLocalMatches
-      : brazilianFixtures[leagueKey as keyof typeof brazilianFixtures] || []) as Array<{
-      id?: string | number;
-      homeTeam: string;
-      awayTeam: string;
-      date: string;
-      round?: string | number;
-      referee?: string | null;
-      venue?: string | null;
-    }>;
-    const today = saoPauloDateString();
-
-    const upcomingMatches = localMatches.filter((match) => {
-      return dateOnly(match.date) >= today;
-    });
-
-    const fixtures = upcomingMatches.map((match, idx) => ({
-      id: String(match.id || idx + 1),
-      homeTeam: match.homeTeam,
-      awayTeam: match.awayTeam,
-      homeTeamId: '',
-      awayTeamId: '',
-      homeTeamBadge: null,
-      awayTeamBadge: null,
-      date: match.date.split(' ')[0],
-      time: match.date.split(' ')[1] || '00:00',
-      timestamp: match.date.includes('T') ? match.date : match.date.replace(' ', 'T') + ':00',
-      round: match.round
-        ? String(match.round).startsWith('Rodada')
-          ? String(match.round)
-          : `Rodada ${match.round}`
-        : 'Rodada',
-      referee: match.referee || null,
-      venue: match.venue || null,
-    }));
-
+    const fixtures = localFallback(leagueKey);
     return NextResponse.json({
       league: leagueKey,
       leagueName: league.name,
@@ -236,94 +141,43 @@ export async function GET(
     });
   }
 
-  // For other leagues, use TheSportsDB eventsseason.php (free tier)
   try {
     const url = `${THESPORTSDB_BASE}/eventsseason.php?id=${league.id}&s=${league.season}`;
     const response = await fetch(url, { headers: THESPORTSDB_HEADERS });
-
-    if (!response.ok) {
-      throw new Error(`TheSportsDB API error ${response.status}`);
-    }
+    if (!response.ok) throw new Error(`TheSportsDB API error ${response.status}`);
 
     const data = (await response.json()) as { events?: TheSportsDBEvent[] };
-
-    if (!data.events || data.events.length === 0) {
-      // Fallback: next 5 events
-      const fallbackUrl = `${THESPORTSDB_BASE}/eventsnextleague.php?id=${league.id}`;
-      const fallbackRes = await fetch(fallbackUrl, { headers: THESPORTSDB_HEADERS });
-      if (fallbackRes.ok) {
-        const fallbackData = (await fallbackRes.json()) as { events?: TheSportsDBEvent[] };
-        const fallbackFixtures = (fallbackData.events || []).map((event) => ({
-          id: event.idEvent,
-          homeTeam: event.strHomeTeam,
-          awayTeam: event.strAwayTeam,
-          homeTeamId: event.idHomeTeam,
-          awayTeamId: event.idAwayTeam,
-          homeTeamBadge: event.strHomeTeamBadge,
-          awayTeamBadge: event.strAwayTeamBadge,
-          date: event.dateEvent,
-          time: event.strTime,
-          timestamp: event.strTimestamp,
-          round: event.intRound ? `Rodada ${event.intRound}` : 'Rodada',
-          referee: event.strOfficial || null,
-          venue: event.strVenue,
-        }));
-        return NextResponse.json({
-          league: leagueKey,
-          leagueName: league.name,
-          season: league.season,
-          fixtures: fallbackFixtures,
-          lastUpdated: new Date().toISOString(),
-        });
-      }
-      return NextResponse.json({ league: leagueKey, leagueName: league.name, fixtures: [] });
-    }
-
-    // Filter only upcoming/future events
     const now = new Date();
     now.setHours(0, 0, 0, 0);
 
-    const upcomingEvents = data.events.filter((event) => {
-      if (!event.dateEvent) return false;
-      // Skip games that already have scores
-      if (
-        event.intHomeScore !== null &&
-        event.intHomeScore !== '' &&
-        event.intAwayScore !== null &&
-        event.intAwayScore !== ''
-      )
-        return false;
-      const matchDate = new Date(event.dateEvent);
-      return matchDate >= now;
-    });
-
-    const fixtures = upcomingEvents.map((event) => ({
-      id: event.idEvent,
-      homeTeam: event.strHomeTeam,
-      awayTeam: event.strAwayTeam,
-      homeTeamId: event.idHomeTeam,
-      awayTeamId: event.idAwayTeam,
-      homeTeamBadge: event.strHomeTeamBadge,
-      awayTeamBadge: event.strAwayTeamBadge,
-      date: event.dateEvent,
-      time: event.strTime,
-      timestamp: event.strTimestamp || `${event.dateEvent}T${event.strTime || '00:00:00'}`,
-      round: event.intRound ? `Rodada ${event.intRound}` : 'Rodada',
-      referee: event.strOfficial || null,
-      venue: event.strVenue,
-    }));
-
-    fixtures.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+    const fixtures = (data.events || [])
+      .filter((event) => event.dateEvent && new Date(event.dateEvent) >= now)
+      .filter((event) => event.intHomeScore == null || event.intAwayScore == null)
+      .map((event) => ({
+        id: event.idEvent,
+        homeTeam: event.strHomeTeam,
+        awayTeam: event.strAwayTeam,
+        homeTeamId: event.idHomeTeam,
+        awayTeamId: event.idAwayTeam,
+        homeTeamBadge: event.strHomeTeamBadge,
+        awayTeamBadge: event.strAwayTeamBadge,
+        date: event.dateEvent,
+        time: event.strTime,
+        timestamp: event.strTimestamp || `${event.dateEvent}T${event.strTime || '00:00:00'}`,
+        round: event.intRound ? `Rodada ${event.intRound}` : 'Rodada',
+        referee: event.strOfficial || null,
+        venue: event.strVenue,
+      }));
 
     return NextResponse.json({
       league: leagueKey,
       leagueName: league.name,
       season: league.season,
       fixtures,
+      source: 'thesportsdb',
       lastUpdated: new Date().toISOString(),
     });
   } catch (error) {
-    console.error('TheSportsDB next fixtures error:', error);
     return NextResponse.json(
       {
         error: 'Failed to fetch next fixtures',
