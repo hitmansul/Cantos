@@ -1,0 +1,5 @@
+/* Oculta temporariamente apenas o acesso visual à Copa do Mundo.
+   Todo o código, dados, rotas e componentes permanecem preservados. */
+main.container > div.flex.gap-2.flex-wrap:first-child > button:nth-child(3) {
+  display: none !important;
+}
