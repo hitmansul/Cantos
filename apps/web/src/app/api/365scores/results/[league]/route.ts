@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { SCORES365_COMPETITIONS, scores365Get } from '@/app/api/utils/scores365';
 
+function validScore(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
+}
+
 export async function GET(
   _request: NextRequest,
   { params }: { params: Promise<{ league: string }> }
@@ -40,33 +44,36 @@ export async function GET(
       }>;
     };
 
-    if (!data.games) {
-      return NextResponse.json({ competition: league, matches: [], message: 'No results found' });
-    }
+    const matches = (data.games ?? [])
+      .map((game) => {
+        const homeScore = validScore(game.homeCompetitor.score);
+        const awayScore = validScore(game.awayCompetitor.score);
+        if (homeScore === null || awayScore === null) return null;
 
-    const matches = data.games
-      .map((game) => ({
-        id: game.id,
-        status: game.statusId,
-        statusText: game.statusText,
-        startTime: game.startTime,
-        round: game.roundNum,
-        roundName: game.roundName,
-        homeTeam: {
-          id: game.homeCompetitor.id,
-          name: game.homeCompetitor.name,
-          shortName: game.homeCompetitor.symbolicName,
-          score: game.homeCompetitor.score || 0,
-          color: game.homeCompetitor.color,
-        },
-        awayTeam: {
-          id: game.awayCompetitor.id,
-          name: game.awayCompetitor.name,
-          shortName: game.awayCompetitor.symbolicName,
-          score: game.awayCompetitor.score || 0,
-          color: game.awayCompetitor.color,
-        },
-      }))
+        return {
+          id: game.id,
+          status: game.statusId,
+          statusText: game.statusText,
+          startTime: game.startTime,
+          round: game.roundNum,
+          roundName: game.roundName,
+          homeTeam: {
+            id: game.homeCompetitor.id,
+            name: game.homeCompetitor.name,
+            shortName: game.homeCompetitor.symbolicName,
+            score: homeScore,
+            color: game.homeCompetitor.color,
+          },
+          awayTeam: {
+            id: game.awayCompetitor.id,
+            name: game.awayCompetitor.name,
+            shortName: game.awayCompetitor.symbolicName,
+            score: awayScore,
+            color: game.awayCompetitor.color,
+          },
+        };
+      })
+      .filter((match): match is NonNullable<typeof match> => Boolean(match))
       .sort((a, b) => new Date(b.startTime).getTime() - new Date(a.startTime).getTime());
 
     return NextResponse.json({
