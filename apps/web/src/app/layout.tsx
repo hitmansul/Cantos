@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 import type { Metadata } from 'next';
 import './global.css';
+import './hide-world-cup.css';
 import { Providers } from './providers';
 import { DesignModeInit } from '../__create/DesignModeInit';
 
