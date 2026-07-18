@@ -101,8 +101,24 @@ export const COMPETITION_REGISTRY: Record<string, CompetitionDefinition> = {
   },
 };
 
+function dynamicFromKey(key: string): CompetitionDefinition | null {
+  // Formato público usado pelo catálogo: api_<leagueId>_<season opcional>
+  const match = /^api_(\d+)(?:_(\d{4}))?$/.exec(key);
+  if (!match) return null;
+  const id = Number(match[1]);
+  const season = match[2] ? Number(match[2]) : undefined;
+  return {
+    key,
+    name: `Competição ${id}`,
+    kind: 'league',
+    apiFootballLeagueId: id,
+    season,
+    providers: standardProviders('league'),
+  };
+}
+
 export function getCompetitionDefinition(key: string): CompetitionDefinition | null {
-  return COMPETITION_REGISTRY[key] ?? null;
+  return COMPETITION_REGISTRY[key] ?? dynamicFromKey(key);
 }
 
 export function buildDynamicCompetition(input: {
@@ -117,12 +133,13 @@ export function buildDynamicCompetition(input: {
     .replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
   const kind: CompetitionKind = /cup/i.test(input.type ?? '') ? 'cup' : 'league';
   return {
-    key: normalized,
+    key: `api_${input.id}${input.season ? `_${input.season}` : ''}`,
     name: input.name,
     country: input.country,
     kind,
     apiFootballLeagueId: input.id,
     season: input.season,
+    aliases: [normalized],
     providers: standardProviders(kind),
   };
 }
