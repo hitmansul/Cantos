@@ -40,6 +40,8 @@ export interface SourcePriorityRule {
 const BRAZIL_LEAGUES = new Set([
   'brasileirao_a',
   'brasileirao_b',
+  'brasileirao_c',
+  'brasileirao_d',
   'paulistao',
   'carioca',
   'mineiro',
@@ -71,34 +73,32 @@ export function competitionFamily(competition: string): CompetitionFamily {
   if (CONMEBOL_CUPS.has(competition)) return 'conmebol-cup';
   if (UEFA_CUPS.has(competition)) return 'uefa-cup';
   if (TOP_EUROPEAN_LEAGUES.has(competition)) return 'top-european-league';
-  if (competition === 'copa_do_mundo' || competition === 'nations_league') {
-    return 'international-cup';
-  }
+  if (competition === 'copa_do_mundo' || competition === 'nations_league') return 'international-cup';
   return 'other-international-league';
 }
 
 const RULES: Record<CompetitionFamily, Record<FootballDataCapability, FootballDataSource[]>> = {
   'brazil-league': {
-    upcoming: ['365scores', 'api-football', 'sofascore', 'official-cbf', 'local-cache'],
-    results: ['365scores', 'api-football', 'sofascore', 'local-cache'],
-    standings: ['365scores', 'api-football', 'sofascore', 'official-cbf', 'local-cache'],
+    upcoming: ['api-football', '365scores', 'sofascore', 'official-cbf', 'local-cache'],
+    results: ['api-football', '365scores', 'sofascore', 'local-cache'],
+    standings: ['api-football', '365scores', 'official-cbf', 'sofascore', 'local-cache'],
     live: ['365scores', 'api-football', 'sofascore'],
-    'match-stats': ['365scores', 'api-football', 'sofascore'],
-    corners: ['365scores', 'api-football', 'sofascore'],
-    bracket: ['official-cbf', '365scores', 'api-football'],
+    'match-stats': ['api-football', '365scores', 'sofascore'],
+    corners: ['api-football', '365scores', 'sofascore'],
+    bracket: ['official-cbf', 'api-football', '365scores'],
     referee: ['api-football', '365scores', 'sofascore'],
-    'stoppage-time': ['365scores', 'api-football', 'sofascore'],
+    'stoppage-time': ['365scores', 'sofascore', 'api-football'],
   },
   'brazil-cup': {
-    upcoming: ['365scores', 'api-football', 'official-cbf', 'sofascore', 'local-cache'],
-    results: ['365scores', 'api-football', 'official-cbf', 'sofascore', 'local-cache'],
-    standings: ['official-cbf', '365scores', 'api-football'],
+    upcoming: ['api-football', '365scores', 'official-cbf', 'sofascore', 'local-cache'],
+    results: ['api-football', '365scores', 'official-cbf', 'sofascore', 'local-cache'],
+    standings: ['official-cbf', 'api-football', '365scores'],
     live: ['365scores', 'api-football', 'sofascore'],
-    'match-stats': ['365scores', 'api-football', 'sofascore'],
-    corners: ['365scores', 'api-football', 'sofascore'],
-    bracket: ['official-cbf', '365scores', 'api-football', 'sofascore'],
+    'match-stats': ['api-football', '365scores', 'sofascore'],
+    corners: ['api-football', '365scores', 'sofascore'],
+    bracket: ['official-cbf', 'api-football', '365scores', 'sofascore'],
     referee: ['official-cbf', 'api-football', '365scores'],
-    'stoppage-time': ['365scores', 'api-football', 'sofascore'],
+    'stoppage-time': ['365scores', 'sofascore', 'api-football'],
   },
   'conmebol-cup': {
     upcoming: ['365scores', 'api-football', 'sofascore', 'official-competition', 'local-cache'],
@@ -109,7 +109,7 @@ const RULES: Record<CompetitionFamily, Record<FootballDataCapability, FootballDa
     corners: ['365scores', 'api-football', 'sofascore'],
     bracket: ['official-competition', '365scores', 'api-football', 'sofascore'],
     referee: ['api-football', '365scores', 'sofascore'],
-    'stoppage-time': ['365scores', 'api-football', 'sofascore'],
+    'stoppage-time': ['365scores', 'sofascore', 'api-football'],
   },
   'top-european-league': {
     upcoming: ['football-data', 'api-football', '365scores', 'sofascore', 'thesportsdb', 'local-cache'],
@@ -120,7 +120,7 @@ const RULES: Record<CompetitionFamily, Record<FootballDataCapability, FootballDa
     corners: ['api-football', '365scores', 'sofascore'],
     bracket: ['official-competition', 'api-football', '365scores'],
     referee: ['api-football', '365scores', 'sofascore'],
-    'stoppage-time': ['365scores', 'api-football', 'sofascore'],
+    'stoppage-time': ['365scores', 'sofascore', 'api-football'],
   },
   'other-international-league': {
     upcoming: ['365scores', 'api-football', 'sofascore', 'thesportsdb', 'local-cache'],
@@ -131,7 +131,7 @@ const RULES: Record<CompetitionFamily, Record<FootballDataCapability, FootballDa
     corners: ['api-football', '365scores', 'sofascore'],
     bracket: ['official-competition', '365scores', 'api-football'],
     referee: ['api-football', '365scores', 'sofascore'],
-    'stoppage-time': ['365scores', 'api-football', 'sofascore'],
+    'stoppage-time': ['365scores', 'sofascore', 'api-football'],
   },
   'uefa-cup': {
     upcoming: ['football-data', 'api-football', '365scores', 'sofascore', 'official-competition', 'local-cache'],
@@ -142,7 +142,7 @@ const RULES: Record<CompetitionFamily, Record<FootballDataCapability, FootballDa
     corners: ['api-football', '365scores', 'sofascore'],
     bracket: ['official-competition', 'api-football', '365scores', 'sofascore'],
     referee: ['api-football', '365scores', 'sofascore'],
-    'stoppage-time': ['365scores', 'api-football', 'sofascore'],
+    'stoppage-time': ['365scores', 'sofascore', 'api-football'],
   },
   'international-cup': {
     upcoming: ['api-football', '365scores', 'sofascore', 'official-competition', 'local-cache'],
@@ -153,7 +153,7 @@ const RULES: Record<CompetitionFamily, Record<FootballDataCapability, FootballDa
     corners: ['api-football', '365scores', 'sofascore'],
     bracket: ['official-competition', 'api-football', '365scores', 'sofascore'],
     referee: ['api-football', '365scores', 'sofascore'],
-    'stoppage-time': ['365scores', 'api-football', 'sofascore'],
+    'stoppage-time': ['365scores', 'sofascore', 'api-football'],
   },
 };
 
@@ -171,9 +171,6 @@ export function getSourcePriority(
   };
 }
 
-export function shouldAcceptSourceResult(
-  rule: SourcePriorityRule,
-  recordCount: number
-): boolean {
+export function shouldAcceptSourceResult(rule: SourcePriorityRule, recordCount: number): boolean {
   return recordCount >= (rule.minimumUsefulRecords ?? 1);
 }
