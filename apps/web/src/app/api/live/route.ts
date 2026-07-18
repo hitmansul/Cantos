@@ -112,7 +112,16 @@ function positive(value: unknown): value is number {
 function isVerifiedSource(source?: string, kind?: string) {
   if (kind !== 'announced-added-time') return false;
   if (!source) return false;
-  return !['clock-or-merged-feed', 'persistent-live-cache', 'clock-inference'].includes(source);
+
+  // API-Football fixture.status.extra representa o tempo já transcorrido
+  // após os 45/90 minutos, e não necessariamente o total sinalizado.
+  // Exemplo: 90+7 com placa de +9. Portanto, não pode ser tratado como
+  // "Acréscimo do árbitro".
+  return [
+    '365scores-announced-added-time',
+    'sofascore-announced-added-time',
+    'verified-live-cache',
+  ].includes(source);
 }
 
 function mergeSummary(base?: PeriodSummary, incoming?: PeriodSummary): PeriodSummary | undefined {
@@ -361,7 +370,7 @@ export async function GET(request: NextRequest) {
     matches,
     count: matches.length,
     lastUpdated: new Date().toISOString(),
-    addedTimePolicy: 'referee-announced-only-v2',
+    addedTimePolicy: 'referee-announced-only-v3',
     calculatedStoppageFallback: 'scores365-detail-by-team-match-v1',
   });
 }
