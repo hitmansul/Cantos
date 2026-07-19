@@ -1,11 +1,43 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import sql from '@/app/api/utils/sql';
+import { getMatchIntelligence } from '@/lib/analytics/matchIntelligenceEngine';
 import { getWorldCupDatabaseSummary, WORLD_CUP_2026_KEY } from '@/lib/persistence/worldCupRepository';
 
 export const dynamic = 'force-dynamic';
 
-export async function GET() {
+function isAuthorized(request: NextRequest) {
+  const secret = process.env.AI_CONTEXT_SECRET;
+  if (!secret) return true;
+  const bearer = request.headers.get('authorization')?.replace(/^Bearer\s+/i, '');
+  const header = request.headers.get('x-ai-context-secret');
+  return bearer === secret || header === secret;
+}
+
+export async function GET(request: NextRequest) {
+  if (!isAuthorized(request)) return NextResponse.json({ error: 'Não autorizado' }, { status: 401 });
+
   try {
+    const fixtureId = request.nextUrl.searchParams.get('fixtureId')?.trim();
+    if (fixtureId) {
+      const context = await getMatchIntelligence(fixtureId);
+      if (!context) return NextResponse.json({ error: 'Partida não encontrada no histórico' }, { status: 404 });
+      return NextResponse.json({
+        success: true,
+        generatedAt: new Date().toISOString(),
+        mode: 'match-intelligence',
+        context,
+        instructions: {
+          language: 'pt-BR',
+          principles: [
+            'Use apenas os dados fornecidos no contexto.',
+            'Diferencie tendência histórica de garantia de resultado.',
+            'Informe limitações quando a amostra ou a confiança forem baixas.',
+            'Explique quais indicadores sustentam cada conclusão.',
+          ],
+        },
+      });
+    }
+
     const summary = await getWorldCupDatabaseSummary();
     const recentMatches = await sql`
       SELECT
@@ -27,6 +59,7 @@ export async function GET() {
 
     return NextResponse.json({
       success: true,
+      mode: 'world-cup-summary',
       worldCup: {
         summary,
         recentMatches,
@@ -42,7 +75,7 @@ export async function GET() {
   } catch (error) {
     return NextResponse.json(
       { success: false, error: error instanceof Error ? error.message : 'Erro ao consultar contexto da IA.' },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }
