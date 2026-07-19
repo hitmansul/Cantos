@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
-import type { Metadata } from 'next';
+import type { Metadata, Viewport } from 'next';
 import './global.css';
+import './responsive.css';
 import './hide-world-cup.css';
 import { Providers } from './providers';
 import { DesignModeInit } from '../__create/DesignModeInit';
@@ -13,9 +14,16 @@ export const metadata: Metadata = {
   },
 };
 
+export const viewport: Viewport = {
+  width: 'device-width',
+  initialScale: 1,
+  maximumScale: 5,
+  viewportFit: 'cover',
+};
+
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
-    <html lang="en">
+    <html lang="pt-BR">
       <head>
         <link
           rel="stylesheet"
