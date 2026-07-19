@@ -2,12 +2,13 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { BarChart3, Brain, History, Search, Sparkles } from 'lucide-react';
+import { BarChart3, Brain, History, Radio, Search, Sparkles } from 'lucide-react';
 
 const items = [
   { href: '/', label: 'Estatísticas', icon: BarChart3 },
   { href: '/opportunities', label: 'Oportunidades', icon: Sparkles },
   { href: '/odds-intelligence', label: 'Odds', icon: Search },
+  { href: '/live', label: 'Ao Vivo', icon: Radio },
   { href: '/market-replay', label: 'Market Replay', icon: History },
   { href: '/match-intelligence', label: 'Match Intelligence', icon: Brain },
 ];
