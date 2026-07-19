@@ -5,7 +5,11 @@ import {
   THESPORTSDB_HEADERS,
   type TheSportsDBEvent,
 } from '@/app/api/utils/thesportsdb';
-import { getUpcomingFixtures } from '@/lib/competitions/competitionDataService';
+import {
+  getUpcomingFixtures,
+  selectNextFixturePerTeam,
+  type UnifiedFixture,
+} from '@/lib/competitions/competitionDataService';
 
 export async function GET(
   _request: NextRequest,
@@ -13,8 +17,6 @@ export async function GET(
 ) {
   const { leagueKey } = await params;
 
-  // Novo fluxo central: API-Football principal, seguida dos fallbacks definidos
-  // no registro. Inclui Série A/B/C/D, Copa do Brasil e qualquer chave api_ID_ANO.
   const unified = await getUpcomingFixtures(leagueKey);
   if (unified.definition) {
     return NextResponse.json({
@@ -24,11 +26,11 @@ export async function GET(
       fixtures: unified.fixtures,
       source: unified.source,
       attemptedSources: unified.attempts,
+      displayMode: 'next-fixture-per-team',
       lastUpdated: new Date().toISOString(),
     });
   }
 
-  // Compatibilidade com ligas antigas ainda cadastradas somente no TheSportsDB.
   const league = THESPORTSDB_LEAGUES[leagueKey];
   if (!league) {
     return NextResponse.json({ error: 'League not found' }, { status: 404 });
@@ -43,7 +45,7 @@ export async function GET(
     const now = new Date();
     now.setHours(0, 0, 0, 0);
 
-    const fixtures = (data.events || [])
+    const allFixtures: UnifiedFixture[] = (data.events || [])
       .filter((event) => event.dateEvent && new Date(event.dateEvent) >= now)
       .filter((event) => event.intHomeScore == null || event.intAwayScore == null)
       .map((event) => ({
@@ -60,8 +62,13 @@ export async function GET(
         round: event.intRound ? `Rodada ${event.intRound}` : 'Rodada',
         referee: event.strOfficial || null,
         venue: event.strVenue,
+        status: null,
+        homeScore: null,
+        awayScore: null,
         source: 'thesportsdb',
       }));
+
+    const fixtures = selectNextFixturePerTeam(allFixtures, 10);
 
     return NextResponse.json({
       league: leagueKey,
@@ -69,6 +76,7 @@ export async function GET(
       season: league.season,
       fixtures,
       source: 'thesportsdb',
+      displayMode: 'next-fixture-per-team',
       lastUpdated: new Date().toISOString(),
     });
   } catch (error) {
