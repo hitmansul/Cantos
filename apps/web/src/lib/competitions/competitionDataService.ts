@@ -53,6 +53,45 @@ function seasonFor(definition: CompetitionDefinition) {
   return definition.season ?? new Date().getUTCFullYear();
 }
 
+function normalizeTeamKey(value: string) {
+  return value
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+}
+
+/**
+ * Exibe apenas a partida futura mais próxima de cada clube.
+ * Em uma liga de 20 times, o resultado normal é uma lista de 10 jogos,
+ * cobrindo os 20 clubes sem repetir equipes.
+ */
+export function selectNextFixturePerTeam<T extends UnifiedFixture>(fixtures: T[], limit = 10): T[] {
+  const sorted = [...fixtures].sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+  const selected: T[] = [];
+  const teamsAlreadyShown = new Set<string>();
+
+  for (const fixture of sorted) {
+    const homeKey = fixture.homeTeamId
+      ? `id:${fixture.homeTeamId}`
+      : `name:${normalizeTeamKey(fixture.homeTeam)}`;
+    const awayKey = fixture.awayTeamId
+      ? `id:${fixture.awayTeamId}`
+      : `name:${normalizeTeamKey(fixture.awayTeam)}`;
+
+    if (teamsAlreadyShown.has(homeKey) || teamsAlreadyShown.has(awayKey)) continue;
+
+    selected.push(fixture);
+    teamsAlreadyShown.add(homeKey);
+    teamsAlreadyShown.add(awayKey);
+
+    if (selected.length >= limit) break;
+  }
+
+  return selected;
+}
+
 async function fromApiFootball(definition: CompetitionDefinition): Promise<UnifiedFixture[]> {
   if (!definition.apiFootballLeagueId || !isApiFootballConfigured()) return [];
   const from = new Date();
@@ -160,7 +199,14 @@ export async function getUpcomingFixtures(leagueKey: string) {
           : provider === 'local'
             ? fromLocal(leagueKey)
             : [];
-      if (fixtures.length > 0) return { definition, fixtures, source: provider, attempts };
+      if (fixtures.length > 0) {
+        return {
+          definition,
+          fixtures: selectNextFixturePerTeam(fixtures, 10),
+          source: provider,
+          attempts,
+        };
+      }
     } catch (error) {
       console.warn(`[competitions] ${provider} failed for ${leagueKey}`, error);
     }
