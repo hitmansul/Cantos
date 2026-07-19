@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import sql from '@/app/api/utils/sql';
 import { apiFootballGet } from '@/app/api/utils/apiFootball';
 import { getMatchStatistics } from '@/lib/statistics/matchStatisticsEngine';
+import { recalculateTeamIndicators } from '@/lib/statistics/teamIndicatorEngine';
 import { persistHistoricalMatch } from '@/lib/persistence/historicalFootballRepository';
 import { PersistentDatabaseNotConfiguredError } from '@/lib/persistence/database';
 
@@ -50,6 +51,7 @@ export async function POST(request: NextRequest) {
     const season = String(body?.season ?? '').trim();
     const limit = positiveInteger(body?.limit, 10, 30);
     const refreshExisting = Boolean(body?.refreshExisting);
+    const recalculateIndicators = body?.recalculateIndicators !== false;
 
     if (!/^\d+$/.test(leagueId)) {
       return NextResponse.json({ error: 'leagueId inválido' }, { status: 400 });
@@ -58,6 +60,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'season inválida. Use o ano com quatro dígitos.' }, { status: 400 });
     }
 
+    const competitionKey = `api-football:${leagueId}`;
     const fixturePayload = await apiFootballGet<FixtureResponse>('/fixtures', {
       params: { league: leagueId, season },
       revalidate: 0,
@@ -70,14 +73,15 @@ export async function POST(request: NextRequest) {
     const existingRows = await sql`
       SELECT fixture_id
       FROM football_matches
-      WHERE competition_key = ${`api-football:${leagueId}`}
+      WHERE competition_key = ${competitionKey}
         AND season = ${season}
     `;
     const existing = new Set(existingRows.map((row) => String(row.fixture_id)));
 
-    const pending = finished
-      .filter((item) => refreshExisting || !existing.has(String(item.fixture?.id)))
-      .slice(0, limit);
+    const pendingBeforeLimit = finished.filter(
+      (item) => refreshExisting || !existing.has(String(item.fixture?.id)),
+    );
+    const pending = pendingBeforeLimit.slice(0, limit);
 
     const imported: Array<Record<string, unknown>> = [];
     const failed: Array<{ fixtureId: string; error: string }> = [];
@@ -92,7 +96,7 @@ export async function POST(request: NextRequest) {
         const statistics = await getMatchStatistics(fixtureId);
         const result = await persistHistoricalMatch({
           fixtureId,
-          competitionKey: item.league?.id ? `api-football:${item.league.id}` : `api-football:${leagueId}`,
+          competitionKey: item.league?.id ? `api-football:${item.league.id}` : competitionKey,
           competitionName: item.league?.name ?? null,
           season: item.league?.season ? String(item.league.season) : season,
           roundName: item.league?.round ?? null,
@@ -126,22 +130,34 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    let indicators: Record<string, unknown> | null = null;
+    let indicatorError: string | null = null;
+    if (recalculateIndicators && imported.length > 0) {
+      try {
+        indicators = await recalculateTeamIndicators(competitionKey, season);
+      } catch (error) {
+        indicatorError = error instanceof Error ? error.message : 'Falha ao recalcular indicadores';
+      }
+    }
+
     return NextResponse.json({
-      ok: failed.length === 0,
+      ok: failed.length === 0 && !indicatorError,
       leagueId,
       season,
       totals: {
         returnedByApi: fixturePayload?.response?.length ?? 0,
         finished: finished.length,
         alreadyStored: existing.size,
-        pendingBeforeLimit: finished.filter((item) => refreshExisting || !existing.has(String(item.fixture?.id))).length,
+        pendingBeforeLimit: pendingBeforeLimit.length,
         selected: pending.length,
         imported: imported.length,
         failed: failed.length,
       },
-      hasMore: finished.some((item) => !existing.has(String(item.fixture?.id))) && pending.length === limit,
+      hasMore: pendingBeforeLimit.length > pending.length,
       imported,
       failed,
+      indicators,
+      indicatorError,
     });
   } catch (error) {
     console.error('[history/import-competition] error:', error);
