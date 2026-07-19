@@ -5,10 +5,11 @@ import './responsive.css';
 import './hide-world-cup.css';
 import { Providers } from './providers';
 import { DesignModeInit } from '../__create/DesignModeInit';
+import { ProductNavigation } from '@/components/ProductNavigation';
 
 export const metadata: Metadata = {
   title: 'Cantos Estatísticas',
-  description: 'Estatísticas inteligentes de escanteios para o futebol brasileiro',
+  description: 'Estatísticas inteligentes, comparação de odds e oportunidades para mercados de futebol',
   icons: {
     icon: '/favicon.png',
   },
@@ -32,7 +33,10 @@ export default function RootLayout({ children }: { children: ReactNode }) {
       </head>
       <body>
         <DesignModeInit />
-        <Providers>{children}</Providers>
+        <Providers>
+          <ProductNavigation />
+          {children}
+        </Providers>
       </body>
     </html>
   );
