@@ -3,15 +3,16 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { BarChart3, Beaker, Brain, History, Radio, Search, Sparkles } from 'lucide-react';
+import { ptBR } from '@/i18n/pt-BR';
 
 const items = [
-  { href: '/', label: 'Estatísticas', icon: BarChart3 },
-  { href: '/opportunities', label: 'Oportunidades', icon: Sparkles },
-  { href: '/odds-intelligence', label: 'Odds', icon: Search },
-  { href: '/live', label: 'Ao Vivo', icon: Radio },
-  { href: '/prediction-lab', label: 'Prediction Lab', icon: Beaker },
-  { href: '/market-replay', label: 'Market Replay', icon: History },
-  { href: '/match-intelligence', label: 'Match Intelligence', icon: Brain },
+  { href: '/', label: ptBR.navigation.statistics, icon: BarChart3 },
+  { href: '/opportunities', label: ptBR.navigation.opportunities, icon: Sparkles },
+  { href: '/odds-intelligence', label: ptBR.navigation.odds, icon: Search },
+  { href: '/live', label: ptBR.navigation.live, icon: Radio },
+  { href: '/prediction-lab', label: ptBR.navigation.predictionLab, icon: Beaker },
+  { href: '/market-replay', label: ptBR.navigation.marketReplay, icon: History },
+  { href: '/match-intelligence', label: ptBR.navigation.matchIntelligence, icon: Brain },
 ];
 
 export function ProductNavigation() {
