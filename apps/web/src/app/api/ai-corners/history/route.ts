@@ -29,16 +29,16 @@ function normalize(value: string) {
   return value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]/g, '');
 }
 
-function numeric(value: number | string | null | undefined) {
-  if (typeof value === 'number') return value;
+function numeric(value: number | string | null | undefined): number | null {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : null;
   if (typeof value === 'string') {
     const parsed = Number(value.replace(',', '.'));
-    return Number.isFinite(parsed) ? parsed : 0;
+    return Number.isFinite(parsed) ? parsed : null;
   }
-  return 0;
+  return null;
 }
 
-function cornersOf(entry: StatisticEntry | undefined) {
+function cornersOf(entry: StatisticEntry | undefined): number | null {
   const item = entry?.statistics?.find((stat) => normalize(stat.type ?? '') === 'cornerkicks');
   return numeric(item?.value);
 }
@@ -53,37 +53,58 @@ async function resolveTeam(query: string) {
   return items.find((item) => normalize(item.team?.name ?? '') === target) ?? items[0] ?? null;
 }
 
+async function mapFixtureToSample(item: FixtureItem, teamId: number): Promise<CornerSample | null> {
+  const fixtureId = item.fixture?.id;
+  if (!fixtureId) return null;
+
+  const statisticsPayload = await apiFootballGet<StatisticEntry[]>('/fixtures/statistics', {
+    params: { fixture: fixtureId },
+    revalidate: 86_400,
+    timeoutMs: 15_000,
+  });
+  const statistics = statisticsPayload?.response ?? [];
+  const own = statistics.find((entry) => entry.team?.id === teamId);
+  const rival = statistics.find((entry) => entry.team?.id !== teamId);
+  const cornersFor = cornersOf(own);
+  const cornersAgainst = cornersOf(rival);
+
+  // Não transforma ausência de cobertura em zero, pois isso distorceria a projeção.
+  if (cornersFor === null || cornersAgainst === null) return null;
+
+  const isHome = item.teams?.home?.id === teamId;
+  return {
+    fixtureId,
+    date: item.fixture?.date ?? '',
+    opponent: isHome ? item.teams?.away?.name ?? '' : item.teams?.home?.name ?? '',
+    venue: isHome ? 'home' : 'away',
+    cornersFor,
+    cornersAgainst,
+    league: item.league?.name ?? '',
+  };
+}
+
 async function loadSamples(teamId: number, limit: number): Promise<CornerSample[]> {
+  // Busca uma janela maior, pois algumas competições não oferecem estatísticas de escanteios.
   const fixturesPayload = await apiFootballGet<FixtureItem[]>('/fixtures', {
-    params: { team: teamId, last: Math.min(Math.max(limit + 3, 6), 12), status: 'FT' },
+    params: { team: teamId, last: 25, status: 'FT' },
     revalidate: 1_800,
+    timeoutMs: 15_000,
   });
 
-  const fixtures = (fixturesPayload?.response ?? []).filter((item) => item.fixture?.id).slice(0, Math.min(limit + 3, 10));
-  const samples = await Promise.all(fixtures.map(async (item) => {
-    const fixtureId = item.fixture?.id as number;
-    const statisticsPayload = await apiFootballGet<StatisticEntry[]>('/fixtures/statistics', {
-      params: { fixture: fixtureId },
-      revalidate: 86_400,
-    });
-    const statistics = statisticsPayload?.response ?? [];
-    const own = statistics.find((entry) => entry.team?.id === teamId);
-    const rival = statistics.find((entry) => entry.team?.id !== teamId);
-    if (!own || !rival) return null;
+  const fixtures = (fixturesPayload?.response ?? [])
+    .filter((item) => item.fixture?.id)
+    .sort((a, b) => new Date(b.fixture?.date ?? 0).getTime() - new Date(a.fixture?.date ?? 0).getTime());
 
-    const isHome = item.teams?.home?.id === teamId;
-    return {
-      fixtureId,
-      date: item.fixture?.date ?? '',
-      opponent: isHome ? item.teams?.away?.name ?? '' : item.teams?.home?.name ?? '',
-      venue: isHome ? 'home' as const : 'away' as const,
-      cornersFor: cornersOf(own),
-      cornersAgainst: cornersOf(rival),
-      league: item.league?.name ?? '',
-    };
-  }));
+  const collected: CornerSample[] = [];
+  const batchSize = 5;
 
-  return samples.filter((sample): sample is CornerSample => Boolean(sample)).slice(0, limit);
+  for (let index = 0; index < fixtures.length && collected.length < limit; index += batchSize) {
+    const batch = fixtures.slice(index, index + batchSize);
+    const results = await Promise.all(batch.map((fixture) => mapFixtureToSample(fixture, teamId)));
+    collected.push(...results.filter((sample): sample is CornerSample => sample !== null));
+  }
+
+  return collected.slice(0, limit);
 }
 
 export async function GET(request: NextRequest) {
@@ -102,7 +123,14 @@ export async function GET(request: NextRequest) {
 
     const [homeSamples, awaySamples] = await Promise.all([loadSamples(homeId, limit), loadSamples(awayId, limit)]);
     if (homeSamples.length < 3 || awaySamples.length < 3) {
-      return NextResponse.json({ ok: false, error: 'Histórico insuficiente de escanteios para uma das equipes.', homeSamples, awaySamples }, { status: 422 });
+      return NextResponse.json({
+        ok: false,
+        code: 'INSUFFICIENT_HISTORY',
+        error: `Foram encontrados ${homeSamples.length} jogos de ${homeResolved?.team?.name ?? home} e ${awaySamples.length} jogos de ${awayResolved?.team?.name ?? away} com escanteios. São necessários pelo menos 3 por equipe.`,
+        homeSamples,
+        awaySamples,
+        counts: { home: homeSamples.length, away: awaySamples.length },
+      }, { status: 422 });
     }
 
     return NextResponse.json({
