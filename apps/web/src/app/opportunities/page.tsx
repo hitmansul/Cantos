@@ -19,41 +19,53 @@ type Alert = {
   edgePct: number;
   confidence: string;
   bookmakersCompared: number;
+  discovery?: boolean;
 };
 
 type Payload = { configured: boolean; alerts: Alert[]; lastUpdated: string; note?: string };
 
-const confidenceOrder: Record<string, number> = { high: 3, alta: 3, medium: 2, media: 2, média: 2, low: 1, baixa: 1 };
+const confidenceOrder: Record<string, number> = { high: 3, alta: 3, medium: 2, media: 2, média: 2, moderada: 2, low: 1, baixa: 1, fraca: 1 };
 
 function confidenceLabel(value: string) {
   const normalized = value.toLowerCase();
   if (normalized === 'high' || normalized === 'alta') return 'Alta';
-  if (normalized === 'medium' || normalized === 'media' || normalized === 'média') return 'Média';
-  if (normalized === 'low' || normalized === 'baixa') return 'Baixa';
+  if (['medium', 'media', 'média', 'moderada'].includes(normalized)) return 'Média';
+  if (['low', 'baixa', 'fraca'].includes(normalized)) return 'Baixa';
   return value || 'Não informada';
 }
 
 function isCornerMarket(alert: Alert) {
-  return `${alert.marketName} ${alert.selectionLabel}`.toLowerCase().includes('corner') || `${alert.marketName} ${alert.selectionLabel}`.toLowerCase().includes('escante');
+  const text = `${alert.marketName} ${alert.selectionLabel}`.toLowerCase();
+  return text.includes('corner') || text.includes('escante');
 }
 
 export default function OpportunitiesPage() {
   const [data, setData] = useState<Payload | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [minimumEdge, setMinimumEdge] = useState(8);
+  const [minimumEdge, setMinimumEdge] = useState(0);
   const [onlyCorners, setOnlyCorners] = useState(true);
   const [minimumConfidence, setMinimumConfidence] = useState('all');
   const [query, setQuery] = useState('');
+  const [showOnlyConfirmed, setShowOnlyConfirmed] = useState(false);
 
   async function load() {
     setLoading(true);
     setError('');
     try {
-      const response = await fetch('/api/odds/alerts?scope=all', { cache: 'no-store' });
-      const payload = await response.json();
-      if (!response.ok) throw new Error(payload?.error ?? 'Não foi possível carregar as oportunidades.');
-      setData(payload);
+      const primaryResponse = await fetch('/api/odds/alerts?scope=all', { cache: 'no-store' });
+      const primary = await primaryResponse.json() as Payload;
+      if (!primaryResponse.ok) throw new Error('Não foi possível carregar o radar principal.');
+
+      if ((primary.alerts ?? []).length > 0) {
+        setData(primary);
+        return;
+      }
+
+      const fallbackResponse = await fetch('/api/odds/discovery?days=7', { cache: 'no-store' });
+      const fallback = await fallbackResponse.json() as Payload;
+      if (!fallbackResponse.ok) throw new Error('Não foi possível carregar os mercados disponíveis.');
+      setData(fallback);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Falha ao carregar oportunidades.');
     } finally {
@@ -69,15 +81,16 @@ export default function OpportunitiesPage() {
     return (data?.alerts ?? [])
       .filter((alert) => alert.edgePct >= minimumEdge)
       .filter((alert) => !onlyCorners || isCornerMarket(alert))
+      .filter((alert) => !showOnlyConfirmed || !alert.discovery)
       .filter((alert) => (confidenceOrder[alert.confidence.toLowerCase()] ?? 0) >= minimumConfidenceValue)
       .filter((alert) => !normalizedQuery || `${alert.homeTeam} ${alert.awayTeam} ${alert.leagueName} ${alert.marketName}`.toLowerCase().includes(normalizedQuery))
-      .sort((a, b) => b.edgePct - a.edgePct || b.bookmakersCompared - a.bookmakersCompared);
-  }, [data, minimumEdge, onlyCorners, minimumConfidence, query]);
+      .sort((a, b) => Number(Boolean(a.discovery)) - Number(Boolean(b.discovery)) || b.edgePct - a.edgePct || b.bookmakersCompared - a.bookmakersCompared);
+  }, [data, minimumEdge, onlyCorners, showOnlyConfirmed, minimumConfidence, query]);
 
   const summary = useMemo(() => ({
     total: alerts.length,
-    strong: alerts.filter((alert) => alert.edgePct >= 15).length,
-    averageEdge: alerts.length ? alerts.reduce((sum, alert) => sum + alert.edgePct, 0) / alerts.length : 0,
+    confirmed: alerts.filter((alert) => !alert.discovery).length,
+    discovery: alerts.filter((alert) => alert.discovery).length,
     leagues: new Set(alerts.map((alert) => alert.leagueName)).size,
   }), [alerts]);
 
@@ -86,22 +99,22 @@ export default function OpportunitiesPage() {
       <header className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <div className="inline-flex items-center gap-2 rounded-full border bg-card px-3 py-1 text-xs font-bold text-primary"><Sparkles className="h-4 w-4" /> Radar de oportunidades</div>
-          <h1 className="mt-3 text-3xl font-black tracking-tight sm:text-4xl">Onde as casas estão divergindo</h1>
-          <p className="mt-2 max-w-3xl text-muted-foreground">Esta tela identifica diferença de preço entre casas. Ela não garante uma boa aposta: use o botão <b>Analisar com a IA</b> para validar histórico, probabilidade, EV, risco e entrada sugerida.</p>
+          <h1 className="mt-3 text-3xl font-black tracking-tight sm:text-4xl">Mercados encontrados e oportunidades confirmadas</h1>
+          <p className="mt-2 max-w-3xl text-muted-foreground">A tela mostra primeiro oportunidades com diferença relevante entre casas. Quando nenhuma existe, mostra mercados reais disponíveis para que a IA faça a validação estatística.</p>
         </div>
         <button onClick={() => void load()} disabled={loading} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border bg-card px-4 font-bold disabled:opacity-50"><RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} /> Atualizar</button>
       </header>
 
       <section className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <Metric label="Oportunidades no filtro" value={String(summary.total)} />
-        <Metric label="Diferença acima de 15%" value={String(summary.strong)} />
-        <Metric label="Diferença média" value={`${summary.averageEdge.toFixed(1)}%`} />
+        <Metric label="Itens exibidos" value={String(summary.total)} />
+        <Metric label="Oportunidades confirmadas" value={String(summary.confirmed)} />
+        <Metric label="Mercados para análise" value={String(summary.discovery)} />
         <Metric label="Competições" value={String(summary.leagues)} />
       </section>
 
       <section className="mt-5 rounded-2xl border bg-card p-4">
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-          <label className="flex flex-col gap-2 text-sm font-semibold">Diferença mínima entre casas: {minimumEdge}%
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+          <label className="flex flex-col gap-2 text-sm font-semibold">Diferença mínima: {minimumEdge}%
             <input type="range" min="0" max="30" value={minimumEdge} onChange={(event) => setMinimumEdge(Number(event.target.value))} />
           </label>
           <label className="flex flex-col gap-2 text-sm font-semibold">Confiança informada
@@ -112,17 +125,19 @@ export default function OpportunitiesPage() {
           <label className="flex flex-col gap-2 text-sm font-semibold">Pesquisar partida ou competição
             <div className="flex min-h-11 items-center gap-2 rounded-xl border bg-background px-3"><Search className="h-4 w-4 text-muted-foreground" /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Ex.: Fluminense" className="w-full bg-transparent outline-none" /></div>
           </label>
-          <label className="flex items-center gap-3 self-end rounded-xl border bg-background p-3 text-sm font-semibold"><input type="checkbox" checked={onlyCorners} onChange={(event) => setOnlyCorners(event.target.checked)} /> Mostrar somente escanteios</label>
+          <label className="flex items-center gap-3 self-end rounded-xl border bg-background p-3 text-sm font-semibold"><input type="checkbox" checked={onlyCorners} onChange={(event) => setOnlyCorners(event.target.checked)} /> Somente escanteios</label>
+          <label className="flex items-center gap-3 self-end rounded-xl border bg-background p-3 text-sm font-semibold"><input type="checkbox" checked={showOnlyConfirmed} onChange={(event) => setShowOnlyConfirmed(event.target.checked)} /> Somente confirmadas</label>
         </div>
       </section>
 
       <div className="mt-5 rounded-2xl border border-primary/30 bg-primary/5 p-4 text-sm">
         <p className="font-black">Como interpretar</p>
-        <p className="mt-1 text-muted-foreground"><b>Diferença entre casas</b> mostra que uma casa está pagando mais que a mediana. <b>Valor estatístico</b> só existe quando a probabilidade calculada pela IA também supera a probabilidade implícita da odd.</p>
+        <p className="mt-1 text-muted-foreground"><b>Oportunidade confirmada</b> significa que a melhor odd está acima das demais casas. <b>Mercado para análise</b> significa que existe uma linha real disponível, mas ainda não há comparação suficiente; nesses casos, use a IA Cantos antes de qualquer decisão.</p>
       </div>
 
+      {data?.note && <div className="mt-4 rounded-xl border bg-card p-4 text-sm text-muted-foreground">{data.note}</div>}
       {error && <div className="mt-5 rounded-xl border border-destructive/40 bg-destructive/10 p-4 text-destructive">{error}</div>}
-      {!loading && !error && alerts.length === 0 && <div className="mt-5 rounded-2xl border border-dashed p-10 text-center text-muted-foreground">Nenhuma oportunidade atende aos filtros atuais.</div>}
+      {!loading && !error && alerts.length === 0 && <div className="mt-5 rounded-2xl border border-dashed p-10 text-center text-muted-foreground">Nenhum mercado de escanteios foi disponibilizado pela fonte neste momento.</div>}
 
       <section className="mt-5 grid gap-4">
         {alerts.map((alert, index) => {
@@ -131,7 +146,7 @@ export default function OpportunitiesPage() {
             <article key={alert.id} className="rounded-2xl border bg-card p-4 shadow-sm sm:p-5">
               <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
                 <div className="min-w-0">
-                  <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground"><span className="rounded-full bg-primary/10 px-2 py-1 font-bold text-primary">#{index + 1}</span><span>{alert.leagueName}</span><span>•</span><span>{new Date(alert.startTime).toLocaleString('pt-BR')}</span><span>•</span><span>Confiança: {confidenceLabel(alert.confidence)}</span></div>
+                  <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground"><span className="rounded-full bg-primary/10 px-2 py-1 font-bold text-primary">#{index + 1}</span><span className={`rounded-full px-2 py-1 font-bold ${alert.discovery ? 'bg-muted text-muted-foreground' : 'bg-primary/10 text-primary'}`}>{alert.discovery ? 'Mercado para análise' : 'Oportunidade confirmada'}</span><span>{alert.leagueName}</span><span>•</span><span>{alert.startTime ? new Date(alert.startTime).toLocaleString('pt-BR') : 'Horário não informado'}</span></div>
                   <h2 className="mt-2 break-words text-xl font-black">{alert.homeTeam} x {alert.awayTeam}</h2>
                   <p className="mt-1 text-sm text-muted-foreground">{alert.marketName} — {alert.selectionLabel}</p>
                 </div>
