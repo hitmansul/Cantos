@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { projectCornerMarket } from '@/lib/corners/statisticalEngine';
+import { calculateOpportunityScore } from '@/lib/corners/opportunityScore';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -39,6 +40,7 @@ export async function POST(request: NextRequest) {
     }
 
     const result = projectCornerMarket(parsed.data);
+    const opportunityScore = calculateOpportunityScore(result);
     const projection = {
       expectedHomeCorners: result.expectedHomeCorners,
       expectedAwayCorners: result.expectedAwayCorners,
@@ -52,6 +54,7 @@ export async function POST(request: NextRequest) {
       summary: result.summary,
       decision: result.decision,
       decisionReason: result.decisionReason,
+      opportunityScore,
       factors: result.factors,
       offers: result.evaluatedOffers.map((offer) => ({
         bookmaker: offer.bookmaker,
@@ -84,5 +87,5 @@ export async function POST(request: NextRequest) {
 }
 
 export async function GET() {
-  return NextResponse.json({ ok: true, service: 'IA Cantos - Motor Estatístico Explicável', endpoint: 'POST /api/ai-corners/projection', version: '3.0.0' });
+  return NextResponse.json({ ok: true, service: 'IA Cantos - Motor Estatístico Explicável', endpoint: 'POST /api/ai-corners/projection', version: '4.0.0' });
 }
