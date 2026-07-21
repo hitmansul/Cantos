@@ -27,6 +27,8 @@ const projectionSchema = z.object({
   leagueAverageTotal: z.number().min(1).max(30).optional(),
   recentFormWeight: z.number().min(0).max(1).optional(),
   marketOffers: z.array(offerSchema).max(300).optional(),
+  bankroll: z.number().positive().max(100000000).optional(),
+  riskProfile: z.enum(['conservative', 'balanced', 'aggressive']).optional(),
 });
 
 export async function POST(request: NextRequest) {
@@ -44,7 +46,12 @@ export async function POST(request: NextRequest) {
       confidence: result.confidenceLabel,
       confidenceScore: result.confidence,
       sampleSize: result.sampleSize,
+      volatility: result.volatility,
+      projectedRange: result.projectedRange,
+      scenarios: result.scenarios,
       summary: result.summary,
+      decision: result.decision,
+      decisionReason: result.decisionReason,
       factors: result.factors,
       offers: result.evaluatedOffers.map((offer) => ({
         bookmaker: offer.bookmaker,
@@ -58,13 +65,17 @@ export async function POST(request: NextRequest) {
         isValueBet: offer.isValueBet,
         rating: offer.rating,
         explanation: offer.explanation,
+        kellyFraction: offer.kellyFraction,
+        recommendedStakePercent: offer.recommendedStakePercent,
+        recommendedStake: offer.recommendedStake,
+        riskLevel: offer.riskLevel,
       })),
     };
 
     return NextResponse.json({
       ok: true,
       projection,
-      disclaimer: 'A análise é estatística, não garante resultado e deve ser combinada com gestão de banca e conferência das escalações e odds.',
+      disclaimer: 'A análise é estatística, não garante resultado e deve ser combinada com gestão de banca, conferência das escalações e atualização das odds.',
     });
   } catch (error) {
     console.error('Falha ao calcular projeção de escanteios:', error);
@@ -73,5 +84,5 @@ export async function POST(request: NextRequest) {
 }
 
 export async function GET() {
-  return NextResponse.json({ ok: true, service: 'IA Cantos - Motor Estatístico Explicável', endpoint: 'POST /api/ai-corners/projection', version: '2.0.0' });
+  return NextResponse.json({ ok: true, service: 'IA Cantos - Motor Estatístico Explicável', endpoint: 'POST /api/ai-corners/projection', version: '3.0.0' });
 }
