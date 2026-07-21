@@ -20,6 +20,8 @@ export type CornerProjectionInput = {
   leagueAverageTotal?: number;
   recentFormWeight?: number;
   marketOffers?: CornerMarketOffer[];
+  bankroll?: number;
+  riskProfile?: 'conservative' | 'balanced' | 'aggressive';
 };
 
 export type ProjectionFactor = {
@@ -27,6 +29,13 @@ export type ProjectionFactor = {
   title: string;
   description: string;
   impact: number;
+};
+
+export type ProjectionScenario = {
+  label: 'low' | 'base' | 'high';
+  totalCorners: number;
+  probabilityBand: string;
+  description: string;
 };
 
 export type CornerLineProjection = {
@@ -48,6 +57,10 @@ export type EvaluatedOffer = CornerMarketOffer & {
   isValueBet: boolean;
   rating: 'avoid' | 'watch' | 'value' | 'strong-value';
   explanation: string;
+  kellyFraction: number;
+  recommendedStakePercent: number;
+  recommendedStake: number | null;
+  riskLevel: 'low' | 'medium' | 'high';
 };
 
 export type CornerProjection = {
@@ -59,8 +72,13 @@ export type CornerProjection = {
   confidence: number;
   confidenceLabel: 'low' | 'medium' | 'high';
   sampleSize: number;
+  volatility: number;
+  projectedRange: { min: number; max: number };
+  scenarios: ProjectionScenario[];
   factors: ProjectionFactor[];
   summary: string;
+  decision: 'bet' | 'monitor' | 'no-bet';
+  decisionReason: string;
   lines: CornerLineProjection[];
   evaluatedOffers: EvaluatedOffer[];
   generatedAt: string;
@@ -136,14 +154,9 @@ function estimateExpectedCorners(input: CornerProjectionInput) {
 
 function buildFactors(input: CornerProjectionInput, estimate: ReturnType<typeof estimateExpectedCorners>): ProjectionFactor[] {
   const factors: ProjectionFactor[] = [];
-  const baseline = (input.leagueAverageTotal ?? 10);
+  const baseline = input.leagueAverageTotal ?? 10;
   const difference = estimate.expectedTotal - baseline;
-  factors.push({
-    type: difference >= 1 ? 'positive' : difference <= -1 ? 'risk' : 'neutral',
-    title: 'Ritmo projetado',
-    description: `A projeção total é ${round(estimate.expectedTotal, 2)}, ${Math.abs(round(difference, 2))} ${difference >= 0 ? 'acima' : 'abaixo'} da referência de ${baseline}.`,
-    impact: round(difference / Math.max(baseline, 1), 2),
-  });
+  factors.push({ type: difference >= 1 ? 'positive' : difference <= -1 ? 'risk' : 'neutral', title: 'Ritmo projetado', description: `A projeção total é ${round(estimate.expectedTotal, 2)}, ${Math.abs(round(difference, 2))} ${difference >= 0 ? 'acima' : 'abaixo'} da referência de ${baseline}.`, impact: round(difference / Math.max(baseline, 1), 2) });
   factors.push({ type: estimate.homeFor >= 6 ? 'positive' : estimate.homeFor < 4 ? 'risk' : 'neutral', title: `Produção de ${input.homeTeam}`, description: `Média ponderada de ${round(estimate.homeFor, 2)} escanteios a favor e ${round(estimate.homeAgainst, 2)} contra.`, impact: round((estimate.homeFor - 5) / 5, 2) });
   factors.push({ type: estimate.awayFor >= 6 ? 'positive' : estimate.awayFor < 4 ? 'risk' : 'neutral', title: `Produção de ${input.awayTeam}`, description: `Média ponderada de ${round(estimate.awayFor, 2)} escanteios a favor e ${round(estimate.awayAgainst, 2)} contra.`, impact: round((estimate.awayFor - 5) / 5, 2) });
   factors.push({ type: estimate.volatility > 4 ? 'risk' : estimate.volatility < 2.5 ? 'positive' : 'neutral', title: 'Consistência da amostra', description: `Desvio dos totais recentes em ${round(estimate.volatility, 2)}. ${estimate.volatility > 4 ? 'Resultados muito variáveis reduzem a confiança.' : 'A variação está dentro de uma faixa aceitável.'}`, impact: round(-estimate.volatility / 10, 2) });
@@ -151,43 +164,75 @@ function buildFactors(input: CornerProjectionInput, estimate: ReturnType<typeof 
   return factors;
 }
 
-function evaluateOffer(offer: CornerMarketOffer, probability: number): EvaluatedOffer {
+function stakeMultiplier(profile: CornerProjectionInput['riskProfile']) {
+  if (profile === 'aggressive') return 0.5;
+  if (profile === 'balanced') return 0.25;
+  return 0.125;
+}
+
+function evaluateOffer(offer: CornerMarketOffer, probability: number, confidence: number, input: CornerProjectionInput): EvaluatedOffer {
   const odd = Number.isFinite(offer.odd) && offer.odd > 1 ? offer.odd : 0;
   const expectedValue = odd ? probability * odd - 1 : -1;
   const impliedProbability = odd ? 1 / odd : 1;
   const edge = probability - impliedProbability;
-  const rating = expectedValue >= 0.12 && edge >= 0.06 ? 'strong-value' : expectedValue >= 0.03 && edge >= 0.02 ? 'value' : expectedValue >= 0 ? 'watch' : 'avoid';
+  const rating = expectedValue >= 0.12 && edge >= 0.06 && confidence >= 0.55 ? 'strong-value' : expectedValue >= 0.03 && edge >= 0.02 && confidence >= 0.45 ? 'value' : expectedValue >= 0 ? 'watch' : 'avoid';
   const fair = fairOdd(probability);
+  const rawKelly = odd > 1 ? Math.max(0, ((odd - 1) * probability - (1 - probability)) / (odd - 1)) : 0;
+  const adjustedKelly = rawKelly * stakeMultiplier(input.riskProfile ?? 'conservative') * confidence;
+  const recommendedStakePercent = rating === 'avoid' || rating === 'watch' ? 0 : clamp(adjustedKelly * 100, 0, input.riskProfile === 'aggressive' ? 5 : input.riskProfile === 'balanced' ? 3 : 1.5);
+  const bankroll = input.bankroll && input.bankroll > 0 ? input.bankroll : null;
+  const riskLevel = confidence < 0.5 || recommendedStakePercent > 3 ? 'high' : confidence < 0.7 || recommendedStakePercent > 1.5 ? 'medium' : 'low';
   return {
     ...offer,
     modelProbability: round(probability), fairOdd: fair, expectedValue: round(expectedValue), edge: round(edge),
     isValueBet: rating === 'value' || rating === 'strong-value', rating,
     explanation: `${offer.side === 'over' ? 'Over' : 'Under'} ${offer.line}: modelo estima ${round(probability * 100, 1)}% contra ${round(impliedProbability * 100, 1)}% implícitos. Odd justa ${fair ?? 'indisponível'} e EV ${round(expectedValue * 100, 1)}%.`,
+    kellyFraction: round(rawKelly, 4),
+    recommendedStakePercent: round(recommendedStakePercent, 2),
+    recommendedStake: bankroll ? round(bankroll * recommendedStakePercent / 100, 2) : null,
+    riskLevel,
   };
+}
+
+function buildScenarios(expectedTotal: number, volatility: number): ProjectionScenario[] {
+  const spread = clamp(volatility * 0.65, 1.5, 4.5);
+  return [
+    { label: 'low', totalCorners: round(Math.max(0, expectedTotal - spread), 1), probabilityBand: '20%–30%', description: 'Jogo travado ou com baixa conversão territorial.' },
+    { label: 'base', totalCorners: round(expectedTotal, 1), probabilityBand: '40%–50%', description: 'Cenário central calculado pelo histórico recente.' },
+    { label: 'high', totalCorners: round(expectedTotal + spread, 1), probabilityBand: '20%–30%', description: 'Pressão elevada, placar desfavorável ou jogo mais aberto.' },
+  ];
 }
 
 export function projectCornerMarket(input: CornerProjectionInput): CornerProjection {
   const estimate = estimateExpectedCorners(input);
+  const baseConfidence = 0.32 + Math.min(estimate.sampleSize, 20) * 0.025 - Math.max(0, estimate.volatility - 2.5) * 0.035;
+  const confidence = clamp(baseConfidence, 0.25, 0.9);
+  const confidenceLabel = confidence >= 0.72 ? 'high' : confidence >= 0.52 ? 'medium' : 'low';
   const offers = (input.marketOffers ?? []).filter((offer) => Number.isFinite(offer.line) && Number.isFinite(offer.odd) && offer.odd > 1);
   const lines = Array.from(new Set([...DEFAULT_LINES, ...offers.map((offer) => offer.line)])).sort((a, b) => a - b);
   const evaluatedOffers: EvaluatedOffer[] = [];
   const lineProjections = lines.map<CornerLineProjection>((line) => {
     const probabilities = lineProbabilities(estimate.expectedTotal, line);
     const lineOffers = offers.filter((offer) => Math.abs(offer.line - line) < 0.001);
-    const overOffers = lineOffers.filter((offer) => offer.side === 'over').map((offer) => evaluateOffer(offer, probabilities.over));
-    const underOffers = lineOffers.filter((offer) => offer.side === 'under').map((offer) => evaluateOffer(offer, probabilities.under));
+    const overOffers = lineOffers.filter((offer) => offer.side === 'over').map((offer) => evaluateOffer(offer, probabilities.over, confidence, input));
+    const underOffers = lineOffers.filter((offer) => offer.side === 'under').map((offer) => evaluateOffer(offer, probabilities.under, confidence, input));
     evaluatedOffers.push(...overOffers, ...underOffers);
     return { line, overProbability: round(probabilities.over), underProbability: round(probabilities.under), pushProbability: round(probabilities.push), fairOverOdd: fairOdd(probabilities.over), fairUnderOdd: fairOdd(probabilities.under), bestOverOffer: overOffers.sort((a, b) => b.expectedValue - a.expectedValue)[0], bestUnderOffer: underOffers.sort((a, b) => b.expectedValue - a.expectedValue)[0] };
   });
-  const baseConfidence = 0.32 + Math.min(estimate.sampleSize, 20) * 0.025 - Math.max(0, estimate.volatility - 2.5) * 0.035;
-  const confidence = clamp(baseConfidence, 0.25, 0.9);
-  const confidenceLabel = confidence >= 0.72 ? 'high' : confidence >= 0.52 ? 'medium' : 'low';
+  const rankedOffers = evaluatedOffers.sort((a, b) => b.expectedValue - a.expectedValue);
+  const best = rankedOffers[0];
+  const decision = best?.rating === 'strong-value' || best?.rating === 'value' ? 'bet' : best?.rating === 'watch' ? 'monitor' : 'no-bet';
+  const decisionReason = !best ? 'Nenhuma odd válida foi encontrada para comparar.' : decision === 'bet' ? `A melhor oportunidade apresenta EV de ${round(best.expectedValue * 100, 1)}% e vantagem de ${round(best.edge * 100, 1)} pontos percentuais.` : decision === 'monitor' ? 'Há pequena vantagem estatística, mas ainda insuficiente para uma entrada recomendada.' : 'As odds disponíveis não compensam o risco estimado pelo modelo.';
+  const spread = clamp(estimate.volatility * 0.65, 1.5, 4.5);
   const factors = buildFactors(input, estimate);
   return {
     homeTeam: input.homeTeam, awayTeam: input.awayTeam,
     expectedHomeCorners: round(estimate.expectedHome, 2), expectedAwayCorners: round(estimate.expectedAway, 2), expectedTotalCorners: round(estimate.expectedTotal, 2),
-    confidence: round(confidence, 2), confidenceLabel, sampleSize: estimate.sampleSize, factors,
+    confidence: round(confidence, 2), confidenceLabel, sampleSize: estimate.sampleSize, volatility: round(estimate.volatility, 2),
+    projectedRange: { min: round(Math.max(0, estimate.expectedTotal - spread), 1), max: round(estimate.expectedTotal + spread, 1) },
+    scenarios: buildScenarios(estimate.expectedTotal, estimate.volatility), factors,
     summary: `O modelo projeta ${round(estimate.expectedTotal, 2)} escanteios para ${input.homeTeam} x ${input.awayTeam}, com confiança ${confidenceLabel === 'high' ? 'alta' : confidenceLabel === 'medium' ? 'média' : 'baixa'} (${round(confidence * 100, 0)}%).`,
-    lines: lineProjections, evaluatedOffers: evaluatedOffers.sort((a, b) => b.expectedValue - a.expectedValue), generatedAt: new Date().toISOString(),
+    decision, decisionReason,
+    lines: lineProjections, evaluatedOffers: rankedOffers, generatedAt: new Date().toISOString(),
   };
 }
