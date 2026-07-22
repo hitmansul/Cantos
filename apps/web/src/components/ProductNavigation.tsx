@@ -2,11 +2,12 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { Activity, BarChart3, Beaker, Brain, FlaskConical, History, Radio, Search, Sparkles } from 'lucide-react';
+import { Activity, BarChart3, Beaker, Brain, BrainCircuit, FlaskConical, History, Radio, Search, Sparkles } from 'lucide-react';
 import { ptBR } from '@/i18n/pt-BR';
 
 const items = [
   { href: '/', label: ptBR.navigation.statistics, icon: BarChart3 },
+  { href: '/corner-gpt', label: 'CornerGPT', icon: BrainCircuit },
   { href: '/opportunities', label: ptBR.navigation.opportunities, icon: Sparkles },
   { href: '/odds-intelligence', label: ptBR.navigation.odds, icon: Search },
   { href: '/live', label: ptBR.navigation.live, icon: Radio },
