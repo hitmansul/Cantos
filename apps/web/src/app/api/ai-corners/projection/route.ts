@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { projectCornerMarket } from '@/lib/corners/statisticalEngine';
 import { calculateOpportunityScore } from '@/lib/corners/opportunityScore';
+import { persistCornerDecision } from '@/lib/corners/decisionWarehouse';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -21,6 +22,10 @@ const offerSchema = z.object({
 });
 
 const projectionSchema = z.object({
+  fixtureKey: z.string().min(1).max(160).optional(),
+  competitionKey: z.string().min(1).max(120).optional(),
+  competitionName: z.string().min(1).max(160).optional(),
+  kickoffAt: z.string().datetime({ offset: true }).optional(),
   homeTeam: z.string().min(1).max(120),
   awayTeam: z.string().min(1).max(120),
   homeSamples: z.array(sampleSchema).min(3).max(50),
@@ -36,7 +41,10 @@ export async function POST(request: NextRequest) {
   try {
     const parsed = projectionSchema.safeParse(await request.json());
     if (!parsed.success) {
-      return NextResponse.json({ ok: false, error: 'Dados inválidos para a projeção.', details: parsed.error.flatten() }, { status: 400 });
+      return NextResponse.json(
+        { ok: false, error: 'Dados inválidos para a projeção.', details: parsed.error.flatten() },
+        { status: 400 },
+      );
     }
 
     const result = projectCornerMarket(parsed.data);
@@ -75,17 +83,55 @@ export async function POST(request: NextRequest) {
       })),
     };
 
+    const predictionKey = await persistCornerDecision({
+      fixtureKey: parsed.data.fixtureKey,
+      competitionKey: parsed.data.competitionKey,
+      competitionName: parsed.data.competitionName,
+      kickoffAt: parsed.data.kickoffAt,
+      homeTeam: parsed.data.homeTeam,
+      awayTeam: parsed.data.awayTeam,
+      expectedHomeCorners: result.expectedHomeCorners,
+      expectedAwayCorners: result.expectedAwayCorners,
+      expectedTotalCorners: result.expectedTotalCorners,
+      projectedRange: result.projectedRange,
+      scoreIa: opportunityScore.total,
+      confidenceScore: result.confidence,
+      confidenceLabel: result.confidenceLabel,
+      volatility: result.volatility,
+      sampleSize: result.sampleSize,
+      decision: result.decision,
+      decisionReason: result.decisionReason,
+      summary: result.summary,
+      riskProfile: parsed.data.riskProfile,
+      bankroll: parsed.data.bankroll,
+      factors: result.factors,
+      scenarios: result.scenarios,
+      requestSnapshot: parsed.data,
+      responseSnapshot: projection,
+      offers: projection.offers,
+    });
+
     return NextResponse.json({
       ok: true,
+      predictionKey,
       projection,
       disclaimer: 'A análise é estatística, não garante resultado e deve ser combinada com gestão de banca, conferência das escalações e atualização das odds.',
     });
   } catch (error) {
     console.error('Falha ao calcular projeção de escanteios:', error);
-    return NextResponse.json({ ok: false, error: 'Não foi possível calcular a projeção de escanteios.' }, { status: 500 });
+    return NextResponse.json(
+      { ok: false, error: 'Não foi possível calcular a projeção de escanteios.' },
+      { status: 500 },
+    );
   }
 }
 
 export async function GET() {
-  return NextResponse.json({ ok: true, service: 'IA Cantos - Motor Estatístico Explicável', endpoint: 'POST /api/ai-corners/projection', version: '4.0.0' });
+  return NextResponse.json({
+    ok: true,
+    service: 'IA Cantos - Motor Estatístico Explicável',
+    endpoint: 'POST /api/ai-corners/projection',
+    version: '4.1.0',
+    decisionWarehouse: true,
+  });
 }
