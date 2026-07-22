@@ -1,3 +1,4 @@
+import { settlePendingPredictionsFromDatabase } from '@/lib/corners/settlementEngine';
 import { upsertAiKnowledgeDocument } from '@/lib/persistence/aiRepository';
 import { touchDataSource } from '@/lib/persistence/database';
 import { getWorldCupDatabaseSummary } from '@/lib/persistence/worldCupRepository';
@@ -23,6 +24,7 @@ export type PostGamePipelineResult = {
   imports?: {
     fifaStats?: Awaited<ReturnType<typeof importWorldCupFromFifaStats>>;
     scores365?: Awaited<ReturnType<typeof importWorldCupFrom365Scores>>;
+    settlements?: Awaited<ReturnType<typeof settlePendingPredictionsFromDatabase>>;
   };
 };
 
@@ -74,6 +76,7 @@ export async function runPostGamePipeline(options: PostGamePipelineOptions = {})
   if (worldCup.skipped) {
     steps.push({ name: 'Importar estatisticas FIFA pos-jogo', status: 'skipped', detail: 'Banco indisponivel; importação FIFA pós-jogo não foi executada.' });
     steps.push({ name: 'Complementar com 365Scores', status: 'skipped', detail: 'Banco indisponivel; importação de resultados e classificação não foi executada.' });
+    steps.push({ name: 'Liquidar previsões de escanteios', status: 'skipped', detail: 'Banco indisponível; liquidação automática não foi executada.' });
     return { success: true, ranAt, steps, audit: SOURCE_AUDIT };
   }
 
@@ -110,6 +113,19 @@ export async function runPostGamePipeline(options: PostGamePipelineOptions = {})
   }
 
   steps.push({ name: 'Complementar com API-Football', status: 'skipped', detail: 'API-Football permanece como fallback para próxima etapa. Nenhum dado fictício foi criado.' });
+
+  try {
+    const settlements = await settlePendingPredictionsFromDatabase(200);
+    imports.settlements = settlements;
+    steps.push({
+      name: 'Liquidar previsões de escanteios',
+      status: 'completed',
+      detail: `${settlements.checked} previsões verificadas e ${settlements.settled} liquidadas automaticamente.`,
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Erro desconhecido na liquidação.';
+    steps.push({ name: 'Liquidar previsões de escanteios', status: 'skipped', detail: `Falha na liquidação automática: ${message}` });
+  }
 
   const summary = (await getWorldCupDatabaseSummary()) as Record<string, unknown>;
 
