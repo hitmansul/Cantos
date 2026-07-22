@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { BarChart3, Beaker, Brain, History, Radio, Search, Sparkles } from 'lucide-react';
+import { Activity, BarChart3, Beaker, Brain, History, Radio, Search, Sparkles } from 'lucide-react';
 import { ptBR } from '@/i18n/pt-BR';
 
 const items = [
@@ -11,6 +11,7 @@ const items = [
   { href: '/odds-intelligence', label: ptBR.navigation.odds, icon: Search },
   { href: '/live', label: ptBR.navigation.live, icon: Radio },
   { href: '/prediction-lab', label: ptBR.navigation.predictionLab, icon: Beaker },
+  { href: '/ai-performance', label: 'Performance da IA', icon: Activity },
   { href: '/market-replay', label: ptBR.navigation.marketReplay, icon: History },
   { href: '/match-intelligence', label: ptBR.navigation.matchIntelligence, icon: Brain },
 ];
