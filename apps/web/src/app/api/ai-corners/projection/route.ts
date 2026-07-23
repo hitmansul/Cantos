@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { projectCornerMarket } from '@/lib/corners/statisticalEngine';
 import { calculateOpportunityScore } from '@/lib/corners/opportunityScore';
 import { persistCornerDecision } from '@/lib/corners/decisionWarehouse';
+import { buildMatchIntelligence } from '@/lib/corners/matchIntelligenceEngine';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -49,6 +50,7 @@ export async function POST(request: NextRequest) {
 
     const result = projectCornerMarket(parsed.data);
     const opportunityScore = calculateOpportunityScore(result);
+    const intelligence = buildMatchIntelligence(parsed.data, result);
     const projection = {
       expectedHomeCorners: result.expectedHomeCorners,
       expectedAwayCorners: result.expectedAwayCorners,
@@ -63,6 +65,7 @@ export async function POST(request: NextRequest) {
       decision: result.decision,
       decisionReason: result.decisionReason,
       opportunityScore,
+      intelligence,
       factors: result.factors,
       offers: result.evaluatedOffers.map((offer) => ({
         bookmaker: offer.bookmaker,
@@ -129,9 +132,11 @@ export async function POST(request: NextRequest) {
 export async function GET() {
   return NextResponse.json({
     ok: true,
-    service: 'IA Cantos - Motor Estatístico Explicável',
+    service: 'IA Cantos - Match Intelligence Engine',
     endpoint: 'POST /api/ai-corners/projection',
-    version: '4.1.0',
+    version: '5.0.0',
     decisionWarehouse: true,
+    matchIntelligenceEngine: true,
+    primaryMarket: 'corners',
   });
 }
