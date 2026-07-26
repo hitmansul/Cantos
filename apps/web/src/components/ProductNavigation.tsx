@@ -2,26 +2,26 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { Activity, BarChart3, Beaker, Bell, Brain, BrainCircuit, CalendarDays, CalendarClock, FlaskConical, History, Radio, Search, ShieldCheck, Sparkles, Star, WalletCards } from 'lucide-react';
+import { Activity, BarChart3, Beaker, Bell, Brain, BrainCircuit, CalendarDays, CalendarClock, FlaskConical, History, Radio, Search, ShieldCheck, Sparkles, Star } from 'lucide-react';
 import { ptBR } from '@/i18n/pt-BR';
 
 const items = [
-  { href: '/', label: ptBR.navigation.statistics, icon: BarChart3 },
-  { href: '/daily-briefing', label: 'Briefing', icon: CalendarClock },
-  { href: '/smart-calendar', label: 'Agenda IA', icon: CalendarDays },
+  { href: '/', label: 'Ligas e Jogos', icon: BarChart3 },
+  { href: '/daily-briefing', label: 'Resumo Diário', icon: CalendarClock },
+  { href: '/smart-calendar', label: 'Agenda da IA', icon: CalendarDays },
   { href: '/corner-gpt', label: 'CornerGPT', icon: BrainCircuit },
   { href: '/opportunities', label: ptBR.navigation.opportunities, icon: Sparkles },
   { href: '/notifications', label: 'Alertas', icon: Bell },
-  { href: '/watchlist', label: 'Watchlist', icon: Star },
-  { href: '/performance-center', label: 'Minha Performance', icon: WalletCards },
-  { href: '/odds-intelligence', label: ptBR.navigation.odds, icon: Search },
-  { href: '/live', label: ptBR.navigation.live, icon: Radio },
-  { href: '/war-room', label: 'War Room Live', icon: ShieldCheck },
-  { href: '/prediction-lab', label: ptBR.navigation.predictionLab, icon: Beaker },
+  { href: '/watchlist', label: 'Favoritos', icon: Star },
+  { href: '/performance-center', label: 'Minha Performance', icon: Activity },
+  { href: '/odds-intelligence', label: 'Inteligência de Cotações', icon: Search },
+  { href: '/live', label: 'Ao Vivo', icon: Radio },
+  { href: '/war-room', label: 'Sala de Decisão Ao Vivo', icon: ShieldCheck },
+  { href: '/prediction-lab', label: 'Laboratório de Previsões', icon: Beaker },
   { href: '/ai-performance', label: 'Performance da IA', icon: Activity },
-  { href: '/backtest', label: 'Backtest', icon: FlaskConical },
-  { href: '/market-replay', label: ptBR.navigation.marketReplay, icon: History },
-  { href: '/match-intelligence', label: ptBR.navigation.matchIntelligence, icon: Brain },
+  { href: '/backtest', label: 'Testes Históricos', icon: FlaskConical },
+  { href: '/market-replay', label: 'Replay de Mercado', icon: History },
+  { href: '/match-intelligence', label: 'Inteligência da Partida', icon: Brain },
 ];
 
 export function ProductNavigation() {
