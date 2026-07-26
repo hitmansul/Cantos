@@ -4,31 +4,13 @@ import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
 import { Activity, BellRing, BrainCircuit, CalendarClock, Clock3, Radio, RefreshCw, Sparkles, Trophy, Wallet } from 'lucide-react';
 import { buildSmartAlerts, type SmartAlert, type SmartAlertInput } from '@/lib/corners/smartAlertsEngine';
+import { isSettledOperation, operationProfit, readPerformanceOperations, type PerformanceOperation } from '@/lib/performanceOperations';
 
 type AlertsPayload = { alerts?: SmartAlertInput[]; lastUpdated?: string };
-type Operation = { stake: number; odd: number; result: 'pending' | 'win' | 'loss' | 'push' };
-
-const PERFORMANCE_KEY = 'ia-cantos-performance-v1';
-
-function readOperations(): Operation[] {
-  if (typeof window === 'undefined') return [];
-  try {
-    const parsed = JSON.parse(window.localStorage.getItem(PERFORMANCE_KEY) || '[]');
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
-}
-
-function resultProfit(operation: Operation) {
-  if (operation.result === 'win') return operation.stake * (operation.odd - 1);
-  if (operation.result === 'loss') return -operation.stake;
-  return 0;
-}
 
 export function HomeCommandCenter() {
   const [alerts, setAlerts] = useState<SmartAlert[]>([]);
-  const [operations, setOperations] = useState<Operation[]>([]);
+  const [operations, setOperations] = useState<PerformanceOperation[]>([]);
   const [loading, setLoading] = useState(true);
   const [lastUpdated, setLastUpdated] = useState('');
 
@@ -41,7 +23,7 @@ export function HomeCommandCenter() {
         setAlerts(buildSmartAlerts(payload.alerts ?? []));
         setLastUpdated(payload.lastUpdated ?? new Date().toISOString());
       }
-      setOperations(readOperations());
+      setOperations(readPerformanceOperations());
     } finally {
       setLoading(false);
     }
@@ -52,16 +34,17 @@ export function HomeCommandCenter() {
   const summary = useMemo(() => {
     const ordered = [...alerts].sort((a, b) => b.score - a.score);
     const premium = ordered.filter((alert) => alert.grade === 'S+' || alert.grade === 'S' || alert.kind === 'opportunity');
-    const settled = operations.filter((operation) => operation.result !== 'pending');
-    const profit = settled.reduce((total, operation) => total + resultProfit(operation), 0);
+    const settled = operations.filter(isSettledOperation);
+    const profit = settled.reduce((total, operation) => total + operationProfit(operation), 0);
     const stake = settled.reduce((total, operation) => total + operation.stake, 0);
-    const wins = settled.filter((operation) => operation.result === 'win').length;
+    const decisive = settled.filter((operation) => operation.result === 'win' || operation.result === 'loss');
+    const wins = decisive.filter((operation) => operation.result === 'win').length;
     return {
       ordered,
       premium,
       profit,
       roi: stake > 0 ? (profit / stake) * 100 : 0,
-      hitRate: settled.length ? (wins / settled.length) * 100 : 0,
+      hitRate: decisive.length ? (wins / decisive.length) * 100 : 0,
     };
   }, [alerts, operations]);
 
@@ -97,7 +80,7 @@ export function HomeCommandCenter() {
                 <div className="mt-1 text-sm text-muted-foreground">{alert.market}</div>
               </Link>
             ))}
-            {!loading && summary.ordered.length === 0 && <div className="md:col-span-2 rounded-xl border border-dashed p-5 text-sm text-muted-foreground">Nenhuma oportunidade disponível neste momento.</div>}
+            {!loading && summary.ordered.length === 0 && <div className="rounded-xl border border-dashed p-5 text-sm text-muted-foreground md:col-span-2">Nenhuma oportunidade disponível neste momento.</div>}
           </div>
         </article>
 
