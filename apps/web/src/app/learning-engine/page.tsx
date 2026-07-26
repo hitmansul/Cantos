@@ -2,14 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { Activity, BrainCircuit, Gauge, RefreshCw, Scale, Sparkles, Target, TrendingUp } from 'lucide-react';
-
-type Operation = {
-  league?: string;
-  market?: string;
-  odd: number;
-  stake: number;
-  result: 'pending' | 'win' | 'loss' | 'push';
-};
+import { isSettledOperation, operationProfit, readPerformanceOperations, type PerformanceOperation } from '@/lib/performanceOperations';
 
 type GroupMetric = {
   name: string;
@@ -20,42 +13,24 @@ type GroupMetric = {
   hitRate: number;
 };
 
-const PERFORMANCE_KEY = 'ia-cantos-performance-v1';
-
-function readOperations(): Operation[] {
-  if (typeof window === 'undefined') return [];
-  try {
-    const parsed = JSON.parse(window.localStorage.getItem(PERFORMANCE_KEY) || '[]');
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
-}
-
-function profit(operation: Operation) {
-  if (operation.result === 'win') return operation.stake * (operation.odd - 1);
-  if (operation.result === 'loss') return -operation.stake;
-  return 0;
-}
-
-function buildGroups(operations: Operation[], key: 'league' | 'market'): GroupMetric[] {
-  const groups = new Map<string, Operation[]>();
+function buildGroups(operations: PerformanceOperation[], key: 'league' | 'market'): GroupMetric[] {
+  const groups = new Map<string, PerformanceOperation[]>();
   operations.forEach((operation) => {
     const name = operation[key]?.trim() || 'Não informado';
     groups.set(name, [...(groups.get(name) ?? []), operation]);
   });
   return [...groups.entries()].map(([name, rows]) => {
-    const settled = rows.filter((row) => row.result !== 'pending');
-    const wins = settled.filter((row) => row.result === 'win').length;
-    const totalStake = settled.reduce((sum, row) => sum + row.stake, 0);
-    const totalProfit = settled.reduce((sum, row) => sum + profit(row), 0);
+    const decisive = rows.filter((row) => row.result === 'win' || row.result === 'loss');
+    const wins = decisive.filter((row) => row.result === 'win').length;
+    const totalStake = rows.reduce((sum, row) => sum + row.stake, 0);
+    const totalProfit = rows.reduce((sum, row) => sum + operationProfit(row), 0);
     return {
       name,
-      settled: settled.length,
+      settled: rows.length,
       wins,
       profit: totalProfit,
       roi: totalStake > 0 ? (totalProfit / totalStake) * 100 : 0,
-      hitRate: settled.length > 0 ? (wins / settled.length) * 100 : 0,
+      hitRate: decisive.length > 0 ? (wins / decisive.length) * 100 : 0,
     };
   }).sort((a, b) => b.roi - a.roi || b.settled - a.settled);
 }
@@ -68,34 +43,36 @@ function oddBand(value: number) {
 }
 
 export default function LearningEnginePage() {
-  const [operations, setOperations] = useState<Operation[]>([]);
+  const [operations, setOperations] = useState<PerformanceOperation[]>([]);
   const [loading, setLoading] = useState(true);
 
   function load() {
     setLoading(true);
-    setOperations(readOperations());
+    setOperations(readPerformanceOperations());
     setLoading(false);
   }
 
   useEffect(() => { load(); }, []);
 
   const metrics = useMemo(() => {
-    const settled = operations.filter((operation) => operation.result !== 'pending');
-    const wins = settled.filter((operation) => operation.result === 'win').length;
+    const settled = operations.filter(isSettledOperation);
+    const decisive = settled.filter((operation) => operation.result === 'win' || operation.result === 'loss');
+    const wins = decisive.filter((operation) => operation.result === 'win').length;
     const totalStake = settled.reduce((sum, operation) => sum + operation.stake, 0);
-    const totalProfit = settled.reduce((sum, operation) => sum + profit(operation), 0);
+    const totalProfit = settled.reduce((sum, operation) => sum + operationProfit(operation), 0);
     const leagues = buildGroups(settled, 'league');
     const markets = buildGroups(settled, 'market');
-    const bands = new Map<string, Operation[]>();
+    const bands = new Map<string, PerformanceOperation[]>();
     settled.forEach((operation) => {
-      const band = oddBand(operation.odd);
+      const band = oddBand(operation.odds);
       bands.set(band, [...(bands.get(band) ?? []), operation]);
     });
     const odds = [...bands.entries()].map(([name, rows]) => {
       const stake = rows.reduce((sum, row) => sum + row.stake, 0);
-      const result = rows.reduce((sum, row) => sum + profit(row), 0);
-      const bandWins = rows.filter((row) => row.result === 'win').length;
-      return { name, settled: rows.length, wins: bandWins, profit: result, roi: stake > 0 ? result / stake * 100 : 0, hitRate: rows.length ? bandWins / rows.length * 100 : 0 };
+      const result = rows.reduce((sum, row) => sum + operationProfit(row), 0);
+      const bandDecisive = rows.filter((row) => row.result === 'win' || row.result === 'loss');
+      const bandWins = bandDecisive.filter((row) => row.result === 'win').length;
+      return { name, settled: rows.length, wins: bandWins, profit: result, roi: stake > 0 ? result / stake * 100 : 0, hitRate: bandDecisive.length ? bandWins / bandDecisive.length * 100 : 0 };
     }).sort((a, b) => b.roi - a.roi);
     const sampleStatus = settled.length >= 100 ? 'Confiável' : settled.length >= 30 ? 'Em formação' : 'Amostra insuficiente';
     return {
@@ -103,7 +80,7 @@ export default function LearningEnginePage() {
       wins,
       totalProfit,
       roi: totalStake > 0 ? totalProfit / totalStake * 100 : 0,
-      hitRate: settled.length ? wins / settled.length * 100 : 0,
+      hitRate: decisive.length ? wins / decisive.length * 100 : 0,
       leagues,
       markets,
       odds,
