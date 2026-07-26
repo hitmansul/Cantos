@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { Activity, BarChart3, Beaker, Bell, Brain, BrainCircuit, CalendarDays, CalendarClock, FlaskConical, History, Radio, Search, ShieldCheck, Sparkles, Star } from 'lucide-react';
+import { Activity, BarChart3, Beaker, Bell, Brain, BrainCircuit, CalendarDays, CalendarClock, FlaskConical, History, Radio, Search, ShieldCheck, Sparkles, Star, WalletCards } from 'lucide-react';
 import { ptBR } from '@/i18n/pt-BR';
 
 const items = [
@@ -13,6 +13,7 @@ const items = [
   { href: '/opportunities', label: ptBR.navigation.opportunities, icon: Sparkles },
   { href: '/notifications', label: 'Alertas', icon: Bell },
   { href: '/watchlist', label: 'Watchlist', icon: Star },
+  { href: '/performance-center', label: 'Minha Performance', icon: WalletCards },
   { href: '/odds-intelligence', label: ptBR.navigation.odds, icon: Search },
   { href: '/live', label: ptBR.navigation.live, icon: Radio },
   { href: '/war-room', label: 'War Room Live', icon: ShieldCheck },
