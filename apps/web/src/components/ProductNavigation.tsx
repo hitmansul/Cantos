@@ -2,12 +2,13 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { Activity, BarChart3, Beaker, Bell, Brain, BrainCircuit, CalendarClock, FlaskConical, History, Radio, Search, ShieldCheck, Sparkles, Star } from 'lucide-react';
+import { Activity, BarChart3, Beaker, Bell, Brain, BrainCircuit, CalendarDays, CalendarClock, FlaskConical, History, Radio, Search, ShieldCheck, Sparkles, Star } from 'lucide-react';
 import { ptBR } from '@/i18n/pt-BR';
 
 const items = [
   { href: '/', label: ptBR.navigation.statistics, icon: BarChart3 },
   { href: '/daily-briefing', label: 'Briefing', icon: CalendarClock },
+  { href: '/smart-calendar', label: 'Agenda IA', icon: CalendarDays },
   { href: '/corner-gpt', label: 'CornerGPT', icon: BrainCircuit },
   { href: '/opportunities', label: ptBR.navigation.opportunities, icon: Sparkles },
   { href: '/notifications', label: 'Alertas', icon: Bell },
