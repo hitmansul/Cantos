@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { Activity, BarChart3, Beaker, Bell, Brain, BrainCircuit, CalendarDays, CalendarClock, FlaskConical, GraduationCap, History, Radio, Search, ShieldCheck, SlidersHorizontal, Sparkles, Star } from 'lucide-react';
+import { Activity, BarChart3, Beaker, Bell, Brain, BrainCircuit, CalendarDays, CalendarClock, FlaskConical, GraduationCap, History, Radio, Search, SearchCheck, ShieldCheck, SlidersHorizontal, Sparkles, Star } from 'lucide-react';
 import { ptBR } from '@/i18n/pt-BR';
 
 const items = [
@@ -16,6 +16,7 @@ const items = [
   { href: '/performance-center', label: 'Minha Performance', icon: Activity },
   { href: '/learning-engine', label: 'IA Aprendiz', icon: GraduationCap },
   { href: '/auto-calibration', label: 'Calibração da IA', icon: SlidersHorizontal },
+  { href: '/pattern-discovery', label: 'Padrões da IA', icon: SearchCheck },
   { href: '/odds-intelligence', label: 'Inteligência de Cotações', icon: Search },
   { href: '/live', label: 'Ao Vivo', icon: Radio },
   { href: '/war-room', label: 'Sala de Decisão Ao Vivo', icon: ShieldCheck },
