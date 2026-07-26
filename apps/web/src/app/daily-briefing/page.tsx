@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
-import { BellRing, CalendarClock, RefreshCw, Sparkles, Star, Target, Trophy } from 'lucide-react';
+import { BarChart3, BellRing, CalendarClock, CalendarDays, RefreshCw, Sparkles, Star, Target, Trophy } from 'lucide-react';
 import { buildSmartAlerts, type SmartAlert, type SmartAlertInput } from '@/lib/corners/smartAlertsEngine';
 
 type Payload = { alerts?: SmartAlertInput[]; lastUpdated?: string; note?: string };
@@ -39,12 +39,12 @@ export default function DailyBriefingPage() {
     try {
       const response = await fetch('/api/odds/alerts?scope=all', { cache: 'no-store' });
       const payload = await response.json() as Payload;
-      if (!response.ok) throw new Error('Não foi possível montar o briefing do dia.');
+      if (!response.ok) throw new Error('Não foi possível montar o resumo do dia.');
       setAlerts(buildSmartAlerts(payload.alerts ?? []));
       setLastUpdated(payload.lastUpdated ?? new Date().toISOString());
       setWatchlist(readWatchlist());
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Falha ao carregar o briefing diário.');
+      setError(cause instanceof Error ? cause.message : 'Falha ao carregar o resumo diário.');
     } finally {
       setLoading(false);
     }
@@ -73,21 +73,32 @@ export default function DailyBriefingPage() {
     <main className="mx-auto min-h-screen w-full max-w-7xl px-3 py-6 sm:px-5 lg:px-8">
       <header className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <div className="inline-flex items-center gap-2 rounded-full border bg-card px-3 py-1 text-xs font-bold text-primary"><CalendarClock className="h-4 w-4" /> Experience & Automation Engine</div>
-          <h1 className="mt-3 text-3xl font-black tracking-tight sm:text-4xl">Daily Briefing</h1>
-          <p className="mt-2 max-w-3xl text-muted-foreground">Resumo executivo das melhores oportunidades, alertas premium e itens da sua watchlist.</p>
+          <div className="inline-flex items-center gap-2 rounded-full border bg-card px-3 py-1 text-xs font-bold text-primary"><CalendarClock className="h-4 w-4" /> Motor de Experiência e Automação</div>
+          <h1 className="mt-3 text-3xl font-black tracking-tight sm:text-4xl">Resumo Diário</h1>
+          <p className="mt-2 max-w-3xl text-muted-foreground">Resumo executivo das melhores oportunidades, alertas premium e itens dos seus favoritos.</p>
           {lastUpdated && <p className="mt-2 text-xs text-muted-foreground">Atualizado em {new Date(lastUpdated).toLocaleString('pt-BR')}</p>}
         </div>
         <button onClick={() => void load()} disabled={loading} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border bg-card px-4 font-bold disabled:opacity-50"><RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} /> Atualizar</button>
       </header>
+
+      <section className="mt-5 grid gap-3 sm:grid-cols-2">
+        <Link href="/" className="flex min-h-20 items-center gap-3 rounded-2xl border bg-card p-4 transition-colors hover:bg-muted/50">
+          <div className="rounded-xl bg-primary/10 p-3 text-primary"><BarChart3 className="h-5 w-5" /></div>
+          <div><div className="font-black">Tabelas das ligas e próximos jogos</div><div className="text-sm text-muted-foreground">Acesse classificações, estatísticas, resultados e agenda por competição.</div></div>
+        </Link>
+        <Link href="/smart-calendar" className="flex min-h-20 items-center gap-3 rounded-2xl border bg-card p-4 transition-colors hover:bg-muted/50">
+          <div className="rounded-xl bg-primary/10 p-3 text-primary"><CalendarDays className="h-5 w-5" /></div>
+          <div><div className="font-black">Agenda da IA</div><div className="text-sm text-muted-foreground">Veja os jogos priorizados por horário, nota e qualidade da oportunidade.</div></div>
+        </Link>
+      </section>
 
       {error && <div className="mt-5 rounded-xl border border-destructive/40 bg-destructive/10 p-4 text-destructive">{error}</div>}
 
       <section className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <Metric label="Jogos monitorados" value={String(summary.ordered.length)} icon={<Target className="h-5 w-5" />} />
         <Metric label="Oportunidades premium" value={String(summary.premium.length)} icon={<Sparkles className="h-5 w-5" />} />
-        <Metric label="Score médio" value={String(summary.averageScore)} icon={<Trophy className="h-5 w-5" />} />
-        <Metric label="Alertas da watchlist" value={String(summary.watchlistAlerts.length)} icon={<Star className="h-5 w-5" />} />
+        <Metric label="Nota média" value={String(summary.averageScore)} icon={<Trophy className="h-5 w-5" />} />
+        <Metric label="Alertas dos favoritos" value={String(summary.watchlistAlerts.length)} icon={<Star className="h-5 w-5" />} />
       </section>
 
       <section className="mt-5 grid gap-4 lg:grid-cols-[1.25fr_0.75fr]">
@@ -108,7 +119,7 @@ export default function DailyBriefingPage() {
           <div className="flex items-center gap-2 text-sm font-black"><Trophy className="h-4 w-4" /> Leitura rápida do dia</div>
           <div className="mt-4 space-y-3 text-sm">
             <BriefRow label="Liga com mais sinais" value={summary.leadingLeague ? `${summary.leadingLeague[0]} (${summary.leadingLeague[1]})` : 'Sem dados'} />
-            <BriefRow label="Itens ativos na watchlist" value={String(watchlist.length)} />
+            <BriefRow label="Itens ativos nos favoritos" value={String(watchlist.length)} />
             <BriefRow label="Sinais premium" value={String(summary.premium.length)} />
             <BriefRow label="Riscos detectados" value={String(summary.ordered.filter((alert) => alert.kind === 'downgrade').length)} />
           </div>
@@ -118,10 +129,10 @@ export default function DailyBriefingPage() {
       <section className="mt-5 rounded-2xl border bg-card p-5">
         <div className="flex items-center justify-between gap-3">
           <div>
-            <h2 className="text-xl font-black">Top oportunidades</h2>
-            <p className="mt-1 text-sm text-muted-foreground">Ordenadas pelo score do motor de alertas.</p>
+            <h2 className="text-xl font-black">Principais oportunidades</h2>
+            <p className="mt-1 text-sm text-muted-foreground">Ordenadas pela nota do motor de alertas.</p>
           </div>
-          <Link href="/opportunities" className="text-sm font-bold text-primary">Ver scanner completo</Link>
+          <Link href="/opportunities" className="text-sm font-bold text-primary">Ver análise completa</Link>
         </div>
         <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
           {summary.ordered.slice(0, 6).map((alert) => <OpportunityCard key={alert.id} alert={alert} highlighted={matchesWatchlist(alert, watchlist)} />)}
@@ -129,9 +140,9 @@ export default function DailyBriefingPage() {
       </section>
 
       <section className="mt-5 rounded-2xl border bg-card p-5">
-        <div className="flex items-center gap-2"><BellRing className="h-5 w-5" /><h2 className="text-xl font-black">Destaques da Watchlist</h2></div>
+        <div className="flex items-center gap-2"><BellRing className="h-5 w-5" /><h2 className="text-xl font-black">Destaques dos Favoritos</h2></div>
         {summary.watchlistAlerts.length === 0 ? (
-          <div className="mt-4 rounded-xl border border-dashed p-6 text-sm text-muted-foreground">Nenhum alerta atual corresponde aos itens ativos da watchlist.</div>
+          <div className="mt-4 rounded-xl border border-dashed p-6 text-sm text-muted-foreground">Nenhum alerta atual corresponde aos itens ativos nos favoritos.</div>
         ) : (
           <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">{summary.watchlistAlerts.slice(0, 6).map((alert) => <OpportunityCard key={alert.id} alert={alert} highlighted />)}</div>
         )}
@@ -149,5 +160,5 @@ function BriefRow({ label, value }: { label: string; value: string }) {
 }
 
 function OpportunityCard({ alert, highlighted }: { alert: SmartAlert; highlighted: boolean }) {
-  return <article className={`rounded-xl border p-4 ${highlighted ? 'border-primary/50 bg-primary/5' : 'bg-background'}`}><div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground"><span className="rounded-full border px-2 py-0.5 font-black">{alert.grade} · {alert.score}</span>{highlighted && <span className="rounded-full bg-primary px-2 py-0.5 font-bold text-primary-foreground">Watchlist</span>}</div><h3 className="mt-3 font-black">{alert.match}</h3><p className="mt-1 text-sm text-muted-foreground">{alert.leagueName}</p><p className="mt-2 text-sm font-semibold">{alert.market}</p></article>;
+  return <article className={`rounded-xl border p-4 ${highlighted ? 'border-primary/50 bg-primary/5' : 'bg-background'}`}><div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground"><span className="rounded-full border px-2 py-0.5 font-black">{alert.grade} · {alert.score}</span>{highlighted && <span className="rounded-full bg-primary px-2 py-0.5 font-bold text-primary-foreground">Favorito</span>}</div><h3 className="mt-3 font-black">{alert.match}</h3><p className="mt-1 text-sm text-muted-foreground">{alert.leagueName}</p><p className="mt-2 text-sm font-semibold">{alert.market}</p></article>;
 }
