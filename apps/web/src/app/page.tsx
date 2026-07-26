@@ -1,5 +1,5 @@
-import { DailyIntelligenceDashboard } from '@/components/DailyIntelligenceDashboard';
+import Home from '@/views/Home';
 
 export default function Page() {
-  return <DailyIntelligenceDashboard />;
+  return <Home />;
 }
