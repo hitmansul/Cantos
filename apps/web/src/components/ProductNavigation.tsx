@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { Activity, BarChart3, Beaker, Bell, Brain, BrainCircuit, CalendarDays, CalendarClock, FlaskConical, GraduationCap, History, MessageSquareText, Radio, Search, SearchCheck, ShieldCheck, SlidersHorizontal, Sparkles, Star } from 'lucide-react';
+import { Activity, BarChart3, Beaker, Bell, Brain, BrainCircuit, CalendarDays, CalendarClock, FlaskConical, GraduationCap, History, MessageSquareText, Radio, Search, SearchCheck, ShieldCheck, SlidersHorizontal, Sparkles, Star, TimerReset } from 'lucide-react';
 import { ptBR } from '@/i18n/pt-BR';
 
 const items = [
@@ -21,6 +21,7 @@ const items = [
   { href: '/odds-intelligence', label: 'Inteligência de Cotações', icon: Search },
   { href: '/live', label: 'Ao Vivo', icon: Radio },
   { href: '/war-room', label: 'Sala de Decisão Ao Vivo', icon: ShieldCheck },
+  { href: '/time-machine', label: 'Simulador Temporal', icon: TimerReset },
   { href: '/prediction-lab', label: 'Laboratório de Previsões', icon: Beaker },
   { href: '/ai-performance', label: 'Performance da IA', icon: Activity },
   { href: '/backtest', label: 'Testes Históricos', icon: FlaskConical },
