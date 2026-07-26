@@ -2,14 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { Activity, BrainCircuit, Gauge, RefreshCw, Scale, ShieldCheck, SlidersHorizontal, Sparkles, Target } from 'lucide-react';
-
-type Operation = {
-  league?: string;
-  market?: string;
-  odd: number;
-  stake: number;
-  result: 'pending' | 'win' | 'loss' | 'push';
-};
+import { isSettledOperation, operationProfit, readPerformanceOperations, type PerformanceOperation } from '@/lib/performanceOperations';
 
 type Weight = {
   key: string;
@@ -19,7 +12,6 @@ type Weight = {
   reason: string;
 };
 
-const PERFORMANCE_KEY = 'ia-cantos-performance-v1';
 const CALIBRATION_KEY = 'ia-cantos-calibration-draft-v1';
 
 const BASE_WEIGHTS = [
@@ -34,22 +26,6 @@ const BASE_WEIGHTS = [
   { key: 'context', label: 'Contexto', current: 5 },
 ];
 
-function readOperations(): Operation[] {
-  if (typeof window === 'undefined') return [];
-  try {
-    const parsed = JSON.parse(window.localStorage.getItem(PERFORMANCE_KEY) || '[]');
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
-}
-
-function profit(operation: Operation) {
-  if (operation.result === 'win') return operation.stake * (operation.odd - 1);
-  if (operation.result === 'loss') return -operation.stake;
-  return 0;
-}
-
 function normalizedWeights(values: number[]) {
   const total = values.reduce((sum, value) => sum + value, 0) || 1;
   const scaled = values.map((value) => Math.round((value / total) * 100));
@@ -59,13 +35,13 @@ function normalizedWeights(values: number[]) {
 }
 
 export default function AutoCalibrationPage() {
-  const [operations, setOperations] = useState<Operation[]>([]);
+  const [operations, setOperations] = useState<PerformanceOperation[]>([]);
   const [loading, setLoading] = useState(true);
   const [saved, setSaved] = useState(false);
 
   function load() {
     setLoading(true);
-    setOperations(readOperations());
+    setOperations(readPerformanceOperations());
     setSaved(false);
     setLoading(false);
   }
@@ -73,12 +49,13 @@ export default function AutoCalibrationPage() {
   useEffect(() => { load(); }, []);
 
   const analysis = useMemo(() => {
-    const settled = operations.filter((operation) => operation.result !== 'pending');
-    const wins = settled.filter((operation) => operation.result === 'win').length;
+    const settled = operations.filter(isSettledOperation);
+    const decisive = settled.filter((operation) => operation.result === 'win' || operation.result === 'loss');
+    const wins = decisive.filter((operation) => operation.result === 'win').length;
     const stake = settled.reduce((sum, operation) => sum + operation.stake, 0);
-    const result = settled.reduce((sum, operation) => sum + profit(operation), 0);
+    const result = settled.reduce((sum, operation) => sum + operationProfit(operation), 0);
     const roi = stake > 0 ? result / stake * 100 : 0;
-    const hitRate = settled.length ? wins / settled.length * 100 : 0;
+    const hitRate = decisive.length ? wins / decisive.length * 100 : 0;
     const enough = settled.length >= 30;
     const reliable = settled.length >= 100;
 
