@@ -2,6 +2,7 @@
 
 import { Activity, Clock3, CornerUpRight, Radio, Sparkles } from 'lucide-react';
 import { LiveMatches } from '@/components/LiveMatches';
+import { LiveTimeIntelligence } from '@/components/LiveTimeIntelligence';
 import { Badge } from '@/components/ui/badge';
 import { Card } from '@/components/ui/card';
 
@@ -15,12 +16,12 @@ export default function LivePage() {
               <Badge className="border-red-500/30 bg-red-500/20 text-red-400">
                 <Radio className="mr-1 h-3.5 w-3.5" /> AO VIVO
               </Badge>
-              <Badge variant="outline">Live Intelligence</Badge>
+              <Badge variant="outline">Inteligência ao vivo</Badge>
             </div>
             <div>
               <h1 className="text-2xl font-bold tracking-tight sm:text-3xl">Central de jogos ao vivo</h1>
               <p className="mt-2 max-w-3xl text-sm text-muted-foreground sm:text-base">
-                Acompanhe placar, escanteios, estatísticas detalhadas e a previsão de acréscimos em uma tela exclusiva, sem sair das estatísticas da liga selecionada.
+                Acompanhe placar, escanteios, estatísticas detalhadas, tempo total parado, previsão da IA e os acréscimos reais indicados pelo árbitro.
               </p>
             </div>
           </div>
@@ -34,7 +35,7 @@ export default function LivePage() {
             <Card className="p-3 text-center">
               <Clock3 className="mx-auto h-5 w-5 text-amber-400" />
               <p className="mt-1 text-xs font-semibold">Acréscimos</p>
-              <p className="text-[11px] text-muted-foreground">Previstos e reais</p>
+              <p className="text-[11px] text-muted-foreground">Estimados e oficiais</p>
             </Card>
             <Card className="p-3 text-center">
               <CornerUpRight className="mx-auto h-5 w-5 text-cyan-400" />
@@ -47,11 +48,12 @@ export default function LivePage() {
         <div className="mt-4 flex items-start gap-2 rounded-xl border border-violet-500/20 bg-violet-500/5 p-3 text-sm">
           <Sparkles className="mt-0.5 h-4 w-4 shrink-0 text-violet-400" />
           <p className="text-muted-foreground">
-            O painel atualiza automaticamente e combina as fontes disponíveis para preservar as informações de paralisações e acréscimos de cada tempo.
+            O painel combina as fontes disponíveis, não inventa valores ausentes e recalcula o tempo real restante quando houver paralisações dentro dos acréscimos.
           </p>
         </div>
       </section>
 
+      <LiveTimeIntelligence />
       <LiveMatches />
     </main>
   );
