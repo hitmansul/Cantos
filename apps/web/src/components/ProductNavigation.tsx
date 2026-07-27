@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { Activity, BarChart3, Beaker, Bell, Brain, BrainCircuit, CalendarDays, CalendarClock, FlaskConical, GraduationCap, History, MessageSquareText, Radio, Search, SearchCheck, ShieldCheck, SlidersHorizontal, Sparkles, Star, TimerReset } from 'lucide-react';
+import { Activity, BarChart3, Beaker, Bell, Brain, BrainCircuit, CalendarDays, CalendarClock, FlaskConical, GraduationCap, History, Landmark, MessageSquareText, Radio, Search, SearchCheck, ShieldCheck, SlidersHorizontal, Sparkles, Star, TimerReset } from 'lucide-react';
 import { ptBR } from '@/i18n/pt-BR';
 
 const items = [
@@ -14,6 +14,7 @@ const items = [
   { href: '/notifications', label: 'Alertas', icon: Bell },
   { href: '/watchlist', label: 'Favoritos', icon: Star },
   { href: '/performance-center', label: 'Minha Performance', icon: Activity },
+  { href: '/portfolio', label: 'Gestão da Banca', icon: Landmark },
   { href: '/learning-engine', label: 'IA Aprendiz', icon: GraduationCap },
   { href: '/auto-calibration', label: 'Calibração da IA', icon: SlidersHorizontal },
   { href: '/pattern-discovery', label: 'Padrões da IA', icon: SearchCheck },
