@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { Activity, BarChart3, Beaker, Bell, Brain, BrainCircuit, CalendarDays, CalendarClock, Clock3, Crosshair, FlaskConical, GraduationCap, History, Landmark, Layers3, MessageSquareText, Radio, Search, SearchCheck, ShieldCheck, SlidersHorizontal, Sparkles, Star, TimerReset } from 'lucide-react';
+import { Activity, BarChart3, Beaker, Bell, Brain, BrainCircuit, CalendarDays, CalendarClock, Clock3, Crosshair, FlaskConical, GraduationCap, History, Landmark, Layers3, MessageSquareText, Radio, ScanSearch, Search, SearchCheck, ShieldCheck, SlidersHorizontal, Sparkles, Star, TimerReset } from 'lucide-react';
 import { ptBR } from '@/i18n/pt-BR';
 
 const items = [
@@ -24,6 +24,7 @@ const items = [
   { href: '/explainability', label: 'Explicações da IA', icon: MessageSquareText },
   { href: '/odds-intelligence', label: 'Inteligência de Cotações', icon: Search },
   { href: '/bookmaker-benchmark', label: 'Benchmark de Casas', icon: BarChart3 },
+  { href: '/odds-movements', label: 'Movimentos de Odds', icon: ScanSearch },
   { href: '/live', label: 'Ao Vivo', icon: Radio },
   { href: '/war-room', label: 'Sala de Decisão Ao Vivo', icon: ShieldCheck },
   { href: '/time-machine', label: 'Simulador Temporal', icon: TimerReset },
