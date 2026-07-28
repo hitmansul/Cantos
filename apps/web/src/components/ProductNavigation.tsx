@@ -23,6 +23,7 @@ const items = [
   { href: '/pattern-discovery', label: 'Padrões da IA', icon: SearchCheck },
   { href: '/explainability', label: 'Explicações da IA', icon: MessageSquareText },
   { href: '/odds-intelligence', label: 'Inteligência de Cotações', icon: Search },
+  { href: '/bookmaker-benchmark', label: 'Benchmark de Casas', icon: BarChart3 },
   { href: '/live', label: 'Ao Vivo', icon: Radio },
   { href: '/war-room', label: 'Sala de Decisão Ao Vivo', icon: ShieldCheck },
   { href: '/time-machine', label: 'Simulador Temporal', icon: TimerReset },
