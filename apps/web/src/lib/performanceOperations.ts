@@ -9,6 +9,12 @@ export type PerformanceOperation = {
   odds: number;
   stake: number;
   result: PerformanceResult;
+  closingOdd?: number;
+  settledAt?: string;
+  settlementSource?: 'manual' | 'automatic';
+  notes?: string;
+  score?: number;
+  grade?: string;
 };
 
 export const PERFORMANCE_OPERATIONS_KEY = 'ia-cantos-performance-operations-v1';
@@ -28,7 +34,13 @@ export function readPerformanceOperations(): PerformanceOperation[] {
       Number.isFinite(Number(item.odds)) &&
       Number.isFinite(Number(item.stake)) &&
       ['win', 'loss', 'push', 'open'].includes(item.result)
-    ).map((item) => ({ ...item, odds: Number(item.odds), stake: Number(item.stake) }));
+    ).map((item) => ({
+      ...item,
+      odds: Number(item.odds),
+      stake: Number(item.stake),
+      closingOdd: Number.isFinite(Number(item.closingOdd)) ? Number(item.closingOdd) : undefined,
+      score: Number.isFinite(Number(item.score)) ? Number(item.score) : undefined,
+    }));
   } catch {
     return [];
   }
@@ -42,4 +54,9 @@ export function operationProfit(operation: PerformanceOperation) {
   if (operation.result === 'win') return operation.stake * (operation.odds - 1);
   if (operation.result === 'loss') return -operation.stake;
   return 0;
+}
+
+export function operationClvPercent(operation: PerformanceOperation) {
+  if (!operation.closingOdd || operation.closingOdd <= 1 || operation.odds <= 1) return null;
+  return ((operation.odds / operation.closingOdd) - 1) * 100;
 }
