@@ -8,6 +8,8 @@ export type PerformanceOperation = {
   market: string;
   odds: number;
   stake: number;
+  units?: number;
+  unitValue?: number;
   result: PerformanceResult;
   closingOdd?: number;
   settledAt?: string;
@@ -15,6 +17,7 @@ export type PerformanceOperation = {
   notes?: string;
   score?: number;
   grade?: string;
+  source?: 'manual' | 'operational-center' | 'corner-gpt';
 };
 
 export const PERFORMANCE_OPERATIONS_KEY = 'ia-cantos-performance-operations-v1';
@@ -38,6 +41,8 @@ export function readPerformanceOperations(): PerformanceOperation[] {
       ...item,
       odds: Number(item.odds),
       stake: Number(item.stake),
+      units: Number.isFinite(Number(item.units)) ? Number(item.units) : undefined,
+      unitValue: Number.isFinite(Number(item.unitValue)) ? Number(item.unitValue) : undefined,
       closingOdd: Number.isFinite(Number(item.closingOdd)) ? Number(item.closingOdd) : undefined,
       score: Number.isFinite(Number(item.score)) ? Number(item.score) : undefined,
     }));
