@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { Activity, BarChart3, Beaker, Bell, Bot, Brain, BrainCircuit, CalendarDays, CalendarClock, Clock3, Crosshair, FlaskConical, GraduationCap, History, Landmark, Layers3, MessageSquareText, Radio, ScanSearch, Search, SearchCheck, ShieldCheck, SlidersHorizontal, Sparkles, Star, TimerReset } from 'lucide-react';
+import { Activity, BarChart3, Beaker, Bell, Bot, Brain, BrainCircuit, CalendarDays, CalendarClock, Clock3, Crosshair, FlaskConical, GraduationCap, History, Landmark, Layers3, MessageSquareText, Radio, ScanSearch, Search, SearchCheck, ShieldCheck, SlidersHorizontal, Sparkles, Star, TimerReset, WalletCards } from 'lucide-react';
 import { ptBR } from '@/i18n/pt-BR';
 
 const items = [
@@ -17,6 +17,7 @@ const items = [
   { href: '/notifications', label: 'Alertas', icon: Bell },
   { href: '/watchlist', label: 'Favoritos', icon: Star },
   { href: '/performance-center', label: 'Minha Performance', icon: Activity },
+  { href: '/bankroll-settings', label: 'Configurações da Banca', icon: WalletCards },
   { href: '/portfolio', label: 'Gestão da Banca', icon: Landmark },
   { href: '/meta-intelligence', label: 'Meta Intelligence', icon: Layers3 },
   { href: '/learning-engine', label: 'IA Aprendiz', icon: GraduationCap },
@@ -44,13 +45,8 @@ export function ProductNavigation() {
         {items.map(({ href, label, icon: Icon }) => {
           const active = href === '/' ? pathname === '/' : pathname.startsWith(href);
           return (
-            <Link
-              key={href}
-              href={href}
-              className={`inline-flex min-h-10 shrink-0 items-center gap-2 rounded-xl px-3 text-sm font-semibold transition-colors ${active ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-muted hover:text-foreground'}`}
-            >
-              <Icon className="h-4 w-4" />
-              {label}
+            <Link key={href} href={href} className={`inline-flex min-h-10 shrink-0 items-center gap-2 rounded-xl px-3 text-sm font-semibold transition-colors ${active ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-muted hover:text-foreground'}`}>
+              <Icon className="h-4 w-4" />{label}
             </Link>
           );
         })}
