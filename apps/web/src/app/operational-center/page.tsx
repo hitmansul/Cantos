@@ -1,7 +1,8 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { Activity, AlertTriangle, ArrowDown, ArrowDownRight, ArrowUp, ArrowUpRight, BrainCircuit, Clock3, Gauge, Radar, RefreshCw, ShieldCheck, Sparkles, Target } from 'lucide-react';
+import { Activity, AlertTriangle, ArrowDown, ArrowDownRight, ArrowUp, ArrowUpRight, BrainCircuit, CheckCircle2, Clock3, Gauge, Radar, RefreshCw, Save, ShieldCheck, Sparkles, Target } from 'lucide-react';
+import { PERFORMANCE_OPERATIONS_KEY, type PerformanceOperation } from '@/lib/performanceOperations';
 
 type Recommendation = 'ENTRAR AGORA' | 'AGUARDAR' | 'NÃO ENTRAR' | 'MERCADO INSTÁVEL' | 'OPORTUNIDADE PRÓXIMA';
 type Confidence = 'Alta' | 'Média' | 'Baixa';
@@ -76,6 +77,7 @@ export default function OperationalCenterPage() {
   const [movementConfigured, setMovementConfigured] = useState<boolean | null>(null);
   const [movementError, setMovementError] = useState('');
   const [movementLoading, setMovementLoading] = useState(true);
+  const [registeredMessage, setRegisteredMessage] = useState('');
 
   async function loadMovements() {
     setMovementLoading(true); setMovementError('');
@@ -107,9 +109,35 @@ export default function OperationalCenterPage() {
   const recommendedStake = bankroll * fullKelly * multiplier;
   const simulatedScore = clamp(current.score + cornerDelta * 2 + stoppageDelta * 0.4 + oddsDelta * 10);
 
+  function registerOperation() {
+    const stake = Math.max(0, Number(recommendedStake.toFixed(2)));
+    if (stake <= 0 || simulatedEv <= 0) {
+      setRegisteredMessage('A entrada não foi registrada porque o cenário atual não possui stake positiva e EV favorável.');
+      return;
+    }
+    try {
+      const parsed = JSON.parse(window.localStorage.getItem(PERFORMANCE_OPERATIONS_KEY) || '[]');
+      const operations: PerformanceOperation[] = Array.isArray(parsed) ? parsed : [];
+      const operation: PerformanceOperation = {
+        id: `operational-${Date.now()}-${current.id}`,
+        date: new Date().toISOString(),
+        match: current.match,
+        league: current.league,
+        market: `${current.market} ${current.line} · Score ${simulatedScore.toFixed(0)} · Nota ${grade(simulatedScore)}`,
+        odds: Number(simulatedOdds.toFixed(2)),
+        stake,
+        result: 'open',
+      };
+      window.localStorage.setItem(PERFORMANCE_OPERATIONS_KEY, JSON.stringify([operation, ...operations]));
+      setRegisteredMessage(`Entrada registrada em Minha Performance: ${brl(stake)} a ${simulatedOdds.toFixed(2)}.`);
+    } catch {
+      setRegisteredMessage('Não foi possível registrar a entrada no histórico local.');
+    }
+  }
+
   return (
     <main className="mx-auto w-full max-w-7xl space-y-6 px-4 py-6 sm:px-6 lg:px-8">
-      <header className="space-y-2"><div className="flex items-center gap-2 text-sm font-semibold text-primary"><BrainCircuit className="h-4 w-4" /> Decision Center 2.1</div><h1 className="text-3xl font-bold tracking-tight">IA Operacional</h1><p className="max-w-3xl text-muted-foreground">Decisão consolidada com probabilidade, EV, risco, padrões e movimentações reais de odds capturadas no banco.</p></header>
+      <header className="space-y-2"><div className="flex items-center gap-2 text-sm font-semibold text-primary"><BrainCircuit className="h-4 w-4" /> Decision Center 2.2</div><h1 className="text-3xl font-bold tracking-tight">IA Operacional</h1><p className="max-w-3xl text-muted-foreground">Decisão consolidada com probabilidade, EV, risco, padrões, movimentações reais de odds e registro direto no histórico.</p></header>
 
       <section className="grid gap-4 md:grid-cols-4">
         <Metric icon={Target} label="Melhor score" value={`${ranked[0].score.toFixed(0)}/100`} detail={`Nota ${ranked[0].grade}`} />
@@ -121,13 +149,13 @@ export default function OperationalCenterPage() {
       <section className="rounded-2xl border bg-card p-4 shadow-sm">
         <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><div><h2 className="text-xl font-semibold">Ranking inteligente de entradas</h2><p className="text-sm text-muted-foreground">O movimento de mercado pode adicionar ou retirar até 8 pontos do Score Operacional.</p></div><div className="flex gap-2"><button onClick={() => void loadMovements()} disabled={movementLoading} className="inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-sm font-semibold disabled:opacity-50"><RefreshCw className={`h-4 w-4 ${movementLoading ? 'animate-spin' : ''}`} />Atualizar mercado</button><select value={risk} onChange={e => setRisk(e.target.value as RiskProfile)} className="rounded-xl border bg-background px-3 py-2 text-sm"><option>Conservador</option><option>Equilibrado</option><option>Agressivo</option></select></div></div>
         {(movementConfigured === false || movementError) && <div className="mb-4 rounded-xl border border-amber-500/40 bg-amber-500/10 p-3 text-sm">{movementError || 'O histórico de odds ainda não está configurado. As decisões continuam usando os demais fatores, sem inventar movimentações.'}</div>}
-        <div className="space-y-3">{ranked.map((item, index) => <button key={item.id} onClick={() => setSelected(item.id)} className={`w-full rounded-2xl border p-4 text-left transition ${selected === item.id ? 'border-primary bg-primary/5' : 'hover:bg-muted/50'}`}><div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between"><div className="flex items-start gap-3"><div className="flex h-10 w-10 items-center justify-center rounded-xl bg-muted font-bold">#{index + 1}</div><div><div className="font-semibold">{item.match}</div><div className="text-sm text-muted-foreground">{item.league} · {item.minute}' · {item.market} {item.line}</div>{item.movement && <div className="mt-1 flex items-center gap-1 text-xs font-semibold text-primary">{item.movement.direction === 'QUEDA' ? <ArrowDownRight className="h-3.5 w-3.5" /> : <ArrowUpRight className="h-3.5 w-3.5" />}{item.movement.direction} {signedPct(item.movement.relativeChangePct)} · impacto {item.movementImpact > 0 ? '+' : ''}{item.movementImpact.toFixed(1)}</div>}</div></div><div className="grid grid-cols-2 gap-3 sm:grid-cols-5"><Mini label="Score" value={item.score.toFixed(0)} /><Mini label="Nota" value={item.grade} /><Mini label="EV" value={pct(item.ev)} /><Mini label="Odd" value={item.odds.toFixed(2)} /><Mini label="Decisão" value={item.recommendation} wide /></div></div></button>)}</div>
+        <div className="space-y-3">{ranked.map((item, index) => <button key={item.id} onClick={() => { setSelected(item.id); setRegisteredMessage(''); }} className={`w-full rounded-2xl border p-4 text-left transition ${selected === item.id ? 'border-primary bg-primary/5' : 'hover:bg-muted/50'}`}><div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between"><div className="flex items-start gap-3"><div className="flex h-10 w-10 items-center justify-center rounded-xl bg-muted font-bold">#{index + 1}</div><div><div className="font-semibold">{item.match}</div><div className="text-sm text-muted-foreground">{item.league} · {item.minute}' · {item.market} {item.line}</div>{item.movement && <div className="mt-1 flex items-center gap-1 text-xs font-semibold text-primary">{item.movement.direction === 'QUEDA' ? <ArrowDownRight className="h-3.5 w-3.5" /> : <ArrowUpRight className="h-3.5 w-3.5" />}{item.movement.direction} {signedPct(item.movement.relativeChangePct)} · impacto {item.movementImpact > 0 ? '+' : ''}{item.movementImpact.toFixed(1)}</div>}</div></div><div className="grid grid-cols-2 gap-3 sm:grid-cols-5"><Mini label="Score" value={item.score.toFixed(0)} /><Mini label="Nota" value={item.grade} /><Mini label="EV" value={pct(item.ev)} /><Mini label="Odd" value={item.odds.toFixed(2)} /><Mini label="Decisão" value={item.recommendation} wide /></div></div></button>)}</div>
       </section>
 
       <section className="grid gap-6 lg:grid-cols-2">
         <div className="rounded-2xl border bg-card p-5 shadow-sm"><div className="mb-4 flex items-center gap-2"><Gauge className="h-5 w-5" /><h2 className="text-xl font-semibold">Decisão consolidada</h2></div><div className="space-y-4"><div className="rounded-xl bg-muted p-4"><div className="text-sm text-muted-foreground">Recomendação</div><div className="mt-1 text-2xl font-bold">{current.recommendation}</div></div><div className="grid grid-cols-2 gap-3 sm:grid-cols-4"><Mini label="Probabilidade" value={pct(current.probability)} /><Mini label="EV" value={pct(current.ev)} /><Mini label="Liquidez" value={pct(current.liquidity)} /><Mini label="Confiança" value={current.confidence} /></div><p className="rounded-xl border p-4 text-sm leading-6">{current.explanation}</p><div className="grid gap-2 text-sm"><Reason icon={Activity} label="Ritmo e contexto" value={pct(current.context)} /><Reason icon={ArrowUp} label="Tendência de mercado" value={pct(current.trend)} /><Reason icon={BrainCircuit} label="Força dos padrões" value={pct(current.patternStrength)} /><Reason icon={ShieldCheck} label="Risco de portfólio" value={pct(current.portfolioRisk)} invert /><Reason icon={Clock3} label="Acréscimos estimados" value={`${current.stoppageEstimate} min`} /></div>{current.movement ? <div className="rounded-xl border bg-muted/40 p-4 text-sm"><div className="flex items-center justify-between"><span className="font-semibold">Leitura do mercado</span><span className="font-bold">{current.movement.severity}</span></div><p className="mt-2">{current.movement.bookmaker}: {current.movement.previousOdd.toFixed(2)} → {current.movement.currentOdd.toFixed(2)} ({signedPct(current.movement.relativeChangePct)}). Impacto no score: {current.movementImpact > 0 ? '+' : ''}{current.movementImpact.toFixed(1)}.</p><p className="mt-2 text-xs text-muted-foreground">A direção e a intensidade são fatos observados. A causa da movimentação não é presumida.</p></div> : <div className="rounded-xl border border-dashed p-4 text-sm text-muted-foreground">Nenhum histórico correspondente foi encontrado para esta partida. O fator mercado foi mantido neutro.</div>}</div></div>
 
-        <div className="rounded-2xl border bg-card p-5 shadow-sm"><div className="mb-4 flex items-center gap-2"><Sparkles className="h-5 w-5" /><h2 className="text-xl font-semibold">Simulador “E se...”</h2></div><div className="space-y-4"><label className="block text-sm font-medium">Banca atual<input type="number" min="0" value={bankroll} onChange={e => setBankroll(Number(e.target.value) || 0)} className="mt-1 w-full rounded-xl border bg-background px-3 py-2" /></label><Scenario label="Novo escanteio" value={cornerDelta} setValue={setCornerDelta} min={-1} max={2} suffix="" /><Scenario label="Variação da odd" value={oddsDelta} setValue={setOddsDelta} min={-0.5} max={0.5} step={0.01} suffix="" /><Scenario label="Acréscimos adicionais" value={stoppageDelta} setValue={setStoppageDelta} min={-3} max={10} suffix=" min" /><div className="grid grid-cols-2 gap-3 sm:grid-cols-3"><Mini label="Nova probabilidade" value={pct(simulatedProbability)} /><Mini label="Novo EV" value={pct(simulatedEv)} /><Mini label="Novo score" value={simulatedScore.toFixed(0)} /><Mini label="Nova nota" value={grade(simulatedScore)} /><Mini label="Kelly aplicado" value={pct(fullKelly * multiplier)} /><Mini label="Stake sugerida" value={brl(recommendedStake)} /></div>{simulatedEv < 0 && <div className="flex gap-2 rounded-xl border border-amber-500/40 bg-amber-500/10 p-3 text-sm"><AlertTriangle className="h-5 w-5 shrink-0" />O cenário simulado não apresenta valor esperado positivo. A IA não recomenda entrada.</div>}</div></div>
+        <div className="rounded-2xl border bg-card p-5 shadow-sm"><div className="mb-4 flex items-center gap-2"><Sparkles className="h-5 w-5" /><h2 className="text-xl font-semibold">Simulador “E se...”</h2></div><div className="space-y-4"><label className="block text-sm font-medium">Banca atual<input type="number" min="0" value={bankroll} onChange={e => setBankroll(Number(e.target.value) || 0)} className="mt-1 w-full rounded-xl border bg-background px-3 py-2" /></label><Scenario label="Novo escanteio" value={cornerDelta} setValue={setCornerDelta} min={-1} max={2} suffix="" /><Scenario label="Variação da odd" value={oddsDelta} setValue={setOddsDelta} min={-0.5} max={0.5} step={0.01} suffix="" /><Scenario label="Acréscimos adicionais" value={stoppageDelta} setValue={setStoppageDelta} min={-3} max={10} suffix=" min" /><div className="grid grid-cols-2 gap-3 sm:grid-cols-3"><Mini label="Nova probabilidade" value={pct(simulatedProbability)} /><Mini label="Novo EV" value={pct(simulatedEv)} /><Mini label="Novo score" value={simulatedScore.toFixed(0)} /><Mini label="Nova nota" value={grade(simulatedScore)} /><Mini label="Kelly aplicado" value={pct(fullKelly * multiplier)} /><Mini label="Stake sugerida" value={brl(recommendedStake)} /></div>{simulatedEv < 0 && <div className="flex gap-2 rounded-xl border border-amber-500/40 bg-amber-500/10 p-3 text-sm"><AlertTriangle className="h-5 w-5 shrink-0" />O cenário simulado não apresenta valor esperado positivo. A IA não recomenda entrada.</div>}<button onClick={registerOperation} disabled={recommendedStake <= 0 || simulatedEv <= 0} className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-primary px-4 font-bold text-primary-foreground disabled:cursor-not-allowed disabled:opacity-50"><Save className="h-4 w-4" />Registrar entrada em Minha Performance</button>{registeredMessage && <div className={`flex gap-2 rounded-xl border p-3 text-sm ${registeredMessage.startsWith('Entrada registrada') ? 'border-emerald-500/40 bg-emerald-500/10' : 'border-amber-500/40 bg-amber-500/10'}`}>{registeredMessage.startsWith('Entrada registrada') ? <CheckCircle2 className="h-5 w-5 shrink-0" /> : <AlertTriangle className="h-5 w-5 shrink-0" />}{registeredMessage}</div>}</div></div>
       </section>
     </main>
   );
