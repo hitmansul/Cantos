@@ -87,8 +87,10 @@ export default function AiAssistantPage() {
     const unitsMatch = q.match(/(?:unidade|unidades|u)\s*(?:maior|acima|superior)\s*(?:que|de)?\s*(\d+(?:[.,]\d+)?)/);
     const topMatch = q.match(/(?:top|melhores|primeiras?)\s*(\d+)/);
     const team = opportunities.find((item) => q.includes(normalize(item.match.split(' x ')[0])) || q.includes(normalize(item.match.split(' x ')[1])));
+    const asksTeamEvaluation = Boolean(team) && /(?:vale|devo|posso|compensa|recomenda|entraria)/.test(q);
+    const asksOnlyImmediateEntries = !asksTeamEvaluation && (q.includes('somente entrar agora') || q.includes('apenas entrar agora') || q.includes('quais entrar agora') || q.includes('mostre entrar agora') || q.includes('entradas agora'));
     if (team) filtered = filtered.filter((item) => item.match === team.match);
-    if (q.includes('entrar agora')) filtered = filtered.filter((item) => item.decision === 'ENTRAR AGORA');
+    if (asksOnlyImmediateEntries) filtered = filtered.filter((item) => item.decision === 'ENTRAR AGORA');
     if (q.includes('serie a') || q.includes('brasileirao')) filtered = filtered.filter((item) => normalize(item.league).includes('brasileirao'));
     if (q.includes('queda')) filtered = filtered.filter((item) => item.movement?.direction === 'QUEDA');
     if (q.includes('s+')) filtered = filtered.filter((item) => item.grade === 'S+');
