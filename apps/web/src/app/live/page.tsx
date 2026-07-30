@@ -3,6 +3,7 @@
 import { Activity, Clock3, CornerUpRight, Radio, Sparkles } from 'lucide-react';
 import { LiveMatches } from '@/components/LiveMatches';
 import { LiveTimeIntelligence } from '@/components/LiveTimeIntelligence';
+import { LiveAssistantQuickAccess } from '@/components/LiveAssistantQuickAccess';
 import { Badge } from '@/components/ui/badge';
 import { Card } from '@/components/ui/card';
 
@@ -53,6 +54,7 @@ export default function LivePage() {
         </div>
       </section>
 
+      <LiveAssistantQuickAccess />
       <LiveTimeIntelligence />
       <LiveMatches />
     </main>
