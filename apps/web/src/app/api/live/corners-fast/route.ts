@@ -207,6 +207,7 @@ async function mapWithConcurrency<T, R>(items: T[], worker: (item: T) => Promise
 }
 
 export async function GET(request: NextRequest) {
+  const requestedEventId = Number(request.nextUrl.searchParams.get('eventId') ?? '0');
   const rawUrl = new URL('/api/365scores/live', request.nextUrl.origin);
   rawUrl.searchParams.set('raw', '1');
 
@@ -224,11 +225,15 @@ export async function GET(request: NextRequest) {
     .map((match, index) => ({ match, index, eventId: match.sourceIds?.sofascore }))
     .filter((item): item is { match: LiveMatch; index: number; eventId: number } => Boolean(item.eventId))
     .sort((a, b) => {
+      if (requestedEventId > 0) {
+        if (a.eventId === requestedEventId) return -1;
+        if (b.eventId === requestedEventId) return 1;
+      }
       const aHas = a.match.corners ? 1 : 0;
       const bHas = b.match.corners ? 1 : 0;
       return aHas - bHas;
     })
-    .slice(0, MAX_ENRICHMENT);
+    .slice(0, requestedEventId > 0 ? 1 : MAX_ENRICHMENT);
 
   const enriched = [...matches];
   const results = await mapWithConcurrency(candidates, async (candidate) => ({

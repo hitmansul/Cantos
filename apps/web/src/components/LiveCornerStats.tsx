@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   RefreshCw,
   AlertCircle,
@@ -356,10 +356,12 @@ function mergeLiveMatch(base: LiveMatch, incoming: LiveMatch): LiveMatch {
 function LiveMatchCard({
   match,
   selected,
+  loadingStats,
   onClick,
 }: {
   match: LiveMatch;
   selected?: boolean;
+  loadingStats?: boolean;
   onClick?: () => void;
 }) {
   const icon = COMPETITION_ICONS[match.competitionId] || '⚽';
@@ -461,7 +463,7 @@ function LiveMatchCard({
         </div>
       </div>
 
-      {match.corners && (
+      {match.corners ? (
         <div className="mt-3 pt-3 border-t border-border/50">
           <div className="flex items-center justify-center gap-4 text-sm">
             <div className="flex items-center gap-1 text-amber-400">
@@ -477,6 +479,15 @@ function LiveMatchCard({
           <p className="text-center text-xs text-muted-foreground mt-1">
             Total: {match.corners.total}
           </p>
+        </div>
+      ) : loadingStats ? (
+        <div className="mt-3 flex items-center justify-center gap-2 border-t border-border/50 pt-3 text-sm text-amber-300">
+          <RefreshCw className="h-4 w-4 animate-spin" />
+          Buscando escanteios e estatísticas deste jogo...
+        </div>
+      ) : (
+        <div className="mt-3 border-t border-border/50 pt-3 text-center text-xs text-muted-foreground">
+          Toque no jogo para buscar escanteios e estatísticas detalhadas.
         </div>
       )}
     </Card>
@@ -693,6 +704,8 @@ export function LiveMatches() {
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [selectedCompetition, setSelectedCompetition] = useState('all');
   const [selectedMatchId, setSelectedMatchId] = useState<number | null>(null);
+  const [loadingMatchId, setLoadingMatchId] = useState<number | null>(null);
+  const matchRefs = useRef<Record<number, HTMLDivElement | null>>({});
 
   const fetchLiveMatches = useCallback(async () => {
     try {
@@ -763,6 +776,50 @@ export function LiveMatches() {
       setSelectedMatchId(null);
     }
   }, [matches, selectedMatchId]);
+
+  const selectMatch = useCallback(
+    async (match: LiveMatch) => {
+      if (selectedMatchId === match.id) {
+        setSelectedMatchId(null);
+        return;
+      }
+
+      setSelectedMatchId(match.id);
+      window.setTimeout(() => {
+        matchRefs.current[match.id]?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }, 80);
+
+      const sofaEventId = match.sourceIds?.sofascore;
+      if (match.corners || !sofaEventId) return;
+
+      setLoadingMatchId(match.id);
+      try {
+        const response = await fetch(`/api/live/corners-fast?eventId=${sofaEventId}`, {
+          cache: 'no-store',
+        });
+        const data = (await response.json()) as { matches?: LiveMatch[] };
+        if (!response.ok) return;
+
+        const refreshed = data.matches?.find(
+          (item) =>
+            item.id === match.id || item.sourceIds?.sofascore === sofaEventId
+        );
+        if (refreshed) {
+          setMatches((current) =>
+            current.map((item) =>
+              item.id === match.id ? mergeLiveMatch(item, refreshed) : item
+            )
+          );
+        }
+      } finally {
+        setLoadingMatchId((current) => (current === match.id ? null : current));
+        window.setTimeout(() => {
+          matchRefs.current[match.id]?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }, 80);
+      }
+    },
+    [selectedMatchId]
+  );
 
   const visibleMatches =
     selectedCompetition === 'all'
@@ -923,11 +980,18 @@ export function LiveMatches() {
                 {compMatches.map((match) => {
                   const selected = selectedMatchId === match.id;
                   return (
-                    <div key={match.id} className="space-y-3">
+                    <div
+                      key={match.id}
+                      ref={(node) => {
+                        matchRefs.current[match.id] = node;
+                      }}
+                      className="scroll-mt-24 space-y-3"
+                    >
                       <LiveMatchCard
                         match={match}
                         selected={selected}
-                        onClick={() => setSelectedMatchId((current) => (current === match.id ? null : match.id))}
+                        loadingStats={loadingMatchId === match.id}
+                        onClick={() => void selectMatch(match)}
                       />
                       {selected && (
                         <LiveMatchDetails
