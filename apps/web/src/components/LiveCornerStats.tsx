@@ -789,12 +789,18 @@ export function LiveMatches() {
         matchRefs.current[match.id]?.scrollIntoView({ behavior: 'smooth', block: 'start' });
       }, 80);
 
-      const sofaEventId = match.sourceIds?.sofascore;
-      if (match.corners || !sofaEventId) return;
+      if (match.corners) return;
 
+      const sofaEventId = match.sourceIds?.sofascore;
       setLoadingMatchId(match.id);
       try {
-        const response = await fetch(`/api/live/corners-fast?eventId=${sofaEventId}`, {
+        const params = new URLSearchParams({
+          home: match.homeTeam.name,
+          away: match.awayTeam.name,
+        });
+        if (sofaEventId) params.set('eventId', String(sofaEventId));
+
+        const response = await fetch(`/api/live/corners-fast?${params.toString()}`, {
           cache: 'no-store',
         });
         const data = (await response.json()) as { matches?: LiveMatch[] };

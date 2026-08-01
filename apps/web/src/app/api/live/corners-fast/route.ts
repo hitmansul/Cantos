@@ -208,6 +208,8 @@ async function mapWithConcurrency<T, R>(items: T[], worker: (item: T) => Promise
 
 export async function GET(request: NextRequest) {
   const requestedEventId = Number(request.nextUrl.searchParams.get('eventId') ?? '0');
+  const requestedHome = request.nextUrl.searchParams.get('home') ?? '';
+  const requestedAway = request.nextUrl.searchParams.get('away') ?? '';
   const rawUrl = new URL('/api/365scores/live', request.nextUrl.origin);
   rawUrl.searchParams.set('raw', '1');
 
