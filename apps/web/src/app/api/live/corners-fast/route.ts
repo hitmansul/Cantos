@@ -169,6 +169,41 @@ async function fetchJson<T>(url: string): Promise<T | null> {
   }
 }
 
+type SofaLiveEvent = {
+  id: number;
+  homeTeam?: { name?: string };
+  awayTeam?: { name?: string };
+};
+
+async function resolveSofaEventId(home: string, away: string): Promise<number | null> {
+  if (!home || !away) return null;
+  const payload = await fetchJson<{ events?: SofaLiveEvent[] }>(
+    `${SOFA_BASE}/sport/football/events/live`
+  );
+  const homeKey = normalize(home);
+  const awayKey = normalize(away);
+  const events = payload?.events ?? [];
+
+  const exact = events.find(
+    (event) =>
+      normalize(event.homeTeam?.name) === homeKey &&
+      normalize(event.awayTeam?.name) === awayKey
+  );
+  if (exact) return exact.id;
+
+  const partial = events.find((event) => {
+    const eventHome = normalize(event.homeTeam?.name);
+    const eventAway = normalize(event.awayTeam?.name);
+    return (
+      eventHome.length > 2 &&
+      eventAway.length > 2 &&
+      (eventHome.includes(homeKey) || homeKey.includes(eventHome)) &&
+      (eventAway.includes(awayKey) || awayKey.includes(eventAway))
+    );
+  });
+  return partial?.id ?? null;
+}
+
 async function enrichEvent(eventId: number): Promise<CacheEntry> {
   const cached = statsCache.get(eventId);
   if (cached && cached.expiresAt > Date.now()) return cached;
@@ -207,9 +242,13 @@ async function mapWithConcurrency<T, R>(items: T[], worker: (item: T) => Promise
 }
 
 export async function GET(request: NextRequest) {
-  const requestedEventId = Number(request.nextUrl.searchParams.get('eventId') ?? '0');
+  const requestedEventIdParam = Number(request.nextUrl.searchParams.get('eventId') ?? '0');
   const requestedHome = request.nextUrl.searchParams.get('home') ?? '';
   const requestedAway = request.nextUrl.searchParams.get('away') ?? '';
+  const requestedEventId =
+    requestedEventIdParam > 0
+      ? requestedEventIdParam
+      : (await resolveSofaEventId(requestedHome, requestedAway)) ?? 0;
   const rawUrl = new URL('/api/365scores/live', request.nextUrl.origin);
   rawUrl.searchParams.set('raw', '1');
 
@@ -224,7 +263,17 @@ export async function GET(request: NextRequest) {
 
   const matches = Array.isArray(payload.matches) ? payload.matches : [];
   const candidates = matches
-    .map((match, index) => ({ match, index, eventId: match.sourceIds?.sofascore }))
+    .map((match, index) => {
+      const selectedByName =
+        requestedEventId > 0 &&
+        normalize(match.homeTeam.name) === normalize(requestedHome) &&
+        normalize(match.awayTeam.name) === normalize(requestedAway);
+      return {
+        match,
+        index,
+        eventId: selectedByName ? requestedEventId : match.sourceIds?.sofascore,
+      };
+    })
     .filter((item): item is { match: LiveMatch; index: number; eventId: number } => Boolean(item.eventId))
     .sort((a, b) => {
       if (requestedEventId > 0) {
