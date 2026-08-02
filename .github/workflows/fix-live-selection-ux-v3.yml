@@ -1,0 +1,55 @@
+name: Fix live selection UX v3
+
+on:
+  push:
+    paths:
+      - '.github/workflows/fix-live-selection-ux-v3.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Apply deterministic loading and positioning patch
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('apps/web/src/components/LiveCornerStats.tsx')
+          text = path.read_text()
+
+          old = """  const [loadingMatchId, setLoadingMatchId] = useState<number | null>(null);\n  const matchRefs = useRef<Record<number, HTMLDivElement | null>>({});"""
+          new = """  const [loadingMatchId, setLoadingMatchId] = useState<number | null>(null);\n  const matchRefs = useRef<Record<number, HTMLDivElement | null>>({});\n  const detailRefs = useRef<Record<number, HTMLDivElement | null>>({});"""
+          if old not in text:
+              raise SystemExit('state refs block not found')
+          text = text.replace(old, new, 1)
+
+          old = """  const selectMatch = useCallback(\n    async (match: LiveMatch) => {\n      if (selectedMatchId === match.id) {\n        setSelectedMatchId(null);\n        return;\n      }\n\n      setSelectedMatchId(match.id);\n      window.setTimeout(() => {\n        matchRefs.current[match.id]?.scrollIntoView({ behavior: 'smooth', block: 'start' });\n      }, 80);\n\n      if (match.corners) return;\n\n      const sofaEventId = match.sourceIds?.sofascore;\n      setLoadingMatchId(match.id);\n      try {\n        const params = new URLSearchParams({\n          home: match.homeTeam.name,\n          away: match.awayTeam.name,\n        });\n        if (sofaEventId) params.set('eventId', String(sofaEventId));\n\n        const response = await fetch(`/api/live/corners-fast?${params.toString()}`, {\n          cache: 'no-store',\n        });\n        const data = (await response.json()) as { matches?: LiveMatch[] };\n        if (!response.ok) return;\n\n        const refreshed = data.matches?.find(\n          (item) =>\n            item.id === match.id || item.sourceIds?.sofascore === sofaEventId\n        );\n        if (refreshed) {\n          setMatches((current) =>\n            current.map((item) =>\n              item.id === match.id ? mergeLiveMatch(item, refreshed) : item\n            )\n          );\n        }\n      } finally {\n        setLoadingMatchId((current) => (current === match.id ? null : current));\n        window.setTimeout(() => {\n          matchRefs.current[match.id]?.scrollIntoView({ behavior: 'smooth', block: 'start' });\n        }, 80);\n      }\n    },\n    [selectedMatchId]\n  );"""
+          new = """  const scrollToSelectedDetails = useCallback((matchId: number) => {\n    window.requestAnimationFrame(() => {\n      window.requestAnimationFrame(() => {\n        detailRefs.current[matchId]?.scrollIntoView({ behavior: 'smooth', block: 'start' });\n      });\n    });\n  }, []);\n\n  useEffect(() => {\n    if (selectedMatchId === null) return;\n    const timer = window.setTimeout(() => scrollToSelectedDetails(selectedMatchId), 180);\n    return () => window.clearTimeout(timer);\n  }, [selectedMatchId, scrollToSelectedDetails]);\n\n  const selectMatch = useCallback(\n    async (match: LiveMatch) => {\n      if (selectedMatchId === match.id) {\n        setSelectedMatchId(null);\n        setLoadingMatchId(null);\n        return;\n      }\n\n      setSelectedMatchId(match.id);\n\n      if (match.corners) {\n        setLoadingMatchId(null);\n        return;\n      }\n\n      const startedAt = Date.now();\n      setLoadingMatchId(match.id);\n\n      try {\n        const params = new URLSearchParams({\n          home: match.homeTeam.name,\n          away: match.awayTeam.name,\n          matchId: String(match.id),\n        });\n        const sofaEventId = match.sourceIds?.sofascore;\n        if (sofaEventId) params.set('eventId', String(sofaEventId));\n\n        const response = await fetch(`/api/live/corners-fast?${params.toString()}`, {\n          cache: 'no-store',\n        });\n        const data = (await response.json()) as { matches?: LiveMatch[] };\n        if (response.ok) {\n          const refreshed = data.matches?.find(\n            (item) =>\n              item.id === match.id ||\n              (sofaEventId && item.sourceIds?.sofascore === sofaEventId) ||\n              (item.homeTeam.name === match.homeTeam.name &&\n                item.awayTeam.name === match.awayTeam.name)\n          );\n          if (refreshed) {\n            setMatches((current) =>\n              current.map((item) =>\n                item.id === match.id ? mergeLiveMatch(item, refreshed) : item\n              )\n            );\n          }\n        }\n      } finally {\n        const elapsed = Date.now() - startedAt;\n        const remaining = Math.max(0, 900 - elapsed);\n        window.setTimeout(() => {\n          setLoadingMatchId((current) => (current === match.id ? null : current));\n          scrollToSelectedDetails(match.id);\n        }, remaining);\n      }\n    },\n    [scrollToSelectedDetails, selectedMatchId]\n  );"""
+          if old not in text:
+              raise SystemExit('selectMatch block not found')
+          text = text.replace(old, new, 1)
+
+          old = """                      {selected && (\n                        <LiveMatchDetails\n                          match={match}\n                          competition={competition}\n                          onClose={() => setSelectedMatchId(null)}\n                        />\n                      )}"""
+          new = """                      {selected && (\n                        <div\n                          ref={(node) => {\n                            detailRefs.current[match.id] = node;\n                          }}\n                          className=\"scroll-mt-24 space-y-3\"\n                        >\n                          {loadingMatchId === match.id && !match.corners && (\n                            <div className=\"flex items-center justify-center gap-2 rounded-xl border border-amber-500/30 bg-amber-500/10 p-4 text-sm font-medium text-amber-300\">\n                              <RefreshCw className=\"h-4 w-4 animate-spin\" />\n                              Buscando escanteios e estatísticas deste jogo...\n                            </div>\n                          )}\n                          <LiveMatchDetails\n                            match={match}\n                            competition={competition}\n                            onClose={() => {\n                              setSelectedMatchId(null);\n                              setLoadingMatchId(null);\n                            }}\n                          />\n                        </div>\n                      )}"""
+          if old not in text:
+              raise SystemExit('selected details render block not found')
+          text = text.replace(old, new, 1)
+
+          path.write_text(text)
+          PY
+
+      - name: Commit patch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add apps/web/src/components/LiveCornerStats.tsx
+          git commit -m "fix: keep selected live game visible and show loading reliably"
+          git push origin main
