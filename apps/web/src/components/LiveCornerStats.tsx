@@ -706,6 +706,7 @@ export function LiveMatches() {
   const [selectedMatchId, setSelectedMatchId] = useState<number | null>(null);
   const [loadingMatchId, setLoadingMatchId] = useState<number | null>(null);
   const matchRefs = useRef<Record<number, HTMLDivElement | null>>({});
+  const detailRefs = useRef<Record<number, HTMLDivElement | null>>({});
 
   const fetchLiveMatches = useCallback(async () => {
     try {
@@ -777,54 +778,77 @@ export function LiveMatches() {
     }
   }, [matches, selectedMatchId]);
 
+  const scrollToSelectedDetails = useCallback((matchId: number) => {
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => {
+        detailRefs.current[matchId]?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      });
+    });
+  }, []);
+
+  useEffect(() => {
+    if (selectedMatchId === null) return;
+    const timer = window.setTimeout(() => scrollToSelectedDetails(selectedMatchId), 180);
+    return () => window.clearTimeout(timer);
+  }, [selectedMatchId, scrollToSelectedDetails]);
+
   const selectMatch = useCallback(
     async (match: LiveMatch) => {
       if (selectedMatchId === match.id) {
         setSelectedMatchId(null);
+        setLoadingMatchId(null);
         return;
       }
 
       setSelectedMatchId(match.id);
-      window.setTimeout(() => {
-        matchRefs.current[match.id]?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-      }, 80);
 
-      if (match.corners) return;
+      if (match.corners) {
+        setLoadingMatchId(null);
+        return;
+      }
 
-      const sofaEventId = match.sourceIds?.sofascore;
+      const startedAt = Date.now();
       setLoadingMatchId(match.id);
+
       try {
         const params = new URLSearchParams({
           home: match.homeTeam.name,
           away: match.awayTeam.name,
+          matchId: String(match.id),
         });
+        const sofaEventId = match.sourceIds?.sofascore;
         if (sofaEventId) params.set('eventId', String(sofaEventId));
 
         const response = await fetch(`/api/live/corners-fast?${params.toString()}`, {
           cache: 'no-store',
         });
         const data = (await response.json()) as { matches?: LiveMatch[] };
-        if (!response.ok) return;
-
-        const refreshed = data.matches?.find(
-          (item) =>
-            item.id === match.id || item.sourceIds?.sofascore === sofaEventId
-        );
-        if (refreshed) {
-          setMatches((current) =>
-            current.map((item) =>
-              item.id === match.id ? mergeLiveMatch(item, refreshed) : item
-            )
+        if (response.ok) {
+          const refreshed = data.matches?.find(
+            (item) =>
+              item.id === match.id ||
+              (sofaEventId && item.sourceIds?.sofascore === sofaEventId) ||
+              (item.homeTeam.name === match.homeTeam.name &&
+                item.awayTeam.name === match.awayTeam.name)
           );
+          if (refreshed) {
+            setMatches((current) =>
+              current.map((item) =>
+                item.id === match.id ? mergeLiveMatch(item, refreshed) : item
+              )
+            );
+          }
         }
       } finally {
-        setLoadingMatchId((current) => (current === match.id ? null : current));
+        const elapsed = Date.now() - startedAt;
+        const remaining = Math.max(0, 900 - elapsed);
         window.setTimeout(() => {
-          matchRefs.current[match.id]?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-        }, 80);
+          setLoadingMatchId((current) => (current === match.id ? null : current));
+          scrollToSelectedDetails(match.id);
+        }, remaining);
       }
     },
-    [selectedMatchId]
+    [scrollToSelectedDetails, selectedMatchId]
   );
 
   const visibleMatches =
@@ -1000,11 +1024,27 @@ export function LiveMatches() {
                         onClick={() => void selectMatch(match)}
                       />
                       {selected && (
-                        <LiveMatchDetails
-                          match={match}
-                          competition={competition}
-                          onClose={() => setSelectedMatchId(null)}
-                        />
+                        <div
+                          ref={(node) => {
+                            detailRefs.current[match.id] = node;
+                          }}
+                          className="scroll-mt-24 space-y-3"
+                        >
+                          {loadingMatchId === match.id && !match.corners && (
+                            <div className="flex items-center justify-center gap-2 rounded-xl border border-amber-500/30 bg-amber-500/10 p-4 text-sm font-medium text-amber-300">
+                              <RefreshCw className="h-4 w-4 animate-spin" />
+                              Buscando escanteios e estatísticas deste jogo...
+                            </div>
+                          )}
+                          <LiveMatchDetails
+                            match={match}
+                            competition={competition}
+                            onClose={() => {
+                              setSelectedMatchId(null);
+                              setLoadingMatchId(null);
+                            }}
+                          />
+                        </div>
                       )}
                     </div>
                   );
