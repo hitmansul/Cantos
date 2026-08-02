@@ -792,6 +792,16 @@ export function LiveMatches() {
     return () => window.clearTimeout(timer);
   }, [selectedMatchId, scrollToSelectedDetails]);
 
+  const waitForNextPaint = useCallback(
+    () =>
+      new Promise<void>((resolve) => {
+        window.requestAnimationFrame(() => {
+          window.requestAnimationFrame(() => resolve());
+        });
+      }),
+    []
+  );
+
   const selectMatch = useCallback(
     async (match: LiveMatch) => {
       if (selectedMatchId === match.id) {
@@ -800,15 +810,23 @@ export function LiveMatches() {
         return;
       }
 
+      const hasUsableCorners = Boolean(
+        match.corners &&
+          Number.isFinite(match.corners.home) &&
+          Number.isFinite(match.corners.away) &&
+          Number.isFinite(match.corners.total)
+      );
+
+      setLoadingMatchId(hasUsableCorners ? null : match.id);
       setSelectedMatchId(match.id);
 
-      if (match.corners) {
-        setLoadingMatchId(null);
-        return;
-      }
+      // Aguarda o navegador realmente pintar o novo jogo e o indicador antes da chamada externa.
+      await waitForNextPaint();
+      scrollToSelectedDetails(match.id);
+
+      if (hasUsableCorners) return;
 
       const startedAt = Date.now();
-      setLoadingMatchId(match.id);
 
       try {
         const params = new URLSearchParams({
@@ -848,7 +866,7 @@ export function LiveMatches() {
         }, remaining);
       }
     },
-    [scrollToSelectedDetails, selectedMatchId]
+    [scrollToSelectedDetails, selectedMatchId, waitForNextPaint]
   );
 
   const visibleMatches =
@@ -1030,9 +1048,13 @@ export function LiveMatches() {
                           }}
                           className="scroll-mt-24 space-y-3"
                         >
-                          {loadingMatchId === match.id && !match.corners && (
-                            <div className="flex items-center justify-center gap-2 rounded-xl border border-amber-500/30 bg-amber-500/10 p-4 text-sm font-medium text-amber-300">
-                              <RefreshCw className="h-4 w-4 animate-spin" />
+                          {loadingMatchId === match.id && (
+                            <div
+                              role="status"
+                              aria-live="polite"
+                              className="sticky top-20 z-20 flex items-center justify-center gap-2 rounded-xl border border-amber-400/60 bg-amber-500/20 p-4 text-sm font-bold text-amber-200 shadow-lg backdrop-blur"
+                            >
+                              <RefreshCw className="h-5 w-5 animate-spin" />
                               Buscando escanteios e estatísticas deste jogo...
                             </div>
                           )}
