@@ -4,6 +4,7 @@ on:
   push:
     paths:
       - '.github/workflows/patch-live-stats-status-and-api-football.yml'
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -27,50 +28,44 @@ jobs:
 
           old_state = "  const [loadingMatchId, setLoadingMatchId] = useState<number | null>(null);\n  const matchRefs = useRef<Record<number, HTMLDivElement | null>>({});"
           new_state = "  const [loadingMatchId, setLoadingMatchId] = useState<number | null>(null);\n  const [statsStatusByMatch, setStatsStatusByMatch] = useState<Record<number, 'loading' | 'loaded' | 'unavailable'>>({});\n  const matchRefs = useRef<Record<number, HTMLDivElement | null>>({});"
-          if old_state not in text:
-              raise SystemExit('state marker not found')
-          text = text.replace(old_state, new_state)
+          if old_state in text:
+              text = text.replace(old_state, new_state)
 
           old_select = "      setLoadingMatchId(hasUsableCorners ? null : match.id);\n      setSelectedMatchId(match.id);"
           new_select = "      setStatsStatusByMatch((current) => ({ ...current, [match.id]: hasUsableCorners ? 'loaded' : 'loading' }));\n      setLoadingMatchId(hasUsableCorners ? null : match.id);\n      setSelectedMatchId(match.id);"
-          if old_select not in text:
-              raise SystemExit('select marker not found')
-          text = text.replace(old_select, new_select)
+          if old_select in text:
+              text = text.replace(old_select, new_select)
 
           old_refreshed = "          if (refreshed) {\n            setMatches((current) =>\n              current.map((item) =>\n                item.id === match.id ? mergeLiveMatch(item, refreshed) : item\n              )\n            );\n          }"
           new_refreshed = "          if (refreshed) {\n            const hasStats = Boolean(refreshed.corners || refreshed.liveStats?.length);\n            setMatches((current) =>\n              current.map((item) =>\n                item.id === match.id ? mergeLiveMatch(item, refreshed) : item\n              )\n            );\n            setStatsStatusByMatch((current) => ({\n              ...current,\n              [match.id]: hasStats ? 'loaded' : 'unavailable',\n            }));\n          } else {\n            setStatsStatusByMatch((current) => ({ ...current, [match.id]: 'unavailable' }));\n          }"
-          if old_refreshed not in text:
-              raise SystemExit('refreshed marker not found')
-          text = text.replace(old_refreshed, new_refreshed)
+          if old_refreshed in text:
+              text = text.replace(old_refreshed, new_refreshed)
 
           old_finally = "        window.setTimeout(() => {\n          setLoadingMatchId((current) => (current === match.id ? null : current));\n          scrollToSelectedDetails(match.id);\n        }, remaining);"
           new_finally = "        window.setTimeout(() => {\n          setLoadingMatchId((current) => (current === match.id ? null : current));\n          setStatsStatusByMatch((current) =>\n            current[match.id] === 'loading' ? { ...current, [match.id]: 'unavailable' } : current\n          );\n          scrollToSelectedDetails(match.id);\n        }, Math.max(1800, remaining));"
-          if old_finally not in text:
-              raise SystemExit('finally marker not found')
-          text = text.replace(old_finally, new_finally)
+          if old_finally in text:
+              text = text.replace(old_finally, new_finally)
 
           old_banner = "                          {loadingMatchId === match.id && !match.corners && (\n                            <div className=\"flex items-center justify-center gap-2 rounded-xl border border-amber-500/30 bg-amber-500/10 p-4 text-sm font-medium text-amber-300\">\n                              <RefreshCw className=\"h-4 w-4 animate-spin\" />\n                              Buscando escanteios e estatísticas deste jogo...\n                            </div>\n                          )}"
           new_banner = "                          {statsStatusByMatch[match.id] === 'loading' && !match.corners && (\n                            <div className=\"sticky top-20 z-20 flex items-center justify-center gap-2 rounded-xl border-2 border-amber-400 bg-amber-500/20 p-4 text-sm font-bold text-amber-200 shadow-lg\">\n                              <RefreshCw className=\"h-5 w-5 animate-spin\" />\n                              Buscando escanteios e estatísticas deste jogo...\n                            </div>\n                          )}\n                          {statsStatusByMatch[match.id] === 'unavailable' && !match.corners && (\n                            <div className=\"rounded-xl border border-slate-500/30 bg-slate-500/10 p-3 text-sm text-slate-300\">\n                              Consulta concluída: as fontes disponíveis ainda não forneceram escanteios ou estatísticas detalhadas para esta partida.\n                            </div>\n                          )}"
-          if old_banner not in text:
-              raise SystemExit('banner marker not found')
-          text = text.replace(old_banner, new_banner)
+          if old_banner in text:
+              text = text.replace(old_banner, new_banner)
           component.write_text(text)
 
           route = Path('apps/web/src/app/api/live/corners-fast/route.ts')
           r = route.read_text()
-          r = r.replace("import { NextRequest, NextResponse } from 'next/server';", "import { NextRequest, NextResponse } from 'next/server';\nimport { apiFootballGet } from '@/app/api/utils/apiFootball';")
+          if "apiFootballGet" not in r:
+              r = r.replace("import { NextRequest, NextResponse } from 'next/server';", "import { NextRequest, NextResponse } from 'next/server';\nimport { apiFootballGet } from '@/app/api/utils/apiFootball';")
 
           marker = "async function enrichEvent(eventId: number): Promise<CacheEntry> {"
           helper = '''type ApiFootballTeamStats = {\n  team?: { id?: number; name?: string };\n  statistics?: Array<{ type?: string; value?: number | string | null }>;\n};\n\nasync function enrichApiFootballFixture(fixtureId: number): Promise<CacheEntry> {\n  const payload = await apiFootballGet<ApiFootballTeamStats[]>('/fixtures/statistics', {\n    params: { fixture: fixtureId },\n    cache: 'no-store',\n    timeoutMs: 5000,\n  });\n  const teams = payload?.response ?? [];\n  if (teams.length < 2) return { expiresAt: Date.now() + NEGATIVE_CACHE_TTL_MS };\n\n  const allTypes = Array.from(new Set(teams.flatMap((team) => (team.statistics ?? []).map((item) => item.type ?? '')))).filter(Boolean);\n  const rows: LiveStatRow[] = allTypes.map((type, index) => {\n    const homeValue = teams[0]?.statistics?.find((item) => item.type === type)?.value;\n    const awayValue = teams[1]?.statistics?.find((item) => item.type === type)?.value;\n    return {\n      key: `api-football:${normalize(type)}`,\n      label: type,\n      home: homeValue === null || homeValue === undefined ? '-' : String(homeValue),\n      away: awayValue === null || awayValue === undefined ? '-' : String(awayValue),\n      order: index,\n      categoryOrder: 0,\n      category: 'Estatísticas oficiais',\n      isMajor: ['corner', 'shot', 'possession', 'attack'].some((term) => normalize(type).includes(term)),\n    };\n  }).filter((row) => row.home !== '-' || row.away !== '-');\n\n  const corners = cornersFromRows(rows);\n  return {\n    expiresAt: Date.now() + (corners || rows.length ? CACHE_TTL_MS : NEGATIVE_CACHE_TTL_MS),\n    corners,\n    liveStats: rows.length ? (corners ? ensureCornerRow(rows, corners) : rows) : undefined,\n    source: corners || rows.length ? 'api-football' : undefined,\n  };\n}\n\n'''
-          if marker not in r:
-              raise SystemExit('route helper marker not found')
-          r = r.replace(marker, helper + marker)
+          if "async function enrichApiFootballFixture" not in r:
+              r = r.replace(marker, helper + marker)
 
           old_worker = "  const results = await mapWithConcurrency(candidates, async (candidate) => ({\n    candidate,\n    stats: await enrichEvent(candidate.eventId),\n  }));"
           new_worker = "  const results = await mapWithConcurrency(candidates, async (candidate) => {\n    let stats = await enrichEvent(candidate.eventId);\n    if (!stats.corners && !stats.liveStats?.length && candidate.match.sourceIds?.apiFootball) {\n      stats = await enrichApiFootballFixture(candidate.match.sourceIds.apiFootball);\n    }\n    return { candidate, stats };\n  });"
-          if old_worker not in r:
-              raise SystemExit('worker marker not found')
-          r = r.replace(old_worker, new_worker)
+          if old_worker in r:
+              r = r.replace(old_worker, new_worker)
           route.write_text(r)
           PY
 
@@ -79,5 +74,11 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add apps/web/src/components/LiveCornerStats.tsx apps/web/src/app/api/live/corners-fast/route.ts
+          if git diff --cached --quiet; then
+            echo "Patch already applied"
+            exit 0
+          fi
           git commit -m "fix: persist live stats status and add API-Football fallback"
           git push origin main
+
+# rerun 2026-08-02T21:33-03:00
