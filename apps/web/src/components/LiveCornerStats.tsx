@@ -712,7 +712,7 @@ export function LiveMatches() {
   const fetchLiveMatches = useCallback(async () => {
     try {
       setError(null);
-      const response = await fetch('/api/365scores/live', { cache: 'no-store' });
+      const response = await fetch('/api/live/central?refresh=1', { cache: 'no-store' });
       const data = (await response.json()) as {
         matches?: LiveMatch[];
         lastUpdated?: string;
