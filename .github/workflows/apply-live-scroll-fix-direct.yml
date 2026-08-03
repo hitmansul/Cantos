@@ -1,0 +1,73 @@
+name: Apply live scroll fix directly
+
+on:
+  push:
+    paths:
+      - '.github/workflows/apply-live-scroll-fix-direct.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Patch selected live match scroll
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import re
+
+          path = Path('apps/web/src/components/LiveCornerStats.tsx')
+          text = path.read_text(encoding='utf-8')
+
+          pattern = re.compile(
+              r"  const scrollToSelectedDetails = useCallback\(\(matchId: number\) => \{\n"
+              r"    window\.requestAnimationFrame\(\(\) => \{\n"
+              r"      window\.requestAnimationFrame\(\(\) => \{\n"
+              r"        detailRefs\.current\[matchId\]\?\.scrollIntoView\(\{ behavior: 'smooth', block: 'start' \}\);\n"
+              r"      \}\);\n"
+              r"    \}\);\n"
+              r"  \}, \[\]\);"
+          )
+
+          replacement = """  const scrollToSelectedDetails = useCallback((matchId: number) => {
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => {
+        const selectedCard = matchRefs.current[matchId];
+        if (!selectedCard) return;
+
+        // Mantém o jogo selecionado visível e os detalhes logo abaixo.
+        const headerOffset = 88;
+        const top = selectedCard.getBoundingClientRect().top + window.scrollY - headerOffset;
+        window.scrollTo({ top: Math.max(0, top), behavior: 'smooth' });
+      });
+    });
+  }, []);"""
+
+          if replacement in text:
+              print('Fix already applied')
+          else:
+              updated, count = pattern.subn(replacement, text, count=1)
+              if count != 1:
+                  raise SystemExit(f'Expected one scroll function, replaced {count}')
+              path.write_text(updated, encoding='utf-8')
+          PY
+
+      - name: Commit direct component fix
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add apps/web/src/components/LiveCornerStats.tsx
+          if git diff --cached --quiet; then
+            echo "No changes required"
+            exit 0
+          fi
+          git commit -m "fix: keep selected live match above inline details"
+          git push origin main
