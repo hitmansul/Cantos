@@ -22,22 +22,19 @@ jobs:
         run: |
           python - <<'PY'
           from pathlib import Path
-          import re
 
           path = Path('apps/web/src/components/LiveCornerStats.tsx')
           text = path.read_text(encoding='utf-8')
 
-          pattern = re.compile(
-              r"  const scrollToSelectedDetails = useCallback\(\(matchId: number\) => \{\n"
-              r"    window\.requestAnimationFrame\(\(\) => \{\n"
-              r"      window\.requestAnimationFrame\(\(\) => \{\n"
-              r"        detailRefs\.current\[matchId\]\?\.scrollIntoView\(\{ behavior: 'smooth', block: 'start' \}\);\n"
-              r"      \}\);\n"
-              r"    \}\);\n"
-              r"  \}, \[\]\);"
-          )
+          old = """  const scrollToSelectedDetails = useCallback((matchId: number) => {
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => {
+        detailRefs.current[matchId]?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      });
+    });
+  }, []);"""
 
-          replacement = """  const scrollToSelectedDetails = useCallback((matchId: number) => {
+          new = """  const scrollToSelectedDetails = useCallback((matchId: number) => {
     window.requestAnimationFrame(() => {
       window.requestAnimationFrame(() => {
         const selectedCard = matchRefs.current[matchId];
@@ -51,13 +48,12 @@ jobs:
     });
   }, []);"""
 
-          if replacement in text:
+          if new in text:
               print('Fix already applied')
+          elif old in text:
+              path.write_text(text.replace(old, new, 1), encoding='utf-8')
           else:
-              updated, count = pattern.subn(replacement, text, count=1)
-              if count != 1:
-                  raise SystemExit(f'Expected one scroll function, replaced {count}')
-              path.write_text(updated, encoding='utf-8')
+              raise SystemExit('Exact scroll function was not found')
           PY
 
       - name: Commit direct component fix
@@ -71,3 +67,5 @@ jobs:
           fi
           git commit -m "fix: keep selected live match above inline details"
           git push origin main
+
+# retrigger: 2026-08-03T11:40:00-03:00
