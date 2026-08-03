@@ -1,0 +1,65 @@
+name: Fix live selection scroll anchor
+
+on:
+  push:
+    paths:
+      - '.github/workflows/fix-live-selection-scroll-anchor.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Keep selected match visible above inline details
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('apps/web/src/components/LiveCornerStats.tsx')
+          text = path.read_text()
+
+          old = """  const scrollToSelectedDetails = useCallback((matchId: number) => {
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => {
+        detailRefs.current[matchId]?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      });
+    });
+  }, []);"""
+
+          new = """  const scrollToSelectedDetails = useCallback((matchId: number) => {
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => {
+        const selectedCard = matchRefs.current[matchId];
+        if (!selectedCard) return;
+
+        // Mantém o jogo selecionado visível e deixa o painel expandido logo abaixo.
+        // Posicionar o painel de detalhes no topo escondia o card e dava a impressão
+        // de que as informações haviam aberto acima do segundo jogo.
+        const headerOffset = 88;
+        const top = selectedCard.getBoundingClientRect().top + window.scrollY - headerOffset;
+        window.scrollTo({ top: Math.max(0, top), behavior: 'smooth' });
+      });
+    });
+  }, []);"""
+
+          if old not in text:
+              raise SystemExit('scroll anchor marker not found')
+
+          text = text.replace(old, new)
+          path.write_text(text)
+          PY
+
+      - name: Commit correction
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add apps/web/src/components/LiveCornerStats.tsx
+          git commit -m "fix: keep selected live match above inline details"
+          git push origin main
