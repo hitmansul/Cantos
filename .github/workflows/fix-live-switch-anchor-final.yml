@@ -1,0 +1,120 @@
+name: Fix live match switch anchor final
+
+on:
+  push:
+    paths:
+      - '.github/workflows/fix-live-switch-anchor-final.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Preserve clicked card position while switching open matches
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('apps/web/src/components/LiveCornerStats.tsx')
+          text = path.read_text(encoding='utf-8')
+
+          old_scroll = """  const scrollToSelectedDetails = useCallback((matchId: number) => {
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => {
+        detailRefs.current[matchId]?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      });
+    });
+  }, []);
+
+  useEffect(() => {
+    if (selectedMatchId === null) return;
+    const timer = window.setTimeout(() => scrollToSelectedDetails(selectedMatchId), 180);
+    return () => window.clearTimeout(timer);
+  }, [selectedMatchId, scrollToSelectedDetails]);
+"""
+
+          new_scroll = """  const preserveSelectedCardPosition = useCallback(
+    (matchId: number, previousTop: number | null) => {
+      if (previousTop === null) return;
+      window.requestAnimationFrame(() => {
+        window.requestAnimationFrame(() => {
+          const selectedCard = matchRefs.current[matchId];
+          if (!selectedCard) return;
+          const currentTop = selectedCard.getBoundingClientRect().top;
+          const delta = currentTop - previousTop;
+          if (Math.abs(delta) > 1) {
+            window.scrollBy({ top: delta, behavior: 'auto' });
+          }
+        });
+      });
+    },
+    []
+  );
+"""
+
+          if old_scroll not in text:
+              raise SystemExit('old scroll block not found')
+          text = text.replace(old_scroll, new_scroll, 1)
+
+          old_before_state = """      setStatsStatusByMatch((current) => ({ ...current, [match.id]: hasUsableCorners ? 'loaded' : 'loading' }));
+      setLoadingMatchId(hasUsableCorners ? null : match.id);
+      setSelectedMatchId(match.id);
+
+      // Aguarda o navegador realmente pintar o novo jogo e o indicador antes da chamada externa.
+      await waitForNextPaint();
+      scrollToSelectedDetails(match.id);
+"""
+
+          new_before_state = """      // Guarda a posição visual do card clicado. Ao fechar o painel anterior,
+      // a lista muda de altura; restauramos o card para a mesma posição da tela.
+      const previousTop = matchRefs.current[match.id]?.getBoundingClientRect().top ?? null;
+
+      setStatsStatusByMatch((current) => ({ ...current, [match.id]: hasUsableCorners ? 'loaded' : 'loading' }));
+      setLoadingMatchId(hasUsableCorners ? null : match.id);
+      setSelectedMatchId(match.id);
+
+      await waitForNextPaint();
+      preserveSelectedCardPosition(match.id, previousTop);
+"""
+
+          if old_before_state not in text:
+              raise SystemExit('selection state block not found')
+          text = text.replace(old_before_state, new_before_state, 1)
+
+          old_final = """          scrollToSelectedDetails(match.id);
+        }, Math.max(1800, remaining));
+"""
+          new_final = """          // Não reposiciona novamente após os dados chegarem: isso evita que
+          // a tela salte para cima enquanto o usuário já está lendo o segundo jogo.
+        }, Math.max(1800, remaining));
+"""
+          if old_final not in text:
+              raise SystemExit('final scroll call not found')
+          text = text.replace(old_final, new_final, 1)
+
+          old_deps = """    [scrollToSelectedDetails, selectedMatchId, waitForNextPaint]
+"""
+          new_deps = """    [preserveSelectedCardPosition, selectedMatchId, waitForNextPaint]
+"""
+          if old_deps not in text:
+              raise SystemExit('callback dependency block not found')
+          text = text.replace(old_deps, new_deps, 1)
+
+          path.write_text(text, encoding='utf-8')
+          PY
+
+      - name: Commit component correction
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add apps/web/src/components/LiveCornerStats.tsx
+          git commit -m "fix: preserve selected live card while switching details"
+          git push origin main
