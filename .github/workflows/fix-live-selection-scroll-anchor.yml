@@ -1,6 +1,7 @@
 name: Fix live selection scroll anchor
 
 on:
+  workflow_dispatch:
   push:
     paths:
       - '.github/workflows/fix-live-selection-scroll-anchor.yml'
@@ -39,9 +40,7 @@ jobs:
         const selectedCard = matchRefs.current[matchId];
         if (!selectedCard) return;
 
-        // Mantém o jogo selecionado visível e deixa o painel expandido logo abaixo.
-        // Posicionar o painel de detalhes no topo escondia o card e dava a impressão
-        // de que as informações haviam aberto acima do segundo jogo.
+        // Mantém o card selecionado visível e o painel expandido logo abaixo.
         const headerOffset = 88;
         const top = selectedCard.getBoundingClientRect().top + window.scrollY - headerOffset;
         window.scrollTo({ top: Math.max(0, top), behavior: 'smooth' });
@@ -49,11 +48,12 @@ jobs:
     });
   }, []);"""
 
-          if old not in text:
+          if new in text:
+              print('correction already applied')
+          elif old in text:
+              path.write_text(text.replace(old, new))
+          else:
               raise SystemExit('scroll anchor marker not found')
-
-          text = text.replace(old, new)
-          path.write_text(text)
           PY
 
       - name: Commit correction
@@ -61,5 +61,9 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add apps/web/src/components/LiveCornerStats.tsx
+          if git diff --cached --quiet; then
+            echo "No changes required"
+            exit 0
+          fi
           git commit -m "fix: keep selected live match above inline details"
           git push origin main
