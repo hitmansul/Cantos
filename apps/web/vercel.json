@@ -9,7 +9,7 @@
       "schedule": "30 7 * * *"
     },
     {
-      "path": "/api/live/central?refresh=1",
+      "path": "/api/cron/live-engine",
       "schedule": "* * * * *"
     }
   ]
