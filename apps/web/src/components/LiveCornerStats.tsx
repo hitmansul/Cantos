@@ -705,6 +705,7 @@ export function LiveMatches() {
   const [selectedCompetition, setSelectedCompetition] = useState('all');
   const [selectedMatchId, setSelectedMatchId] = useState<number | null>(null);
   const [loadingMatchId, setLoadingMatchId] = useState<number | null>(null);
+  const [statsStatusByMatch, setStatsStatusByMatch] = useState<Record<number, 'loading' | 'loaded' | 'unavailable'>>({});
   const matchRefs = useRef<Record<number, HTMLDivElement | null>>({});
   const detailRefs = useRef<Record<number, HTMLDivElement | null>>({});
 
@@ -817,6 +818,7 @@ export function LiveMatches() {
           Number.isFinite(match.corners.total)
       );
 
+      setStatsStatusByMatch((current) => ({ ...current, [match.id]: hasUsableCorners ? 'loaded' : 'loading' }));
       setLoadingMatchId(hasUsableCorners ? null : match.id);
       setSelectedMatchId(match.id);
 
@@ -850,11 +852,18 @@ export function LiveMatches() {
                 item.awayTeam.name === match.awayTeam.name)
           );
           if (refreshed) {
+            const hasStats = Boolean(refreshed.corners || refreshed.liveStats?.length);
             setMatches((current) =>
               current.map((item) =>
                 item.id === match.id ? mergeLiveMatch(item, refreshed) : item
               )
             );
+            setStatsStatusByMatch((current) => ({
+              ...current,
+              [match.id]: hasStats ? 'loaded' : 'unavailable',
+            }));
+          } else {
+            setStatsStatusByMatch((current) => ({ ...current, [match.id]: 'unavailable' }));
           }
         }
       } finally {
@@ -862,8 +871,11 @@ export function LiveMatches() {
         const remaining = Math.max(0, 900 - elapsed);
         window.setTimeout(() => {
           setLoadingMatchId((current) => (current === match.id ? null : current));
+          setStatsStatusByMatch((current) =>
+            current[match.id] === 'loading' ? { ...current, [match.id]: 'unavailable' } : current
+          );
           scrollToSelectedDetails(match.id);
-        }, remaining);
+        }, Math.max(1800, remaining));
       }
     },
     [scrollToSelectedDetails, selectedMatchId, waitForNextPaint]
