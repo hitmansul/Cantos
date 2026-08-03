@@ -6,6 +6,7 @@ import './hide-world-cup.css';
 import { Providers } from './providers';
 import { DesignModeInit } from '../__create/DesignModeInit';
 import { ProductNavigation } from '@/components/ProductNavigation';
+import { LiveMatchScrollStabilizer } from '@/components/LiveMatchScrollStabilizer';
 
 export const metadata: Metadata = {
   title: 'Cantos Estatísticas',
@@ -33,6 +34,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
       </head>
       <body>
         <DesignModeInit />
+        <LiveMatchScrollStabilizer />
         <Providers>
           <ProductNavigation />
           {children}
