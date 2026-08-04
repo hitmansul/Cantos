@@ -133,6 +133,24 @@ function formatTime(value?: string | null) {
 
 function signed(value: number) { return value >= 0 ? `+${value}` : String(value); }
 
+function opportunityScore(match: LiveMatch) {
+  const minute = number(String(match.minute).replace(/[^0-9].*$/, ''), 0);
+  const historyPoints = Math.min(match.engineHistory.length * 2, 18);
+  const corners = Math.min((match.corners?.total ?? 0) * 3, 24);
+  const cornerTrend = Math.min(Math.max(match.engineTrend.cornersDelta, 0) * 9, 27);
+  const shotsTrend = Math.min(Math.max(match.engineTrend.shotsDelta, 0) * 3, 15);
+  const dangerousTrend = Math.min(Math.max(match.engineTrend.dangerousAttacksDelta, 0) * 2, 12);
+  const pace = match.engineTrend.status === 'accelerating' ? 12 : match.engineTrend.status === 'stable' ? 6 : 0;
+  const timing = minute >= 55 && minute <= 88 ? 8 : minute >= 25 && minute < 55 ? 4 : 0;
+  return Math.max(0, Math.min(100, Math.round(historyPoints + corners + cornerTrend + shotsTrend + dangerousTrend + pace + timing)));
+}
+
+function scoreClass(score: number) {
+  if (score >= 75) return 'border-emerald-500/40 bg-emerald-500/15 text-emerald-300';
+  if (score >= 50) return 'border-amber-500/40 bg-amber-500/15 text-amber-300';
+  return 'border-border bg-background/50 text-muted-foreground';
+}
+
 function Metric({ label, value }: { label: string; value: string | number }) {
   return <div className="rounded-xl border border-border bg-background/50 p-3"><p className="text-xs uppercase tracking-wide text-muted-foreground">{label}</p><p className="mt-1 text-xl font-bold">{value}</p></div>;
 }
@@ -147,9 +165,10 @@ function MatchDetails({ match, lastUpdated }: { match: LiveMatch; lastUpdated: s
   const history = match.engineHistory ?? [];
   const first = history[0];
   const latest = history[history.length - 1];
+  const score = opportunityScore(match);
 
   return <div className="space-y-4">
-    <section className="rounded-2xl border border-border bg-card p-5"><div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between"><div><p className="text-sm text-muted-foreground">{match.competition}</p><h2 className="mt-1 text-2xl font-black">{match.homeTeam.name} x {match.awayTeam.name}</h2><p className="mt-1 text-sm text-muted-foreground">Última leitura: {formatTime(match.engineUpdatedAt || lastUpdated)}</p></div><div className="rounded-xl bg-emerald-500/10 px-5 py-3 text-center"><p className="text-xs text-muted-foreground">Placar · minuto</p><p className="text-2xl font-black">{match.homeTeam.score}–{match.awayTeam.score} · {match.minute}'</p></div></div></section>
+    <section className="rounded-2xl border border-border bg-card p-5"><div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between"><div><p className="text-sm text-muted-foreground">{match.competition}</p><h2 className="mt-1 text-2xl font-black">{match.homeTeam.name} x {match.awayTeam.name}</h2><p className="mt-1 text-sm text-muted-foreground">Última leitura: {formatTime(match.engineUpdatedAt || lastUpdated)}</p></div><div className="flex gap-2"><div className={`rounded-xl border px-4 py-3 text-center ${scoreClass(score)}`}><p className="text-xs">Score IA</p><p className="text-2xl font-black">{score}</p></div><div className="rounded-xl bg-emerald-500/10 px-5 py-3 text-center"><p className="text-xs text-muted-foreground">Placar · minuto</p><p className="text-2xl font-black">{match.homeTeam.score}–{match.awayTeam.score} · {match.minute}'</p></div></div></div></section>
     <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4"><Metric label="Snapshots" value={history.length} /><Metric label="Escanteios atuais" value={match.corners?.total ?? '—'} /><Metric label="Monitorado desde" value={formatTime(first?.capturedAt)} /><Metric label="Último registro" value={formatTime(latest?.capturedAt)} /></section>
     <section className="rounded-2xl border border-border bg-card p-5"><div className="flex items-center gap-2"><BarChart3 className="h-5 w-5 text-emerald-400" /><h3 className="text-lg font-bold">Ritmo dos últimos 10 minutos</h3></div><div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-5"><div className="rounded-xl border border-border p-3"><p className="text-xs text-muted-foreground">Classificação</p><p className="mt-1 flex items-center gap-2 text-lg font-bold"><TrendIcon value={match.engineTrend.status} />{labels[match.engineTrend.status]}</p></div><Metric label="Δ Escanteios" value={signed(match.engineTrend.cornersDelta)} /><Metric label="Δ Chutes" value={signed(match.engineTrend.shotsDelta)} /><Metric label="Δ Ataques perigosos" value={signed(match.engineTrend.dangerousAttacksDelta)} /><Metric label="Δ Tempo parado" value={`${match.engineTrend.stoppedMinutesDelta.toFixed(1)} min`} /></div></section>
     <section className="rounded-2xl border border-border bg-card p-5"><div className="flex items-center gap-2"><Clock3 className="h-5 w-5 text-cyan-400" /><h3 className="text-lg font-bold">Linha do tempo registrada</h3></div><div className="mt-4 max-h-[520px] space-y-2 overflow-auto">{[...history].reverse().map((item, index) => <div key={`${item.capturedAt ?? 'snapshot'}-${index}`} className="grid gap-2 rounded-xl border border-border bg-background/40 p-3 sm:grid-cols-[90px_80px_repeat(4,minmax(0,1fr))] sm:items-center"><span className="text-xs text-muted-foreground">{formatTime(item.capturedAt)}</span><span className="font-bold">{item.minute ?? '—'}'</span><span className="flex items-center gap-1 text-sm"><Target className="h-4 w-4" />{item.homeScore}–{item.awayScore}</span><span className="flex items-center gap-1 text-sm"><CornerUpRight className="h-4 w-4 text-amber-400" />{item.corners.total ?? '—'}</span><span className="text-sm">Chutes: {item.shots.total ?? '—'}</span><span className="text-sm">Perigosos: {item.dangerousAttacks.total ?? '—'}</span></div>)}{history.length === 0 && <p className="text-sm text-muted-foreground">Nenhum snapshot registrado ainda.</p>}</div></section>
@@ -238,14 +257,17 @@ export default function LiveHistoryPage() {
       <div className="max-h-none space-y-2 overflow-visible rounded-2xl border border-border bg-card p-3 lg:max-h-[72vh] lg:overflow-auto">
         <div className="mb-3 flex items-center justify-between px-2"><span className="font-bold">Jogos monitorados</span><span className="text-xs text-muted-foreground">{matches.length} ao vivo</span></div>
         {matches.length === 0 && !initialLoading && <p className="rounded-xl border border-dashed border-border p-4 text-sm text-muted-foreground">Nenhuma partida disponível neste momento.</p>}
-        {matches.map(match => <div key={match.id} className="space-y-3">
-          <button onClick={() => selectMatch(match.id)} className={`w-full rounded-xl border p-3 text-left transition ${match.id === selectedId ? 'border-emerald-500 bg-emerald-500/10' : 'border-border hover:bg-muted/50'}`}>
-            <div className="flex items-center justify-between gap-2"><span className="truncate text-xs text-muted-foreground">{match.competition}</span><span className="text-xs font-semibold text-emerald-400">{match.minute}'</span></div>
-            <p className="mt-2 font-bold">{match.homeTeam.name} x {match.awayTeam.name}</p>
-            <div className="mt-2 flex items-center justify-between text-sm"><span>{match.homeTeam.score}–{match.awayTeam.score}</span><span className="flex items-center gap-1 text-xs text-muted-foreground"><TrendIcon value={match.engineTrend.status} />{labels[match.engineTrend.status]}</span></div>
-          </button>
-          {match.id === selectedId && <div ref={mobileDetailsRef} className="scroll-mt-24 lg:hidden"><MatchDetails match={match} lastUpdated={lastUpdated} /></div>}
-        </div>)}
+        {matches.map(match => {
+          const score = opportunityScore(match);
+          return <div key={match.id} className="space-y-3">
+            <button onClick={() => selectMatch(match.id)} className={`w-full rounded-xl border p-3 text-left transition ${match.id === selectedId ? 'border-emerald-500 bg-emerald-500/10' : 'border-border hover:bg-muted/50'}`}>
+              <div className="flex items-center justify-between gap-2"><span className="truncate text-xs text-muted-foreground">{match.competition}</span><span className="text-xs font-semibold text-emerald-400">{match.minute}'</span></div>
+              <div className="mt-2 flex items-start justify-between gap-3"><p className="font-bold">{match.homeTeam.name} x {match.awayTeam.name}</p><span className={`shrink-0 rounded-lg border px-2 py-1 text-xs font-black ${scoreClass(score)}`}>IA {score}</span></div>
+              <div className="mt-2 flex items-center justify-between text-sm"><span>{match.homeTeam.score}–{match.awayTeam.score}</span><span className="flex items-center gap-1 text-xs text-muted-foreground"><TrendIcon value={match.engineTrend.status} />{labels[match.engineTrend.status]}</span></div>
+            </button>
+            {match.id === selectedId && <div ref={mobileDetailsRef} className="scroll-mt-24 lg:hidden"><MatchDetails match={match} lastUpdated={lastUpdated} /></div>}
+          </div>;
+        })}
       </div>
 
       <div className="hidden space-y-4 lg:block">
