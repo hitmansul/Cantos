@@ -1,0 +1,219 @@
+name: Fix central all live matches
+
+on:
+  push:
+    paths:
+      - '.github/workflows/fix-central-all-live-matches.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Patch all-match enrichment
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('apps/web/src/app/api/live/corners-fast/route.ts')
+          text = path.read_text()
+
+          text = text.replace('const MAX_ENRICHMENT = 12;\nconst CONCURRENCY = 4;', 'const MAX_ENRICHMENT = 30;\nconst CONCURRENCY = 5;')
+
+          old_type = """type SofaLiveEvent = {
+  id: number;
+  homeTeam?: { name?: string };
+  awayTeam?: { name?: string };
+};
+
+async function resolveSofaEventId(home: string, away: string): Promise<number | null> {
+  if (!home || !away) return null;
+  const payload = await fetchJson<{ events?: SofaLiveEvent[] }>(
+    `${SOFA_BASE}/sport/football/events/live`
+  );
+  const homeKey = normalize(home);
+  const awayKey = normalize(away);
+  const events = payload?.events ?? [];
+
+  const exact = events.find(
+    (event) =>
+      normalize(event.homeTeam?.name) === homeKey &&
+      normalize(event.awayTeam?.name) === awayKey
+  );
+  if (exact) return exact.id;
+
+  const partial = events.find((event) => {
+    const eventHome = normalize(event.homeTeam?.name);
+    const eventAway = normalize(event.awayTeam?.name);
+    return (
+      eventHome.length > 2 &&
+      eventAway.length > 2 &&
+      (eventHome.includes(homeKey) || homeKey.includes(eventHome)) &&
+      (eventAway.includes(awayKey) || awayKey.includes(eventAway))
+    );
+  });
+  return partial?.id ?? null;
+}
+"""
+
+          new_type = """type SofaLiveEvent = {
+  id: number;
+  homeTeam?: { name?: string };
+  awayTeam?: { name?: string };
+};
+
+function teamSimilarity(left: string, right: string) {
+  const a = normalize(left);
+  const b = normalize(right);
+  if (!a || !b) return 0;
+  if (a == b) return 1;
+  if (a.includes(b) || b.includes(a)) return 0.88;
+  const aa = new Set(a.split(' '));
+  const bb = new Set(b.split(' '));
+  const intersection = [...aa].filter((token) => bb.has(token)).length;
+  const union = new Set([...aa, ...bb]).size;
+  return union ? intersection / union : 0;
+}
+
+function resolveSofaEvent(home: string, away: string, events: SofaLiveEvent[]) {
+  let best: SofaLiveEvent | undefined;
+  let bestScore = 0;
+  for (const event of events) {
+    const direct = teamSimilarity(home, event.homeTeam?.name ?? '') + teamSimilarity(away, event.awayTeam?.name ?? '');
+    const reversed = (teamSimilarity(home, event.awayTeam?.name ?? '') + teamSimilarity(away, event.homeTeam?.name ?? '')) * 0.7;
+    const score = Math.max(direct, reversed);
+    if (score > bestScore) {
+      best = event;
+      bestScore = score;
+    }
+  }
+  return best && bestScore >= 1.2 ? best : null;
+}
+
+async function fetchSofaLiveEvents() {
+  const payload = await fetchJson<{ events?: SofaLiveEvent[] }>(`${SOFA_BASE}/sport/football/events/live`);
+  return payload?.events ?? [];
+}
+"""
+
+          if old_type not in text:
+              raise SystemExit('Sofa resolver block not found')
+          text = text.replace(old_type, new_type)
+
+          old_head = """  const requestedEventId =
+    requestedEventIdParam > 0
+      ? requestedEventIdParam
+      : (await resolveSofaEventId(requestedHome, requestedAway)) ?? 0;
+  const rawUrl = new URL('/api/365scores/live', request.nextUrl.origin);
+"""
+          new_head = """  const sofaLiveEvents = await fetchSofaLiveEvents();
+  const requestedResolved = requestedEventIdParam > 0
+    ? sofaLiveEvents.find((event) => event.id === requestedEventIdParam) ?? null
+    : resolveSofaEvent(requestedHome, requestedAway, sofaLiveEvents);
+  const requestedEventId = requestedEventIdParam > 0 ? requestedEventIdParam : requestedResolved?.id ?? 0;
+  const rawUrl = new URL('/api/365scores/live', request.nextUrl.origin);
+"""
+          if old_head not in text:
+              raise SystemExit('GET head block not found')
+          text = text.replace(old_head, new_head)
+
+          old_candidates = """  const candidates = matches
+    .map((match, index) => {
+      const selectedByName =
+        requestedEventId > 0 &&
+        normalize(match.homeTeam.name) === normalize(requestedHome) &&
+        normalize(match.awayTeam.name) === normalize(requestedAway);
+      return {
+        match,
+        index,
+        eventId: selectedByName ? requestedEventId : match.sourceIds?.sofascore,
+      };
+    })
+    .filter((item): item is { match: LiveMatch; index: number; eventId: number } => Boolean(item.eventId))
+    .sort((a, b) => {
+      if (requestedEventId > 0) {
+        if (a.eventId === requestedEventId) return -1;
+        if (b.eventId === requestedEventId) return 1;
+      }
+      const aHas = a.match.corners ? 1 : 0;
+      const bHas = b.match.corners ? 1 : 0;
+      return aHas - bHas;
+    })
+    .slice(0, requestedEventId > 0 ? 1 : MAX_ENRICHMENT);
+"""
+
+          new_candidates = """  const candidates = matches
+    .map((match, index) => {
+      const resolved = match.sourceIds?.sofascore
+        ? sofaLiveEvents.find((event) => event.id === match.sourceIds?.sofascore) ?? null
+        : resolveSofaEvent(match.homeTeam.name, match.awayTeam.name, sofaLiveEvents);
+      const selectedByName =
+        requestedEventId > 0 &&
+        normalize(match.homeTeam.name) === normalize(requestedHome) &&
+        normalize(match.awayTeam.name) === normalize(requestedAway);
+      return {
+        match,
+        index,
+        eventId: selectedByName ? requestedEventId : resolved?.id,
+      };
+    })
+    .filter((item): item is { match: LiveMatch; index: number; eventId: number } => Boolean(item.eventId))
+    .sort((a, b) => {
+      if (requestedEventId > 0) {
+        if (a.eventId === requestedEventId) return -1;
+        if (b.eventId === requestedEventId) return 1;
+      }
+      const aHasStats = a.match.liveStats?.length ? 1 : 0;
+      const bHasStats = b.match.liveStats?.length ? 1 : 0;
+      const aHasCorners = a.match.corners ? 1 : 0;
+      const bHasCorners = b.match.corners ? 1 : 0;
+      return (aHasStats + aHasCorners) - (bHasStats + bHasCorners);
+    })
+    .slice(0, requestedEventId > 0 ? Math.max(1, Math.min(matches.length, MAX_ENRICHMENT)) : MAX_ENRICHMENT);
+"""
+          if old_candidates not in text:
+              raise SystemExit('Candidates block not found')
+          text = text.replace(old_candidates, new_candidates)
+
+          old_merge = """    enriched[candidate.index] = {
+      ...current,
+      corners: stats.corners ?? current.corners,
+      liveStats: stats.liveStats?.length ? stats.liveStats : current.liveStats,
+      statsSource: stats.source ?? current.statsSource,
+    };
+"""
+          new_merge = """    enriched[candidate.index] = {
+      ...current,
+      sourceIds: { ...current.sourceIds, sofascore: candidate.eventId },
+      corners: stats.corners ?? current.corners,
+      liveStats: stats.liveStats?.length ? stats.liveStats : current.liveStats,
+      statsSource: stats.source ?? current.statsSource,
+    };
+"""
+          if old_merge not in text:
+              raise SystemExit('Merge block not found')
+          text = text.replace(old_merge, new_merge)
+
+          text = text.replace("enrichmentPolicy: 'fast-cached-sofascore-v1'", "enrichmentPolicy: 'all-matches-multisource-v2'")
+          text = text.replace('attempted: candidates.length,', 'attempted: candidates.length,\n      resolvedSofaEvents: candidates.length,\n      sofaLiveEvents: sofaLiveEvents.length,')
+
+          path.write_text(text)
+          PY
+      - name: Commit correction
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add apps/web/src/app/api/live/corners-fast/route.ts
+          git diff --cached --quiet && exit 0
+          git commit -m 'fix: enrich statistics for every live match'
+          git push origin main
