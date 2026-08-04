@@ -165,6 +165,7 @@ export default function LiveHistoryPage() {
   const [lastUpdated, setLastUpdated] = useState<string | null>(null);
   const requestRef = useRef<AbortController | null>(null);
   const mobileDetailsRef = useRef<HTMLDivElement | null>(null);
+  const selectionInitializedRef = useRef(false);
 
   const load = useCallback(async (manual = false) => {
     if (manual) setRefreshing(true);
@@ -183,7 +184,13 @@ export default function LiveHistoryPage() {
         : [];
       setMatches(next);
       setLastUpdated(typeof data.lastUpdated === 'string' ? data.lastUpdated : new Date().toISOString());
-      setSelectedId(current => current !== null && next.some(match => match.id === current) ? current : next[0]?.id ?? null);
+      setSelectedId(current => {
+        if (!selectionInitializedRef.current) {
+          selectionInitializedRef.current = true;
+          return next[0]?.id ?? null;
+        }
+        return current !== null && next.some(match => match.id === current) ? current : null;
+      });
     } catch (reason) {
       if (reason instanceof DOMException && reason.name === 'AbortError') return;
       setError(reason instanceof Error ? reason.message : 'Erro desconhecido');
@@ -204,13 +211,16 @@ export default function LiveHistoryPage() {
   const selected = useMemo(() => matches.find(match => match.id === selectedId) ?? null, [matches, selectedId]);
 
   const selectMatch = useCallback((id: number) => {
-    setSelectedId(id);
+    const opening = selectedId !== id;
+    setSelectedId(opening ? id : null);
+    if (!opening) return;
+
     window.requestAnimationFrame(() => {
       if (window.innerWidth < 1024) {
         window.requestAnimationFrame(() => mobileDetailsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
       }
     });
-  }, []);
+  }, [selectedId]);
 
   return <main className="mx-auto w-full max-w-7xl space-y-6 px-4 py-6 md:px-8">
     <section className="flex flex-col gap-4 rounded-2xl border border-border bg-card p-5 md:flex-row md:items-center md:justify-between">
