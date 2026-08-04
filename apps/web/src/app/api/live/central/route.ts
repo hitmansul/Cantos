@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { after, NextRequest, NextResponse } from 'next/server';
 
 type LiveStatRow = {
   key: string;
@@ -271,23 +271,35 @@ async function refresh(origin: string) {
   return state.refreshInFlight;
 }
 
+function scheduleRefresh(origin: string) {
+  after(async () => {
+    try {
+      await refresh(origin);
+    } catch {
+      // Mantém o último snapshot disponível quando uma fonte estiver lenta ou indisponível.
+    }
+  });
+}
+
 export async function GET(request: NextRequest) {
   const force = request.nextUrl.searchParams.get('refresh') === '1';
   const includeHistory = request.nextUrl.searchParams.get('history') !== '0';
   const requestedMatchId = request.nextUrl.searchParams.get('matchId');
   const age = state.updatedAt ? Date.now() - new Date(state.updatedAt).getTime() : Number.POSITIVE_INFINITY;
+  const hasCachedMatches = state.matches.length > 0;
+  const shouldRefresh = force || age > MAX_STALE_MS;
 
-  if (force || age > MAX_STALE_MS || state.matches.length === 0) {
+  if (!hasCachedMatches) {
     try {
       await refresh(request.nextUrl.origin);
     } catch (error) {
-      if (state.matches.length === 0) {
-        return NextResponse.json(
-          { matches: [], error: error instanceof Error ? error.message : 'Falha no motor ao vivo' },
-          { status: 502 }
-        );
-      }
+      return NextResponse.json(
+        { matches: [], error: error instanceof Error ? error.message : 'Falha no motor ao vivo' },
+        { status: 502 }
+      );
     }
+  } else if (shouldRefresh) {
+    scheduleRefresh(request.nextUrl.origin);
   }
 
   const sourceMatches = requestedMatchId
@@ -311,8 +323,10 @@ export async function GET(request: NextRequest) {
     matches,
     count: matches.length,
     lastUpdated: state.updatedAt,
+    refreshQueued: hasCachedMatches && shouldRefresh,
     engine: {
-      mode: 'central-continuous',
+      mode: 'central-continuous-stale-while-revalidate',
+      refreshing: Boolean(state.refreshInFlight),
       refreshSeconds: 25,
       historyLimit: HISTORY_LIMIT,
       trendWindowMinutes: TREND_WINDOW_MINUTES,
