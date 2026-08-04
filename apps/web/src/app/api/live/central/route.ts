@@ -253,7 +253,7 @@ function buildTrend(history: Snapshot[]): Trend {
 async function refresh(origin: string) {
   if (state.refreshInFlight) return state.refreshInFlight;
   state.refreshInFlight = (async () => {
-    const url = new URL('/api/live/enriched', origin);
+    const url = new URL('/api/live/corners-fast', origin);
     const response = await fetch(url, { cache: 'no-store' });
     if (!response.ok) throw new Error(`live enrichment failed: ${response.status}`);
     const payload = (await response.json()) as {
