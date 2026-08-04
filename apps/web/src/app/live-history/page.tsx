@@ -7,19 +7,16 @@ import {
   BrainCircuit,
   Clock3,
   CornerUpRight,
-  Gauge,
   RefreshCw,
-  ShieldCheck,
   Target,
   TrendingDown,
   TrendingUp,
-  Zap,
 } from 'lucide-react';
 
 type TrendStatus = 'accelerating' | 'stable' | 'cooling' | 'insufficient-data';
 type Pair = { home: number | null; away: number | null; total: number | null };
-type Decision = 'OPORTUNIDADE' | 'ACOMPANHAR' | 'EVITAR';
-type Confidence = 'Alta' | 'Média' | 'Baixa';
+type Decision = 'OPORTUNIDADE' | 'ACOMPANHAR' | 'EVITAR' | 'COLETANDO';
+type Confidence = 'Alta' | 'Média' | 'Baixa' | 'Insuficiente';
 
 type Snapshot = {
   capturedAt: string | null;
@@ -53,12 +50,13 @@ type LiveMatch = {
 
 type Intelligence = {
   score: number;
-  nextCornerProbability: number;
-  pressure: number;
-  speed: number;
+  nextCornerProbability: number | null;
+  pressure: number | null;
+  speed: number | null;
   confidence: Confidence;
   decision: Decision;
   explanation: string;
+  ready: boolean;
 };
 
 const labels: Record<TrendStatus, string> = {
@@ -160,9 +158,33 @@ function formatTime(value?: string | null) {
 
 function signed(value: number) { return value >= 0 ? `+${value}` : String(value); }
 
+function hasUsefulStatistics(match: LiveMatch) {
+  const latest = match.engineHistory[match.engineHistory.length - 1];
+  return match.corners?.total !== undefined
+    || latest?.corners.total !== null
+    || latest?.shots.total !== null
+    || latest?.dangerousAttacks.total !== null;
+}
+
 function calculateIntelligence(match: LiveMatch): Intelligence {
   const minute = minuteNumber(match.minute);
   const history = match.engineHistory;
+  const usefulStats = hasUsefulStatistics(match);
+  const ready = history.length >= 3 && usefulStats && match.engineTrend.status !== 'insufficient-data';
+
+  if (!ready) {
+    return {
+      score: 0,
+      nextCornerProbability: null,
+      pressure: null,
+      speed: null,
+      confidence: 'Insuficiente',
+      decision: 'COLETANDO',
+      explanation: 'Ainda não há histórico e estatísticas suficientes para classificar este jogo com segurança.',
+      ready: false,
+    };
+  }
+
   const corners = match.corners?.total ?? history[history.length - 1]?.corners.total ?? 0;
   const recentCorners = Math.max(match.engineTrend.cornersDelta, 0);
   const recentShots = Math.max(match.engineTrend.shotsDelta, 0);
@@ -190,25 +212,24 @@ function calculateIntelligence(match: LiveMatch): Intelligence {
     18 + pressure * 0.32 + speed * 0.22 + Math.min(corners, 12) * 1.4 + minuteWindow * 0.5
   )));
 
-  const confidence: Confidence = coverage >= 0.75 && history.length >= 6 ? 'Alta' : coverage >= 0.35 ? 'Média' : 'Baixa';
+  const confidence: Confidence = coverage >= 0.75 && history.length >= 6 ? 'Alta' : 'Média';
   const decision: Decision = score >= 72 && confidence !== 'Baixa'
     ? 'OPORTUNIDADE'
     : score >= 46
       ? 'ACOMPANHAR'
       : 'EVITAR';
 
-  const explanation = confidence === 'Baixa'
-    ? 'Amostra ainda curta; aguarde mais snapshots antes de validar uma entrada.'
-    : pressure >= 65
-      ? 'Pressão ofensiva elevada e ritmo recente favorável para nova ocorrência.'
-      : match.engineTrend.status === 'cooling'
-        ? 'O jogo perdeu intensidade nos registros recentes.'
-        : 'Ritmo moderado; reavalie após nova mudança estatística.';
+  const explanation = pressure >= 65
+    ? 'Pressão ofensiva elevada e ritmo recente favorável para nova ocorrência.'
+    : match.engineTrend.status === 'cooling'
+      ? 'O jogo perdeu intensidade nos registros recentes.'
+      : 'Ritmo moderado; reavalie após nova mudança estatística.';
 
-  return { score, nextCornerProbability, pressure, speed, confidence, decision, explanation };
+  return { score, nextCornerProbability, pressure, speed, confidence, decision, explanation, ready: true };
 }
 
-function scoreClass(score: number) {
+function scoreClass(score: number, ready = true) {
+  if (!ready) return 'border-cyan-500/30 bg-cyan-500/10 text-cyan-300';
   if (score >= 72) return 'border-emerald-500/40 bg-emerald-500/15 text-emerald-300';
   if (score >= 46) return 'border-amber-500/40 bg-amber-500/15 text-amber-300';
   return 'border-border bg-background/50 text-muted-foreground';
@@ -217,6 +238,7 @@ function scoreClass(score: number) {
 function decisionClass(decision: Decision) {
   if (decision === 'OPORTUNIDADE') return 'border-emerald-500/40 bg-emerald-500/15 text-emerald-300';
   if (decision === 'ACOMPANHAR') return 'border-amber-500/40 bg-amber-500/15 text-amber-300';
+  if (decision === 'COLETANDO') return 'border-cyan-500/30 bg-cyan-500/10 text-cyan-300';
   return 'border-red-500/30 bg-red-500/10 text-red-300';
 }
 
@@ -241,7 +263,7 @@ function MatchDetails({ match, lastUpdated }: { match: LiveMatch; lastUpdated: s
       <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
         <div><p className="text-sm text-muted-foreground">{match.competition}</p><h2 className="mt-1 text-2xl font-black">{match.homeTeam.name} x {match.awayTeam.name}</h2><p className="mt-1 text-sm text-muted-foreground">Última leitura: {formatTime(match.engineUpdatedAt || lastUpdated)}</p></div>
         <div className="flex flex-wrap gap-2">
-          <div className={`rounded-xl border px-4 py-3 text-center ${scoreClass(intelligence.score)}`}><p className="text-xs">Score IA</p><p className="text-2xl font-black">{intelligence.score}</p></div>
+          <div className={`rounded-xl border px-4 py-3 text-center ${scoreClass(intelligence.score, intelligence.ready)}`}><p className="text-xs">Score IA</p><p className="text-2xl font-black">{intelligence.ready ? intelligence.score : '—'}</p></div>
           <div className="rounded-xl bg-emerald-500/10 px-5 py-3 text-center"><p className="text-xs text-muted-foreground">Placar · minuto</p><p className="text-2xl font-black">{match.homeTeam.score}–{match.awayTeam.score} · {match.minute}'</p></div>
         </div>
       </div>
@@ -251,9 +273,9 @@ function MatchDetails({ match, lastUpdated }: { match: LiveMatch; lastUpdated: s
       <div className="flex items-center gap-2"><BrainCircuit className="h-5 w-5" /><h3 className="text-lg font-black">Leitura IA v2 · {intelligence.decision}</h3></div>
       <p className="mt-2 text-sm opacity-90">{intelligence.explanation}</p>
       <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <Metric label="Próximo escanteio" value={`${intelligence.nextCornerProbability}%`} />
-        <Metric label="Pressão ofensiva" value={`${intelligence.pressure}/100`} />
-        <Metric label="Velocidade" value={`${intelligence.speed}/100`} />
+        <Metric label="Próximo escanteio" value={intelligence.nextCornerProbability === null ? '—' : `${intelligence.nextCornerProbability}%`} />
+        <Metric label="Pressão ofensiva" value={intelligence.pressure === null ? '—' : `${intelligence.pressure}/100`} />
+        <Metric label="Velocidade" value={intelligence.speed === null ? '—' : `${intelligence.speed}/100`} />
         <Metric label="Confiança" value={intelligence.confidence} />
       </div>
     </section>
@@ -321,7 +343,12 @@ export default function LiveHistoryPage() {
     return () => { window.clearInterval(timer); requestRef.current?.abort(); };
   }, [load]);
 
-  const orderedMatches = useMemo(() => sortByScore ? [...matches].sort((a, b) => calculateIntelligence(b).score - calculateIntelligence(a).score) : matches, [matches, sortByScore]);
+  const orderedMatches = useMemo(() => sortByScore ? [...matches].sort((a, b) => {
+    const aIntelligence = calculateIntelligence(a);
+    const bIntelligence = calculateIntelligence(b);
+    if (aIntelligence.ready !== bIntelligence.ready) return aIntelligence.ready ? -1 : 1;
+    return bIntelligence.score - aIntelligence.score;
+  }) : matches, [matches, sortByScore]);
   const selected = useMemo(() => matches.find(match => match.id === selectedId) ?? null, [matches, selectedId]);
 
   const selectMatch = useCallback((id: number) => {
@@ -351,7 +378,7 @@ export default function LiveHistoryPage() {
           return <div key={match.id} className="space-y-3">
             <button onClick={() => selectMatch(match.id)} className={`w-full rounded-xl border p-3 text-left transition ${match.id === selectedId ? 'border-emerald-500 bg-emerald-500/10' : 'border-border hover:bg-muted/50'}`}>
               <div className="flex items-center justify-between gap-2"><span className="truncate text-xs text-muted-foreground">{match.competition}</span><span className="text-xs font-semibold text-emerald-400">{match.minute}'</span></div>
-              <div className="mt-2 flex items-start justify-between gap-3"><p className="font-bold">{match.homeTeam.name} x {match.awayTeam.name}</p><span className={`shrink-0 rounded-lg border px-2 py-1 text-xs font-black ${scoreClass(intelligence.score)}`}>IA {intelligence.score}</span></div>
+              <div className="mt-2 flex items-start justify-between gap-3"><p className="font-bold">{match.homeTeam.name} x {match.awayTeam.name}</p><span className={`shrink-0 rounded-lg border px-2 py-1 text-xs font-black ${scoreClass(intelligence.score, intelligence.ready)}`}>IA {intelligence.ready ? intelligence.score : '—'}</span></div>
               <div className="mt-2 flex items-center justify-between gap-2 text-sm"><span>{match.homeTeam.score}–{match.awayTeam.score}</span><span className={`rounded-md border px-2 py-0.5 text-[10px] font-bold ${decisionClass(intelligence.decision)}`}>{intelligence.decision}</span><span className="flex items-center gap-1 text-xs text-muted-foreground"><TrendIcon value={match.engineTrend.status} />{labels[match.engineTrend.status]}</span></div>
             </button>
             {match.id === selectedId && <div ref={mobileDetailsRef} className="scroll-mt-24 lg:hidden"><MatchDetails match={match} lastUpdated={lastUpdated} /></div>}
