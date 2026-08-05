@@ -1,0 +1,81 @@
+name: Optimize central live cold start
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Patch non-blocking cold start
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('apps/web/src/app/api/live/central/route.ts')
+          text = path.read_text()
+          old = """  if (!hasCachedMatches) {
+    try {
+      await refresh(request.nextUrl.origin);
+    } catch (error) {
+      return NextResponse.json(
+        { matches: [], error: error instanceof Error ? error.message : 'Falha no motor ao vivo' },
+        { status: 502 }
+      );
+    }
+  } else if (shouldRefresh) {
+    scheduleRefresh(request.nextUrl.origin);
+  }
+"""
+          new = """  if (!hasCachedMatches) {
+    scheduleRefresh(request.nextUrl.origin);
+    return NextResponse.json({
+      matches: [],
+      count: 0,
+      lastUpdated: null,
+      warmingUp: true,
+      refreshQueued: true,
+      engine: {
+        mode: 'central-continuous-cold-start',
+        refreshing: true,
+        refreshSeconds: 3,
+        historyLimit: HISTORY_LIMIT,
+        trendWindowMinutes: TREND_WINDOW_MINUTES,
+        trackedMatches: 0,
+        totalSnapshots: 0,
+        coverage: null,
+      },
+    }, { status: 202 });
+  } else if (shouldRefresh) {
+    scheduleRefresh(request.nextUrl.origin);
+  }
+"""
+          if new in text:
+              print('Patch already applied')
+          elif old not in text:
+              raise SystemExit('Expected cold-start block was not found')
+          else:
+              path.write_text(text.replace(old, new))
+              print('Cold-start patch applied')
+          PY
+
+      - name: Commit patch
+        run: |
+          if git diff --quiet; then
+            echo "No changes"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add apps/web/src/app/api/live/central/route.ts
+          git commit -m "perf: make central live cold start non-blocking"
+          git push origin main
