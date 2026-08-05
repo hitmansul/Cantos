@@ -16,6 +16,7 @@ import {
 type TrendStatus = 'accelerating' | 'stable' | 'cooling' | 'insufficient-data';
 type Pair = { home: number | null; away: number | null; total: number | null };
 type Decision = 'OPORTUNIDADE' | 'ACOMPANHAR' | 'EVITAR' | 'COLETANDO';
+type DecisionFilter = 'TODOS' | Decision;
 type Confidence = 'Alta' | 'Média' | 'Baixa' | 'Insuficiente';
 
 type Snapshot = {
@@ -309,6 +310,7 @@ export default function LiveHistoryPage() {
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [lastUpdated, setLastUpdated] = useState<string | null>(null);
   const [sortByScore, setSortByScore] = useState(false);
+  const [decisionFilter, setDecisionFilter] = useState<DecisionFilter>('TODOS');
   const requestRef = useRef<AbortController | null>(null);
   const mobileDetailsRef = useRef<HTMLDivElement | null>(null);
   const selectionInitializedRef = useRef(false);
@@ -344,12 +346,36 @@ export default function LiveHistoryPage() {
     return () => { window.clearInterval(timer); requestRef.current?.abort(); };
   }, [load]);
 
-  const orderedMatches = useMemo(() => sortByScore ? [...matches].sort((a, b) => {
-    const aIntelligence = calculateIntelligence(a);
-    const bIntelligence = calculateIntelligence(b);
-    if (aIntelligence.ready !== bIntelligence.ready) return aIntelligence.ready ? -1 : 1;
-    return bIntelligence.score - aIntelligence.score;
-  }) : matches, [matches, sortByScore]);
+  const intelligenceById = useMemo(() => new Map(
+    matches.map(match => [match.id, calculateIntelligence(match)] as const)
+  ), [matches]);
+
+  const decisionCounts = useMemo(() => {
+    const counts: Record<DecisionFilter, number> = {
+      TODOS: matches.length,
+      OPORTUNIDADE: 0,
+      ACOMPANHAR: 0,
+      EVITAR: 0,
+      COLETANDO: 0,
+    };
+    for (const intelligence of intelligenceById.values()) counts[intelligence.decision] += 1;
+    return counts;
+  }, [matches.length, intelligenceById]);
+
+  const orderedMatches = useMemo(() => {
+    const filtered = decisionFilter === 'TODOS'
+      ? matches
+      : matches.filter(match => intelligenceById.get(match.id)?.decision === decisionFilter);
+
+    if (!sortByScore) return filtered;
+    return [...filtered].sort((a, b) => {
+      const aIntelligence = intelligenceById.get(a.id) ?? calculateIntelligence(a);
+      const bIntelligence = intelligenceById.get(b.id) ?? calculateIntelligence(b);
+      if (aIntelligence.ready !== bIntelligence.ready) return aIntelligence.ready ? -1 : 1;
+      return bIntelligence.score - aIntelligence.score;
+    });
+  }, [matches, sortByScore, decisionFilter, intelligenceById]);
+
   const selected = useMemo(() => matches.find(match => match.id === selectedId) ?? null, [matches, selectedId]);
 
   const selectMatch = useCallback((id: number) => {
@@ -360,6 +386,10 @@ export default function LiveHistoryPage() {
       if (window.innerWidth < 1024) window.requestAnimationFrame(() => mobileDetailsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
     });
   }, [selectedId]);
+
+  const filterLabel = (filter: DecisionFilter) => filter === 'TODOS'
+    ? 'Todos'
+    : filter.charAt(0) + filter.slice(1).toLowerCase();
 
   return <main className="mx-auto w-full max-w-7xl space-y-6 px-4 py-6 md:px-8">
     <section className="flex flex-col gap-4 rounded-2xl border border-border bg-card p-5 md:flex-row md:items-center md:justify-between">
@@ -372,10 +402,28 @@ export default function LiveHistoryPage() {
 
     <section className="grid gap-4 lg:grid-cols-[340px_minmax(0,1fr)]">
       <div className="max-h-none space-y-2 overflow-visible rounded-2xl border border-border bg-card p-3 lg:max-h-[72vh] lg:overflow-auto">
-        <div className="mb-3 flex items-center justify-between gap-2 px-2"><div><span className="font-bold">Jogos monitorados</span><span className="ml-2 text-xs text-muted-foreground">{matches.length} ao vivo</span></div><button onClick={() => setSortByScore(value => !value)} className={`rounded-lg border px-2 py-1 text-xs font-semibold ${sortByScore ? 'border-emerald-500/40 bg-emerald-500/15 text-emerald-300' : 'border-border text-muted-foreground'}`}>Ordenar IA</button></div>
+        <div className="mb-3 space-y-3 px-2">
+          <div className="flex items-center justify-between gap-2">
+            <div><span className="font-bold">Jogos monitorados</span><span className="ml-2 text-xs text-muted-foreground">{matches.length} ao vivo</span></div>
+            <button onClick={() => setSortByScore(value => !value)} className={`rounded-lg border px-2 py-1 text-xs font-semibold ${sortByScore ? 'border-emerald-500/40 bg-emerald-500/15 text-emerald-300' : 'border-border text-muted-foreground'}`}>{sortByScore ? 'Maior força primeiro' : 'Ordenar por força'}</button>
+          </div>
+          <div className="flex gap-2 overflow-x-auto pb-1" aria-label="Filtrar jogos por recomendação">
+            {(['TODOS', 'OPORTUNIDADE', 'ACOMPANHAR', 'EVITAR', 'COLETANDO'] as DecisionFilter[]).map(filter => (
+              <button
+                key={filter}
+                type="button"
+                onClick={() => setDecisionFilter(filter)}
+                className={`shrink-0 rounded-lg border px-2.5 py-1.5 text-[11px] font-bold ${decisionFilter === filter ? (filter === 'TODOS' ? 'border-emerald-500 bg-emerald-500/20 text-emerald-200' : decisionClass(filter)) : 'border-border text-muted-foreground'}`}
+              >
+                {filterLabel(filter)} · {decisionCounts[filter]}
+              </button>
+            ))}
+          </div>
+        </div>
         {matches.length === 0 && !initialLoading && <p className="rounded-xl border border-dashed border-border p-4 text-sm text-muted-foreground">Nenhuma partida disponível neste momento.</p>}
+        {matches.length > 0 && orderedMatches.length === 0 && <p className="rounded-xl border border-dashed border-border p-4 text-sm text-muted-foreground">Nenhum jogo está nesta classificação agora.</p>}
         {orderedMatches.map(match => {
-          const intelligence = calculateIntelligence(match);
+          const intelligence = intelligenceById.get(match.id) ?? calculateIntelligence(match);
           return <div key={match.id} className="space-y-3">
             <button onClick={() => selectMatch(match.id)} className={`w-full rounded-xl border p-3 text-left transition ${match.id === selectedId ? 'border-emerald-500 bg-emerald-500/10' : 'border-border hover:bg-muted/50'}`}>
               <div className="flex items-center justify-between gap-2"><span className="truncate text-xs text-muted-foreground">{match.competition}</span><span className="text-xs font-semibold text-emerald-400">{match.minute}'</span></div>
