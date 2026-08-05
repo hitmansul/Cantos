@@ -72,6 +72,7 @@ const groups: NavigationGroup[] = [
     icon: Trophy,
     items: [
       { href: '/live', label: 'Ao Vivo', icon: Radio, description: 'Partidas e dados em tempo real' },
+      { href: '/live-history', label: 'Histórico e Ritmo', icon: History, description: 'Motor Central, snapshots e leitura IA ao vivo' },
       { href: '/war-room', label: 'Sala de Decisão Ao Vivo', icon: ShieldCheck, description: 'Central operacional ao vivo' },
       { href: '/match-intelligence', label: 'Inteligência da Partida', icon: Brain, description: 'Contexto e leitura completa da partida' },
       { href: '/interval-prediction', label: 'Predição por Intervalo', icon: Clock3, description: 'Projeções por faixa de tempo' },
