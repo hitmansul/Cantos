@@ -220,10 +220,10 @@ function calculateIntelligence(match: LiveMatch): Intelligence {
       : 'EVITAR';
 
   const explanation = pressure >= 65
-    ? 'Pressão ofensiva elevada e ritmo recente favorável para nova ocorrência.'
+    ? 'O jogo está pressionando e criando ações ofensivas. Há sinais favoráveis para um novo escanteio.'
     : match.engineTrend.status === 'cooling'
-      ? 'O jogo perdeu intensidade nos registros recentes.'
-      : 'Ritmo moderado; reavalie após nova mudança estatística.';
+      ? 'O ritmo caiu nos últimos registros. Neste momento, a tendência de novo escanteio enfraqueceu.'
+      : 'O jogo tem atividade, mas ainda não há força suficiente para indicar entrada. Continue acompanhando.';
 
   return { score, nextCornerProbability, pressure, speed, confidence, decision, explanation, ready: true };
 }
@@ -263,37 +263,38 @@ function MatchDetails({ match, lastUpdated }: { match: LiveMatch; lastUpdated: s
       <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
         <div><p className="text-sm text-muted-foreground">{match.competition}</p><h2 className="mt-1 text-2xl font-black">{match.homeTeam.name} x {match.awayTeam.name}</h2><p className="mt-1 text-sm text-muted-foreground">Última leitura: {formatTime(match.engineUpdatedAt || lastUpdated)}</p></div>
         <div className="flex flex-wrap gap-2">
-          <div className={`rounded-xl border px-4 py-3 text-center ${scoreClass(intelligence.score, intelligence.ready)}`}><p className="text-xs">Score IA</p><p className="text-2xl font-black">{intelligence.ready ? intelligence.score : '—'}</p></div>
+          <div className={`rounded-xl border px-4 py-3 text-center ${scoreClass(intelligence.score, intelligence.ready)}`}><p className="text-xs">Força da oportunidade</p><p className="text-2xl font-black">{intelligence.ready ? intelligence.score : '—'}</p></div>
           <div className="rounded-xl bg-emerald-500/10 px-5 py-3 text-center"><p className="text-xs text-muted-foreground">Placar · minuto</p><p className="text-2xl font-black">{match.homeTeam.score}–{match.awayTeam.score} · {match.minute}'</p></div>
         </div>
       </div>
     </section>
 
     <section className={`rounded-2xl border p-5 ${decisionClass(intelligence.decision)}`}>
-      <div className="flex items-center gap-2"><BrainCircuit className="h-5 w-5" /><h3 className="text-lg font-black">Leitura IA v2 · {intelligence.decision}</h3></div>
+      <div className="flex items-center gap-2"><BrainCircuit className="h-5 w-5" /><h3 className="text-lg font-black">Recomendação da IA · {intelligence.decision}</h3></div>
       <p className="mt-2 text-sm opacity-90">{intelligence.explanation}</p>
+      <p className="mt-3 rounded-xl border border-current/20 bg-background/25 p-3 text-xs opacity-90"><strong>Como interpretar:</strong> O percentual estima a chance de ocorrer outro escanteio em breve. Pressão e intensidade vão de 0 a 100. Quanto maiores, mais ativo está o jogo. A recomendação não substitui a conferência da linha e da odd disponíveis.</p>
       <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <Metric label="Próximo escanteio" value={intelligence.nextCornerProbability === null ? '—' : `${intelligence.nextCornerProbability}%`} />
-        <Metric label="Pressão ofensiva" value={intelligence.pressure === null ? '—' : `${intelligence.pressure}/100`} />
-        <Metric label="Velocidade" value={intelligence.speed === null ? '—' : `${intelligence.speed}/100`} />
-        <Metric label="Confiança" value={intelligence.confidence} />
+        <Metric label="Chance de novo escanteio" value={intelligence.nextCornerProbability === null ? '—' : `${intelligence.nextCornerProbability}%`} />
+        <Metric label="Pressão do jogo" value={intelligence.pressure === null ? '—' : `${intelligence.pressure}/100`} />
+        <Metric label="Intensidade recente" value={intelligence.speed === null ? '—' : `${intelligence.speed}/100`} />
+        <Metric label="Confiabilidade da leitura" value={intelligence.confidence} />
       </div>
     </section>
 
-    <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4"><Metric label="Snapshots" value={history.length} /><Metric label="Escanteios atuais" value={match.corners?.total ?? '—'} /><Metric label="Monitorado desde" value={formatTime(first?.capturedAt)} /><Metric label="Último registro" value={formatTime(latest?.capturedAt)} /></section>
+    <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4"><Metric label="Leituras registradas" value={history.length} /><Metric label="Escanteios atuais" value={match.corners?.total ?? '—'} /><Metric label="Acompanhamento iniciado" value={formatTime(first?.capturedAt)} /><Metric label="Dados mais recentes" value={formatTime(latest?.capturedAt)} /></section>
 
     <section className="rounded-2xl border border-border bg-card p-5">
-      <div className="flex items-center gap-2"><BarChart3 className="h-5 w-5 text-emerald-400" /><h3 className="text-lg font-bold">Ritmo dos últimos 10 minutos</h3></div>
+      <div className="flex items-center gap-2"><BarChart3 className="h-5 w-5 text-emerald-400" /><h3 className="text-lg font-bold">O que mudou nos últimos 10 minutos</h3></div>
       <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
-        <div className="rounded-xl border border-border p-3"><p className="text-xs text-muted-foreground">Classificação</p><p className="mt-1 flex items-center gap-2 text-lg font-bold"><TrendIcon value={match.engineTrend.status} />{labels[match.engineTrend.status]}</p></div>
-        <Metric label="Δ Escanteios" value={signed(match.engineTrend.cornersDelta)} /><Metric label="Δ Chutes" value={signed(match.engineTrend.shotsDelta)} /><Metric label="Δ Ataques perigosos" value={signed(match.engineTrend.dangerousAttacksDelta)} /><Metric label="Δ Tempo parado" value={`${match.engineTrend.stoppedMinutesDelta.toFixed(1)} min`} />
+        <div className="rounded-xl border border-border p-3"><p className="text-xs text-muted-foreground">Tendência atual</p><p className="mt-1 flex items-center gap-2 text-lg font-bold"><TrendIcon value={match.engineTrend.status} />{labels[match.engineTrend.status]}</p></div>
+        <Metric label="Novos escanteios" value={signed(match.engineTrend.cornersDelta)} /><Metric label="Novas finalizações" value={signed(match.engineTrend.shotsDelta)} /><Metric label="Novos ataques perigosos" value={signed(match.engineTrend.dangerousAttacksDelta)} /><Metric label="Tempo de jogo parado" value={`${match.engineTrend.stoppedMinutesDelta.toFixed(1)} min`} />
       </div>
     </section>
 
     <section className="rounded-2xl border border-border bg-card p-5">
-      <div className="flex items-center gap-2"><Clock3 className="h-5 w-5 text-cyan-400" /><h3 className="text-lg font-bold">Linha do tempo registrada</h3></div>
+      <div className="flex items-center gap-2"><Clock3 className="h-5 w-5 text-cyan-400" /><h3 className="text-lg font-bold">Evolução do jogo</h3></div>
       <div className="mt-4 max-h-[520px] space-y-2 overflow-auto">
-        {[...history].reverse().map((item, index) => <div key={`${item.capturedAt ?? 'snapshot'}-${index}`} className="grid gap-2 rounded-xl border border-border bg-background/40 p-3 sm:grid-cols-[90px_80px_repeat(4,minmax(0,1fr))] sm:items-center"><span className="text-xs text-muted-foreground">{formatTime(item.capturedAt)}</span><span className="font-bold">{item.minute ?? '—'}'</span><span className="flex items-center gap-1 text-sm"><Target className="h-4 w-4" />{item.homeScore}–{item.awayScore}</span><span className="flex items-center gap-1 text-sm"><CornerUpRight className="h-4 w-4 text-amber-400" />{item.corners.total ?? '—'}</span><span className="text-sm">Chutes: {item.shots.total ?? '—'}</span><span className="text-sm">Perigosos: {item.dangerousAttacks.total ?? '—'}</span></div>)}
+        {[...history].reverse().map((item, index) => <div key={`${item.capturedAt ?? 'snapshot'}-${index}`} className="grid gap-2 rounded-xl border border-border bg-background/40 p-3 sm:grid-cols-[90px_80px_repeat(4,minmax(0,1fr))] sm:items-center"><span className="text-xs text-muted-foreground">{formatTime(item.capturedAt)}</span><span className="font-bold">{item.minute ?? '—'}'</span><span className="flex items-center gap-1 text-sm"><Target className="h-4 w-4" />{item.homeScore}–{item.awayScore}</span><span className="flex items-center gap-1 text-sm"><CornerUpRight className="h-4 w-4 text-amber-400" />{item.corners.total ?? '—'}</span><span className="text-sm">Finalizações: {item.shots.total ?? '—'}</span><span className="text-sm">Ataques perigosos: {item.dangerousAttacks.total ?? '—'}</span></div>)}
         {history.length === 0 && <p className="text-sm text-muted-foreground">Nenhum snapshot registrado ainda.</p>}
       </div>
     </section>
@@ -378,7 +379,7 @@ export default function LiveHistoryPage() {
           return <div key={match.id} className="space-y-3">
             <button onClick={() => selectMatch(match.id)} className={`w-full rounded-xl border p-3 text-left transition ${match.id === selectedId ? 'border-emerald-500 bg-emerald-500/10' : 'border-border hover:bg-muted/50'}`}>
               <div className="flex items-center justify-between gap-2"><span className="truncate text-xs text-muted-foreground">{match.competition}</span><span className="text-xs font-semibold text-emerald-400">{match.minute}'</span></div>
-              <div className="mt-2 flex items-start justify-between gap-3"><p className="font-bold">{match.homeTeam.name} x {match.awayTeam.name}</p><span className={`shrink-0 rounded-lg border px-2 py-1 text-xs font-black ${scoreClass(intelligence.score, intelligence.ready)}`}>IA {intelligence.ready ? intelligence.score : '—'}</span></div>
+              <div className="mt-2 flex items-start justify-between gap-3"><p className="font-bold">{match.homeTeam.name} x {match.awayTeam.name}</p><span className={`shrink-0 rounded-lg border px-2 py-1 text-xs font-black ${scoreClass(intelligence.score, intelligence.ready)}`}>Força {intelligence.ready ? intelligence.score : '—'}</span></div>
               <div className="mt-2 flex items-center justify-between gap-2 text-sm"><span>{match.homeTeam.score}–{match.awayTeam.score}</span><span className={`rounded-md border px-2 py-0.5 text-[10px] font-bold ${decisionClass(intelligence.decision)}`}>{intelligence.decision}</span><span className="flex items-center gap-1 text-xs text-muted-foreground"><TrendIcon value={match.engineTrend.status} />{labels[match.engineTrend.status]}</span></div>
             </button>
             {match.id === selectedId && <div ref={mobileDetailsRef} className="scroll-mt-24 lg:hidden"><MatchDetails match={match} lastUpdated={lastUpdated} /></div>}
