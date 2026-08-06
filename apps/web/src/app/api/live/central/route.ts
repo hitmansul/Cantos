@@ -1,4 +1,5 @@
 import { after, NextRequest, NextResponse } from 'next/server';
+import sql from '../../utils/sql';
 
 type LiveStatRow = {
   key: string;
@@ -64,6 +65,18 @@ type EngineState = {
   updatedAt: string | null;
   refreshInFlight: Promise<void> | null;
   coverage?: Record<string, unknown>;
+  hydratedAt: number;
+};
+
+type MatchRow = {
+  event_key: string;
+  match_data: LiveMatch | string;
+  updated_at: string | Date;
+};
+
+type SnapshotRow = {
+  event_key: string;
+  snapshot_data: Snapshot | string;
 };
 
 const globalStore = globalThis as typeof globalThis & { __cornerGptLiveEngine?: EngineState };
@@ -72,12 +85,93 @@ const state: EngineState = globalStore.__cornerGptLiveEngine ?? {
   history: {},
   updatedAt: null,
   refreshInFlight: null,
+  hydratedAt: 0,
 };
 globalStore.__cornerGptLiveEngine = state;
 
 const HISTORY_LIMIT = 360;
 const MAX_STALE_MS = 35_000;
+const HYDRATE_MAX_AGE_MS = 15_000;
 const TREND_WINDOW_MINUTES = 10;
+
+let schemaReady: Promise<void> | null = null;
+
+function parseJson<T>(value: T | string): T {
+  if (typeof value !== 'string') return value;
+  return JSON.parse(value) as T;
+}
+
+async function ensureSchema() {
+  if (!schemaReady) {
+    schemaReady = (async () => {
+      await sql`
+        CREATE TABLE IF NOT EXISTS live_engine_matches (
+          event_key TEXT PRIMARY KEY,
+          match_data JSONB NOT NULL,
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+      `;
+      await sql`
+        CREATE TABLE IF NOT EXISTS live_engine_snapshots (
+          id BIGSERIAL PRIMARY KEY,
+          event_key TEXT NOT NULL,
+          captured_at TIMESTAMPTZ NOT NULL,
+          snapshot_data JSONB NOT NULL,
+          UNIQUE (event_key, captured_at)
+        )
+      `;
+      await sql`
+        CREATE INDEX IF NOT EXISTS live_engine_snapshots_event_time_idx
+        ON live_engine_snapshots (event_key, captured_at DESC)
+      `;
+    })().catch((error) => {
+      schemaReady = null;
+      throw error;
+    });
+  }
+  await schemaReady;
+}
+
+async function hydrateFromDatabase(force = false) {
+  if (!force && Date.now() - state.hydratedAt < HYDRATE_MAX_AGE_MS) return;
+  await ensureSchema();
+
+  const matchRows = await sql`
+    SELECT event_key, match_data, updated_at
+    FROM live_engine_matches
+    WHERE updated_at > NOW() - INTERVAL '6 hours'
+    ORDER BY updated_at DESC
+  ` as MatchRow[];
+
+  const snapshotRows = await sql`
+    SELECT event_key, snapshot_data
+    FROM (
+      SELECT
+        event_key,
+        snapshot_data,
+        captured_at,
+        ROW_NUMBER() OVER (PARTITION BY event_key ORDER BY captured_at DESC) AS row_number
+      FROM live_engine_snapshots
+      WHERE captured_at > NOW() - INTERVAL '6 hours'
+    ) recent
+    WHERE row_number <= ${HISTORY_LIMIT}
+    ORDER BY event_key, captured_at ASC
+  ` as SnapshotRow[];
+
+  const history: Record<string, Snapshot[]> = {};
+  for (const row of snapshotRows) {
+    const snapshot = parseJson(row.snapshot_data);
+    (history[row.event_key] ??= []).push(snapshot);
+  }
+
+  if (matchRows.length > 0) {
+    state.matches = matchRows.map((row) => parseJson(row.match_data));
+    const newest = matchRows[0]?.updated_at;
+    state.updatedAt = newest ? new Date(newest).toISOString() : state.updatedAt;
+  }
+  state.history = history;
+  state.hydratedAt = Date.now();
+}
 
 function eventKey(match: LiveMatch) {
   return String(
@@ -174,16 +268,40 @@ function snapshotChanged(previous: Snapshot | undefined, current: Snapshot) {
   );
 }
 
-function appendHistory(matches: LiveMatch[]) {
+async function persistMatches(matches: LiveMatch[], capturedAt: string) {
+  await Promise.all(matches.map((match) => {
+    const key = eventKey(match);
+    return sql`
+      INSERT INTO live_engine_matches (event_key, match_data, updated_at)
+      VALUES (${key}, ${JSON.stringify(match)}::jsonb, ${capturedAt}::timestamptz)
+      ON CONFLICT (event_key)
+      DO UPDATE SET match_data = EXCLUDED.match_data, updated_at = EXCLUDED.updated_at
+    `;
+  }));
+}
+
+async function appendHistory(matches: LiveMatch[]) {
   const capturedAt = new Date().toISOString();
+  const snapshotsToPersist: Array<{ key: string; snapshot: Snapshot }> = [];
+
   for (const match of matches) {
     const key = eventKey(match);
     const history = state.history[key] ?? [];
     const snapshot = createSnapshot(match, capturedAt);
     if (snapshotChanged(history.at(-1), snapshot)) {
       state.history[key] = [...history, snapshot].slice(-HISTORY_LIMIT);
+      snapshotsToPersist.push({ key, snapshot });
     }
   }
+
+  await persistMatches(matches, capturedAt);
+  await Promise.all(snapshotsToPersist.map(({ key, snapshot }) => sql`
+    INSERT INTO live_engine_snapshots (event_key, captured_at, snapshot_data)
+    VALUES (${key}, ${snapshot.capturedAt}::timestamptz, ${JSON.stringify(snapshot)}::jsonb)
+    ON CONFLICT (event_key, captured_at) DO NOTHING
+  `));
+
+  state.hydratedAt = Date.now();
 }
 
 function deltaPair(current: NumericPair, previous: NumericPair): NumericPair {
@@ -253,6 +371,7 @@ function buildTrend(history: Snapshot[]): Trend {
 async function refresh(origin: string) {
   if (state.refreshInFlight) return state.refreshInFlight;
   state.refreshInFlight = (async () => {
+    await hydrateFromDatabase(true);
     const url = new URL('/api/live/corners-fast', origin);
     const response = await fetch(url, { cache: 'no-store' });
     if (!response.ok) throw new Error(`live enrichment failed: ${response.status}`);
@@ -261,7 +380,7 @@ async function refresh(origin: string) {
       statisticsCoverage?: Record<string, unknown>;
     };
     const matches = Array.isArray(payload.matches) ? payload.matches : [];
-    appendHistory(matches);
+    await appendHistory(matches);
     state.matches = matches;
     state.coverage = payload.statisticsCoverage;
     state.updatedAt = new Date().toISOString();
@@ -276,7 +395,7 @@ function scheduleRefresh(origin: string) {
     try {
       await refresh(origin);
     } catch {
-      // Mantém o último snapshot disponível quando uma fonte estiver lenta ou indisponível.
+      // Mantém os dados persistidos quando uma fonte estiver lenta ou indisponível.
     }
   });
 }
@@ -285,6 +404,18 @@ export async function GET(request: NextRequest) {
   const force = request.nextUrl.searchParams.get('refresh') === '1';
   const includeHistory = request.nextUrl.searchParams.get('history') !== '0';
   const requestedMatchId = request.nextUrl.searchParams.get('matchId');
+
+  try {
+    await hydrateFromDatabase();
+  } catch (error) {
+    if (state.matches.length === 0) {
+      return NextResponse.json(
+        { matches: [], error: error instanceof Error ? error.message : 'Falha ao carregar histórico persistente' },
+        { status: 502 }
+      );
+    }
+  }
+
   const age = state.updatedAt ? Date.now() - new Date(state.updatedAt).getTime() : Number.POSITIVE_INFINITY;
   const hasCachedMatches = state.matches.length > 0;
   const shouldRefresh = force || age > MAX_STALE_MS;
@@ -325,7 +456,8 @@ export async function GET(request: NextRequest) {
     lastUpdated: state.updatedAt,
     refreshQueued: hasCachedMatches && shouldRefresh,
     engine: {
-      mode: 'central-continuous-stale-while-revalidate',
+      mode: 'central-persistent-neon-stale-while-revalidate',
+      persistence: 'neon-postgresql',
       refreshing: Boolean(state.refreshInFlight),
       refreshSeconds: 25,
       historyLimit: HISTORY_LIMIT,
