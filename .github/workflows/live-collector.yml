@@ -1,0 +1,27 @@
+name: Live Collector
+
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: live-collector
+  cancel-in-progress: true
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Trigger persistent live collector
+        env:
+          LIVE_COLLECTOR_URL: ${{ secrets.LIVE_COLLECTOR_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          URL="${LIVE_COLLECTOR_URL:-https://cantos-web-final.vercel.app/api/cron/live-collector}"
+          ARGS=(--fail-with-body --silent --show-error --max-time 240 --retry 2 --retry-delay 10)
+          if [ -n "$CRON_SECRET" ]; then
+            ARGS+=(--header "Authorization: Bearer $CRON_SECRET")
+          fi
+          curl "${ARGS[@]}" "$URL"
