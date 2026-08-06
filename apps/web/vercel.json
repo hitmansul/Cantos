@@ -7,6 +7,10 @@
     {
       "path": "/api/world-cup/provider-sync-safe",
       "schedule": "30 7 * * *"
+    },
+    {
+      "path": "/api/cron/live-collector",
+      "schedule": "* * * * *"
     }
   ]
 }
