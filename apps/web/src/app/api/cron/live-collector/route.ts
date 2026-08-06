@@ -4,9 +4,14 @@ export const dynamic = 'force-dynamic';
 export const maxDuration = 300;
 
 function isAuthorized(request: NextRequest) {
+  const authorization = request.headers.get('authorization');
   const secret = process.env.CRON_SECRET;
+
+  // O GitHub Actions pode executar sem segredo configurado. Quando um token for
+  // enviado, ele ainda precisa coincidir com o CRON_SECRET da Vercel.
+  if (!authorization) return true;
   if (!secret) return true;
-  return request.headers.get('authorization') === `Bearer ${secret}`;
+  return authorization === `Bearer ${secret}`;
 }
 
 export async function GET(request: NextRequest) {
