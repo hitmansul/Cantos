@@ -24,7 +24,7 @@ jobs:
           python - <<'PY'
           from pathlib import Path
 
-          # 1) Live enrichment: rotate larger batches instead of repeating the same 12 games.
+          # Trigger v2: repair collection coverage and mobile toggle together.
           p = Path('apps/web/src/app/api/live/corners-fast/route.ts')
           s = p.read_text()
           s = s.replace('const MAX_ENRICHMENT = 12;\nconst CONCURRENCY = 4;', 'const MAX_ENRICHMENT = 48;\nconst CONCURRENCY = 8;')
@@ -88,7 +88,6 @@ jobs:
       return aHas - bHas;
     });
 
-  // A different slice is processed on each five-minute collector cycle.
   const batchNumber = Math.floor(Date.now() / (5 * 60_000));
   const start = pool.length > 0 ? (batchNumber * MAX_ENRICHMENT) % pool.length : 0;
   const rotated = pool.length > 0 ? [...pool.slice(start), ...pool.slice(0, start)] : [];
@@ -112,7 +111,6 @@ jobs:
           s = s.replace("enrichmentPolicy: 'fast-cached-sofascore-v1'", "enrichmentPolicy: 'rotating-sofascore-api-football-v2'")
           p.write_text(s)
 
-          # 2) Mobile: use functional toggle so tapping the same match always closes it.
           p = Path('apps/web/src/app/live-history/page.tsx')
           s = p.read_text()
           old = '''  const selectMatch = useCallback((id: number) => {
