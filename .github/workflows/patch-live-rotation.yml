@@ -10,6 +10,7 @@ on:
 permissions:
   contents: write
 
+# Triggered after creation so GitHub recognizes this workflow on main.
 jobs:
   patch:
     runs-on: ubuntu-latest
