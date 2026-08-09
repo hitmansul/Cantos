@@ -92,6 +92,7 @@ globalStore.__cornerGptLiveEngine = state;
 const HISTORY_LIMIT = 360;
 const MAX_STALE_MS = 35_000;
 const HYDRATE_MAX_AGE_MS = 15_000;
+const ACTIVE_MATCH_MAX_AGE_MINUTES = 15;
 const TREND_WINDOW_MINUTES = 10;
 
 let schemaReady: Promise<void> | null = null;
@@ -139,7 +140,7 @@ async function hydrateFromDatabase(force = false) {
   const matchRows = await sql`
     SELECT event_key, match_data, updated_at
     FROM live_engine_matches
-    WHERE updated_at > NOW() - INTERVAL '6 hours'
+    WHERE updated_at > NOW() - (${ACTIVE_MATCH_MAX_AGE_MINUTES} * INTERVAL '1 minute')
     ORDER BY updated_at DESC
   ` as MatchRow[];
 
@@ -164,8 +165,8 @@ async function hydrateFromDatabase(force = false) {
     (history[row.event_key] ??= []).push(snapshot);
   }
 
+  state.matches = matchRows.map((row) => parseJson(row.match_data));
   if (matchRows.length > 0) {
-    state.matches = matchRows.map((row) => parseJson(row.match_data));
     const newest = matchRows[0]?.updated_at;
     state.updatedAt = newest ? new Date(newest).toISOString() : state.updatedAt;
   }
@@ -278,6 +279,11 @@ async function persistMatches(matches: LiveMatch[], capturedAt: string) {
       DO UPDATE SET match_data = EXCLUDED.match_data, updated_at = EXCLUDED.updated_at
     `;
   }));
+
+  await sql`
+    DELETE FROM live_engine_matches
+    WHERE updated_at <= ${capturedAt}::timestamptz - (${ACTIVE_MATCH_MAX_AGE_MINUTES} * INTERVAL '1 minute')
+  `;
 }
 
 async function appendHistory(matches: LiveMatch[]) {
@@ -368,21 +374,34 @@ function buildTrend(history: Snapshot[]): Trend {
   };
 }
 
+function mergeFreshStats(previous: LiveMatch | undefined, current: LiveMatch): LiveMatch {
+  if (!previous) return current;
+  return {
+    ...previous,
+    ...current,
+    corners: current.corners ?? previous.corners,
+    liveStats: current.liveStats?.length ? current.liveStats : previous.liveStats,
+  };
+}
+
 async function refresh(origin: string) {
   if (state.refreshInFlight) return state.refreshInFlight;
   state.refreshInFlight = (async () => {
     await hydrateFromDatabase(true);
+    const previousByKey = new Map(state.matches.map((match) => [eventKey(match), match] as const));
     const url = new URL('/api/live/corners-fast', origin);
     const response = await fetch(url, { cache: 'no-store' });
     if (!response.ok) throw new Error(`live enrichment failed: ${response.status}`);
     const payload = (await response.json()) as {
       matches?: LiveMatch[];
       statisticsCoverage?: Record<string, unknown>;
+      cornerCoverage?: Record<string, unknown>;
     };
-    const matches = Array.isArray(payload.matches) ? payload.matches : [];
+    const rawMatches = Array.isArray(payload.matches) ? payload.matches : [];
+    const matches = rawMatches.map((match) => mergeFreshStats(previousByKey.get(eventKey(match)), match));
     await appendHistory(matches);
     state.matches = matches;
-    state.coverage = payload.statisticsCoverage;
+    state.coverage = payload.statisticsCoverage ?? payload.cornerCoverage;
     state.updatedAt = new Date().toISOString();
   })().finally(() => {
     state.refreshInFlight = null;
@@ -404,6 +423,7 @@ export async function GET(request: NextRequest) {
   const force = request.nextUrl.searchParams.get('refresh') === '1';
   const includeHistory = request.nextUrl.searchParams.get('history') !== '0';
   const requestedMatchId = request.nextUrl.searchParams.get('matchId');
+  const collector = request.nextUrl.searchParams.get('collector');
 
   try {
     await hydrateFromDatabase();
@@ -420,14 +440,16 @@ export async function GET(request: NextRequest) {
   const hasCachedMatches = state.matches.length > 0;
   const shouldRefresh = force || age > MAX_STALE_MS;
 
-  if (!hasCachedMatches) {
+  if (!hasCachedMatches || (force && collector === 'cron')) {
     try {
       await refresh(request.nextUrl.origin);
     } catch (error) {
-      return NextResponse.json(
-        { matches: [], error: error instanceof Error ? error.message : 'Falha no motor ao vivo' },
-        { status: 502 }
-      );
+      if (!hasCachedMatches) {
+        return NextResponse.json(
+          { matches: [], error: error instanceof Error ? error.message : 'Falha no motor ao vivo' },
+          { status: 502 }
+        );
+      }
     }
   } else if (shouldRefresh) {
     scheduleRefresh(request.nextUrl.origin);
@@ -454,9 +476,9 @@ export async function GET(request: NextRequest) {
     matches,
     count: matches.length,
     lastUpdated: state.updatedAt,
-    refreshQueued: hasCachedMatches && shouldRefresh,
+    refreshQueued: hasCachedMatches && shouldRefresh && collector !== 'cron',
     engine: {
-      mode: 'central-persistent-neon-stale-while-revalidate',
+      mode: 'central-persistent-neon-active-live-set',
       persistence: 'neon-postgresql',
       refreshing: Boolean(state.refreshInFlight),
       refreshSeconds: 25,
