@@ -379,12 +379,15 @@ export default function LiveHistoryPage() {
   const selected = useMemo(() => matches.find(match => match.id === selectedId) ?? null, [matches, selectedId]);
 
   const selectMatch = useCallback((id: number) => {
-    const opening = selectedId !== id;
-    setSelectedId(opening ? id : null);
-    if (!opening) return;
-    window.requestAnimationFrame(() => {
-      if (window.innerWidth < 1024) window.requestAnimationFrame(() => mobileDetailsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
+    setSelectedId(current => current === id ? null : id);
+  }, []);
+
+  useEffect(() => {
+    if (selectedId === null || window.innerWidth >= 1024) return;
+    const frame = window.requestAnimationFrame(() => {
+      mobileDetailsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
     });
+    return () => window.cancelAnimationFrame(frame);
   }, [selectedId]);
 
   const filterLabel = (filter: DecisionFilter) => filter === 'TODOS'
