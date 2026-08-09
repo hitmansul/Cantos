@@ -57,8 +57,8 @@ const SOFA_BASE = 'https://api.sofascore.com/api/v1';
 const CACHE_TTL_MS = 25_000;
 const NEGATIVE_CACHE_TTL_MS = 10_000;
 const REQUEST_TIMEOUT_MS = 2_800;
-const MAX_ENRICHMENT = 12;
-const CONCURRENCY = 4;
+const MAX_ENRICHMENT = 48;
+const CONCURRENCY = 8;
 
 const statsCache = new Map<number, CacheEntry>();
 
@@ -81,6 +81,13 @@ function normalize(value: unknown) {
 function numeric(value: unknown) {
   const parsed = Number(String(value ?? '').replace('%', '').replace(',', '.').trim());
   return Number.isFinite(parsed) ? parsed : null;
+}
+
+function minuteValue(value: number | string) {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : 0;
+  const match = String(value).match(/(\d{1,3})(?:\s*\+\s*(\d{1,2}))?/);
+  if (!match) return 0;
+  return Number(match[1]) + Number(match[2] ?? 0);
 }
 
 function toRows(payload: SofaStatsResponse): LiveStatRow[] {
@@ -302,7 +309,7 @@ export async function GET(request: NextRequest) {
   }
 
   const matches = Array.isArray(payload.matches) ? payload.matches : [];
-  const candidates = matches
+  const pool = matches
     .map((match, index) => {
       const selectedByName =
         requestedEventId > 0 &&
@@ -312,25 +319,36 @@ export async function GET(request: NextRequest) {
         match,
         index,
         eventId: selectedByName ? requestedEventId : match.sourceIds?.sofascore,
+        fixtureId: match.sourceIds?.apiFootball,
       };
     })
-    .filter((item): item is { match: LiveMatch; index: number; eventId: number } => Boolean(item.eventId))
+    .filter((item) => Boolean(item.eventId || item.fixtureId))
     .sort((a, b) => {
       if (requestedEventId > 0) {
         if (a.eventId === requestedEventId) return -1;
         if (b.eventId === requestedEventId) return 1;
       }
-      const aHas = a.match.corners ? 1 : 0;
-      const bHas = b.match.corners ? 1 : 0;
+      const aMinute = minuteValue(a.match.minute);
+      const bMinute = minuteValue(b.match.minute);
+      const aPriority = aMinute >= 20 && aMinute <= 88 ? 1 : 0;
+      const bPriority = bMinute >= 20 && bMinute <= 88 ? 1 : 0;
+      if (aPriority !== bPriority) return bPriority - aPriority;
+      const aHas = a.match.corners || a.match.liveStats?.length ? 1 : 0;
+      const bHas = b.match.corners || b.match.liveStats?.length ? 1 : 0;
       return aHas - bHas;
-    })
-    .slice(0, requestedEventId > 0 ? 1 : MAX_ENRICHMENT);
+    });
+
+  const batchNumber = Math.floor(Date.now() / (5 * 60_000));
+  const start = pool.length > 0 ? (batchNumber * MAX_ENRICHMENT) % pool.length : 0;
+  const rotated = pool.length > 0 ? [...pool.slice(start), ...pool.slice(0, start)] : [];
+  const candidates = requestedEventId > 0 ? pool.slice(0, 1) : rotated.slice(0, MAX_ENRICHMENT);
 
   const enriched = [...matches];
   const results = await mapWithConcurrency(candidates, async (candidate) => {
-    let stats = await enrichEvent(candidate.eventId);
-    if (!stats.corners && !stats.liveStats?.length && candidate.match.sourceIds?.apiFootball) {
-      stats = await enrichApiFootballFixture(candidate.match.sourceIds.apiFootball);
+    let stats: CacheEntry = { expiresAt: Date.now() + NEGATIVE_CACHE_TTL_MS };
+    if (candidate.eventId) stats = await enrichEvent(candidate.eventId);
+    if (!stats.corners && !stats.liveStats?.length && candidate.fixtureId) {
+      stats = await enrichApiFootballFixture(candidate.fixtureId);
     }
     return { candidate, stats };
   });
@@ -355,7 +373,9 @@ export async function GET(request: NextRequest) {
       total: enriched.length,
       withCorners: enriched.filter((match) => Boolean(match.corners)).length,
       attempted: candidates.length,
+      eligible: pool.length,
+      batchStart: start,
     },
-    enrichmentPolicy: 'fast-cached-sofascore-v1',
+    enrichmentPolicy: 'rotating-sofascore-api-football-v2',
   });
 }
