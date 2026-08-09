@@ -57,8 +57,8 @@ const SOFA_BASE = 'https://api.sofascore.com/api/v1';
 const CACHE_TTL_MS = 25_000;
 const NEGATIVE_CACHE_TTL_MS = 10_000;
 const REQUEST_TIMEOUT_MS = 2_800;
-const MAX_ENRICHMENT = 48;
-const CONCURRENCY = 8;
+const MAX_ENRICHMENT = 120;
+const CONCURRENCY = 12;
 
 const statsCache = new Map<number, CacheEntry>();
 
@@ -183,33 +183,37 @@ type SofaLiveEvent = {
   awayTeam?: { name?: string };
 };
 
-async function resolveSofaEventId(home: string, away: string): Promise<number | null> {
-  if (!home || !away) return null;
-  const payload = await fetchJson<{ events?: SofaLiveEvent[] }>(
-    `${SOFA_BASE}/sport/football/events/live`
-  );
-  const homeKey = normalize(home);
-  const awayKey = normalize(away);
-  const events = payload?.events ?? [];
+function teamSimilarity(left: string, right: string) {
+  const a = normalize(left);
+  const b = normalize(right);
+  if (!a || !b) return 0;
+  if (a === b) return 1;
+  if (a.includes(b) || b.includes(a)) return 0.9;
+  const leftTokens = new Set(a.split(' ').filter((token) => token.length > 1));
+  const rightTokens = new Set(b.split(' ').filter((token) => token.length > 1));
+  const union = new Set([...leftTokens, ...rightTokens]);
+  if (!union.size) return 0;
+  let common = 0;
+  for (const token of leftTokens) if (rightTokens.has(token)) common += 1;
+  return common / union.size;
+}
 
-  const exact = events.find(
-    (event) =>
-      normalize(event.homeTeam?.name) === homeKey &&
-      normalize(event.awayTeam?.name) === awayKey
-  );
-  if (exact) return exact.id;
+function resolveSofaEvent(home: string, away: string, events: SofaLiveEvent[]) {
+  let best: SofaLiveEvent | null = null;
+  let bestScore = 0;
+  for (const event of events) {
+    const direct = teamSimilarity(home, event.homeTeam?.name ?? '') + teamSimilarity(away, event.awayTeam?.name ?? '');
+    if (direct > bestScore) {
+      best = event;
+      bestScore = direct;
+    }
+  }
+  return bestScore >= 1.25 ? best : null;
+}
 
-  const partial = events.find((event) => {
-    const eventHome = normalize(event.homeTeam?.name);
-    const eventAway = normalize(event.awayTeam?.name);
-    return (
-      eventHome.length > 2 &&
-      eventAway.length > 2 &&
-      (eventHome.includes(homeKey) || homeKey.includes(eventHome)) &&
-      (eventAway.includes(awayKey) || awayKey.includes(eventAway))
-    );
-  });
-  return partial?.id ?? null;
+async function fetchSofaLiveEvents() {
+  const payload = await fetchJson<{ events?: SofaLiveEvent[] }>(`${SOFA_BASE}/sport/football/events/live`);
+  return payload?.events ?? [];
 }
 
 type ApiFootballTeamStats = {
@@ -292,10 +296,11 @@ export async function GET(request: NextRequest) {
   const requestedEventIdParam = Number(request.nextUrl.searchParams.get('eventId') ?? '0');
   const requestedHome = request.nextUrl.searchParams.get('home') ?? '';
   const requestedAway = request.nextUrl.searchParams.get('away') ?? '';
-  const requestedEventId =
-    requestedEventIdParam > 0
-      ? requestedEventIdParam
-      : (await resolveSofaEventId(requestedHome, requestedAway)) ?? 0;
+  const sofaLiveEvents = await fetchSofaLiveEvents();
+  const requestedEventId = requestedEventIdParam > 0
+    ? requestedEventIdParam
+    : resolveSofaEvent(requestedHome, requestedAway, sofaLiveEvents)?.id ?? 0;
+
   const rawUrl = new URL('/api/365scores/live', request.nextUrl.origin);
   rawUrl.searchParams.set('raw', '1');
 
@@ -311,14 +316,17 @@ export async function GET(request: NextRequest) {
   const matches = Array.isArray(payload.matches) ? payload.matches : [];
   const pool = matches
     .map((match, index) => {
-      const selectedByName =
-        requestedEventId > 0 &&
-        normalize(match.homeTeam.name) === normalize(requestedHome) &&
-        normalize(match.awayTeam.name) === normalize(requestedAway);
+      const resolvedSofa = match.sourceIds?.sofascore
+        ? sofaLiveEvents.find((event) => event.id === match.sourceIds?.sofascore) ?? null
+        : resolveSofaEvent(match.homeTeam.name, match.awayTeam.name, sofaLiveEvents);
+      const selectedByName = requestedEventId > 0 && (
+        resolvedSofa?.id === requestedEventId ||
+        (normalize(match.homeTeam.name) === normalize(requestedHome) && normalize(match.awayTeam.name) === normalize(requestedAway))
+      );
       return {
         match,
         index,
-        eventId: selectedByName ? requestedEventId : match.sourceIds?.sofascore,
+        eventId: selectedByName ? requestedEventId : resolvedSofa?.id ?? match.sourceIds?.sofascore,
         fixtureId: match.sourceIds?.apiFootball,
       };
     })
@@ -330,18 +338,17 @@ export async function GET(request: NextRequest) {
       }
       const aMinute = minuteValue(a.match.minute);
       const bMinute = minuteValue(b.match.minute);
-      const aPriority = aMinute >= 20 && aMinute <= 88 ? 1 : 0;
-      const bPriority = bMinute >= 20 && bMinute <= 88 ? 1 : 0;
+      const aPriority = aMinute >= 15 && aMinute <= 92 ? 1 : 0;
+      const bPriority = bMinute >= 15 && bMinute <= 92 ? 1 : 0;
       if (aPriority !== bPriority) return bPriority - aPriority;
       const aHas = a.match.corners || a.match.liveStats?.length ? 1 : 0;
       const bHas = b.match.corners || b.match.liveStats?.length ? 1 : 0;
       return aHas - bHas;
     });
 
-  const batchNumber = Math.floor(Date.now() / (5 * 60_000));
-  const start = pool.length > 0 ? (batchNumber * MAX_ENRICHMENT) % pool.length : 0;
-  const rotated = pool.length > 0 ? [...pool.slice(start), ...pool.slice(0, start)] : [];
-  const candidates = requestedEventId > 0 ? pool.slice(0, 1) : rotated.slice(0, MAX_ENRICHMENT);
+  const candidates = requestedEventId > 0
+    ? pool.filter((item) => item.eventId === requestedEventId).slice(0, 1)
+    : pool.slice(0, MAX_ENRICHMENT);
 
   const enriched = [...matches];
   const results = await mapWithConcurrency(candidates, async (candidate) => {
@@ -358,6 +365,10 @@ export async function GET(request: NextRequest) {
     const current = enriched[candidate.index];
     enriched[candidate.index] = {
       ...current,
+      sourceIds: {
+        ...current.sourceIds,
+        ...(candidate.eventId ? { sofascore: candidate.eventId } : {}),
+      },
       corners: stats.corners ?? current.corners,
       liveStats: stats.liveStats?.length ? stats.liveStats : current.liveStats,
       statsSource: stats.source ?? current.statsSource,
@@ -374,8 +385,8 @@ export async function GET(request: NextRequest) {
       withCorners: enriched.filter((match) => Boolean(match.corners)).length,
       attempted: candidates.length,
       eligible: pool.length,
-      batchStart: start,
+      sofaLiveEvents: sofaLiveEvents.length,
     },
-    enrichmentPolicy: 'rotating-sofascore-api-football-v2',
+    enrichmentPolicy: 'all-eligible-multisource-v3',
   });
 }
