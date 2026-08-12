@@ -20,8 +20,38 @@ jobs:
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
         run: |
           URL="${LIVE_COLLECTOR_URL:-https://cantos-web-final.vercel.app/api/cron/live-collector}"
-          ARGS=(--fail-with-body --silent --show-error --max-time 240 --retry 2 --retry-delay 10)
+          AUTH=()
           if [ -n "$CRON_SECRET" ]; then
-            ARGS+=(--header "Authorization: Bearer $CRON_SECRET")
+            AUTH+=(--header "Authorization: Bearer $CRON_SECRET")
           fi
-          curl "${ARGS[@]}" "$URL"
+
+          TMP_BODY="$(mktemp)"
+          trap 'rm -f "$TMP_BODY"' EXIT
+
+          for attempt in 1 2 3 4 5 6; do
+            HTTP_CODE=$(curl --silent --show-error --max-time 90 \
+              "${AUTH[@]}" \
+              --output "$TMP_BODY" \
+              --write-out "%{http_code}" \
+              "$URL" || echo "000")
+
+            cat "$TMP_BODY" || true
+            echo
+            echo "Live Collector HTTP $HTTP_CODE (tentativa $attempt/6)"
+
+            if [[ "$HTTP_CODE" =~ ^2 ]]; then
+              exit 0
+            fi
+
+            if [[ "$HTTP_CODE" == "401" || "$HTTP_CODE" == "403" ]]; then
+              echo "Erro permanente de autorização; verifique CRON_SECRET."
+              exit 22
+            fi
+
+            if [ "$attempt" -lt 6 ]; then
+              sleep 20
+            fi
+          done
+
+          echo "::warning::O endpoint do coletor permaneceu indisponível após 6 tentativas. Esta execução será encerrada sem falhar para evitar alertas por indisponibilidade transitória; o próximo ciclo tentará novamente automaticamente."
+          exit 0
