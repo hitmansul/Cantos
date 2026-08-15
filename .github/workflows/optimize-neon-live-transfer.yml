@@ -1,0 +1,199 @@
+name: Optimize Neon live transfer
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: ${{ !startsWith(github.event.head_commit.message, 'perf: reduce Neon live transfer') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+      - name: Patch live engine and history page
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          route = Path('apps/web/src/app/api/live/central/route.ts')
+          s = route.read_text()
+
+          s = s.replace(
+          "const HISTORY_LIMIT = 360;\nconst MAX_STALE_MS = 35_000;\nconst HYDRATE_MAX_AGE_MS = 15_000;\nconst ACTIVE_MATCH_MAX_AGE_MINUTES = 15;\nconst TREND_WINDOW_MINUTES = 10;",
+          "const HISTORY_LIMIT = 120;\nconst COMPACT_HISTORY_LIMIT = 12;\nconst HISTORY_WINDOW_HOURS = 3;\nconst MAX_STALE_MS = 35_000;\nconst HYDRATE_MAX_AGE_MS = 60_000;\nconst ACTIVE_MATCH_MAX_AGE_MINUTES = 15;\nconst TREND_WINDOW_MINUTES = 10;"
+          )
+
+          marker = "async function hydrateFromDatabase(force = false) {"
+          helper = r'''async function loadHistoryFromDatabase(limit: number, requestedMatchId?: string) {
+  const matchId = requestedMatchId ?? '';
+  const snapshotRows = await sql`
+    SELECT event_key, snapshot_data
+    FROM (
+      SELECT
+        snapshots.event_key,
+        snapshots.snapshot_data,
+        snapshots.captured_at,
+        ROW_NUMBER() OVER (PARTITION BY snapshots.event_key ORDER BY snapshots.captured_at DESC) AS row_number
+      FROM live_engine_snapshots snapshots
+      INNER JOIN live_engine_matches matches ON matches.event_key = snapshots.event_key
+      WHERE matches.updated_at > NOW() - (${ACTIVE_MATCH_MAX_AGE_MINUTES} * INTERVAL '1 minute')
+        AND snapshots.captured_at > NOW() - (${HISTORY_WINDOW_HOURS} * INTERVAL '1 hour')
+        AND (${matchId} = '' OR matches.match_data->>'id' = ${matchId})
+    ) recent
+    WHERE row_number <= ${limit}
+    ORDER BY event_key, captured_at ASC
+  ` as SnapshotRow[];
+
+  const history: Record<string, Snapshot[]> = {};
+  for (const row of snapshotRows) {
+    const snapshot = parseJson(row.snapshot_data);
+    (history[row.event_key] ??= []).push(snapshot);
+  }
+  return history;
+}
+
+'''
+          if helper not in s:
+              s = s.replace(marker, helper + marker)
+
+          old_query = r'''  const snapshotRows = await sql`
+    SELECT event_key, snapshot_data
+    FROM (
+      SELECT
+        event_key,
+        snapshot_data,
+        captured_at,
+        ROW_NUMBER() OVER (PARTITION BY event_key ORDER BY captured_at DESC) AS row_number
+      FROM live_engine_snapshots
+      WHERE captured_at > NOW() - INTERVAL '6 hours'
+    ) recent
+    WHERE row_number <= ${HISTORY_LIMIT}
+    ORDER BY event_key, captured_at ASC
+  ` as SnapshotRow[];
+
+  const history: Record<string, Snapshot[]> = {};
+  for (const row of snapshotRows) {
+    const snapshot = parseJson(row.snapshot_data);
+    (history[row.event_key] ??= []).push(snapshot);
+  }
+'''
+          s = s.replace(old_query, "  const history = await loadHistoryFromDatabase(COMPACT_HISTORY_LIMIT);\n")
+          s = s.replace("    await hydrateFromDatabase(true);", "    await hydrateFromDatabase();")
+          s = s.replace(
+          "  const includeHistory = request.nextUrl.searchParams.get('history') !== '0';\n  const requestedMatchId = request.nextUrl.searchParams.get('matchId');",
+          "  const historyMode = request.nextUrl.searchParams.get('history') ?? '1';\n  const includeHistory = historyMode !== '0';\n  const requestedMatchId = request.nextUrl.searchParams.get('matchId');"
+          )
+          anchor = "  const sourceMatches = requestedMatchId\n    ? state.matches.filter((match) => String(match.id) === requestedMatchId)\n    : state.matches;\n\n  const matches = sourceMatches.map((match) => {"
+          replacement = "  const sourceMatches = requestedMatchId\n    ? state.matches.filter((match) => String(match.id) === requestedMatchId)\n    : state.matches;\n\n  let responseHistory = state.history;\n  if (includeHistory && historyMode !== 'compact') {\n    try {\n      responseHistory = await loadHistoryFromDatabase(HISTORY_LIMIT, requestedMatchId ?? undefined);\n    } catch {\n      responseHistory = state.history;\n    }\n  }\n\n  const matches = sourceMatches.map((match) => {"
+          s = s.replace(anchor, replacement)
+          s = s.replace("    const history = state.history[key] ?? [];", "    const history = responseHistory[key] ?? state.history[key] ?? [];")
+          s = s.replace("      mode: 'central-persistent-neon-active-live-set',", "      mode: 'central-persistent-neon-compact-live-set',")
+
+          route.write_text(s)
+
+          page = Path('apps/web/src/app/live-history/page.tsx')
+          p = page.read_text()
+          p = p.replace(
+          "      const response = await fetch(`/api/live/central?t=${Date.now()}${suffix}`, { cache: 'no-store', signal: controller.signal, headers: { 'Cache-Control': 'no-cache' } });",
+          "      const response = await fetch(`/api/live/central?history=compact&t=${Date.now()}${suffix}`, { cache: 'no-store', signal: controller.signal, headers: { 'Cache-Control': 'no-cache' } });"
+          )
+          old_snapshot = r'''      setSelectedSnapshot(current => {
+        if (!selectedKey) return current;
+        return next.find(match => matchKey(match) === selectedKey) ?? current;
+      });'''
+          new_snapshot = r'''      setSelectedSnapshot(current => {
+        if (!selectedKey) return current;
+        const fresh = next.find(match => matchKey(match) === selectedKey);
+        if (!fresh) return current;
+        if (current && matchKey(current) === selectedKey && current.engineHistory.length > fresh.engineHistory.length) {
+          return { ...fresh, engineHistory: current.engineHistory };
+        }
+        return fresh;
+      });'''
+          p = p.replace(old_snapshot, new_snapshot)
+
+          old_selected = r'''  const selected = useMemo(() => {
+    if (!selectedKey) return null;
+    return matches.find(match => matchKey(match) === selectedKey) ?? selectedSnapshot;
+  }, [matches, selectedKey, selectedSnapshot]);
+
+  const selectMatch = useCallback((match: LiveMatch) => {
+    const key = matchKey(match);
+    setSelectedKey(current => {
+      if (current === key) {
+        setSelectedSnapshot(null);
+        return null;
+      }
+      setSelectedSnapshot(match);
+      return key;
+    });
+  }, []);'''
+          new_selected = r'''  const selected = useMemo(() => {
+    if (!selectedKey) return null;
+    if (selectedSnapshot && matchKey(selectedSnapshot) === selectedKey) return selectedSnapshot;
+    return matches.find(match => matchKey(match) === selectedKey) ?? null;
+  }, [matches, selectedKey, selectedSnapshot]);
+
+  const loadMatchDetails = useCallback(async (match: LiveMatch) => {
+    const key = matchKey(match);
+    try {
+      const response = await fetch(`/api/live/central?matchId=${encodeURIComponent(String(match.id))}&history=1&t=${Date.now()}`, { cache: 'no-store' });
+      if (!response.ok) return;
+      const data = await response.json() as Record<string, unknown>;
+      const detailed = Array.isArray(data.matches)
+        ? data.matches.map(normalizeMatch).find((item): item is LiveMatch => Boolean(item))
+        : null;
+      if (!detailed) return;
+      setSelectedSnapshot(current => current && matchKey(current) === key ? detailed : current);
+    } catch {
+      // Mantém o resumo compacto caso o detalhe persistido esteja temporariamente indisponível.
+    }
+  }, []);
+
+  const selectMatch = useCallback((match: LiveMatch) => {
+    const key = matchKey(match);
+    if (selectedKey === key) {
+      setSelectedKey(null);
+      setSelectedSnapshot(null);
+      return;
+    }
+    setSelectedKey(key);
+    setSelectedSnapshot(match);
+    void loadMatchDetails(match);
+  }, [loadMatchDetails, selectedKey]);'''
+          p = p.replace(old_selected, new_selected)
+
+          page.write_text(p)
+
+          # Safety checks: fail instead of committing a partial patch.
+          route_text = route.read_text()
+          page_text = page.read_text()
+          checks = [
+              'COMPACT_HISTORY_LIMIT = 12' in route_text,
+              'loadHistoryFromDatabase(HISTORY_LIMIT' in route_text,
+              "historyMode !== 'compact'" in route_text,
+              'history=compact' in page_text,
+              'loadMatchDetails' in page_text,
+          ]
+          if not all(checks):
+              raise SystemExit('Patch validation failed')
+          PY
+      - name: Commit optimization
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add apps/web/src/app/api/live/central/route.ts apps/web/src/app/live-history/page.tsx
+          if git diff --cached --quiet; then
+            echo "No changes needed"
+            exit 0
+          fi
+          git commit -m "perf: reduce Neon live transfer"
+          git push origin main
