@@ -15,7 +15,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: main
-      - name: Patch files
+      - name: Patch live engine
         shell: bash
         run: |
           python3 <<'PY'
@@ -28,16 +28,14 @@ jobs:
               "const HISTORY_LIMIT = 120;\nconst COMPACT_HISTORY_LIMIT = 12;\nconst HISTORY_WINDOW_HOURS = 3;\nconst MAX_STALE_MS = 35_000;\nconst HYDRATE_MAX_AGE_MS = 60_000;\nconst ACTIVE_MATCH_MAX_AGE_MINUTES = 15;\nconst TREND_WINDOW_MINUTES = 10;"
           )
 
-          helper_marker = "async function hydrateFromDatabase(force = false) {"
-          helper = """async function loadHistoryFromDatabase(limit: number, requestedMatchId?: string) {
+          marker = "async function hydrateFromDatabase(force = false) {"
+          if 'async function loadHistoryFromDatabase' not in s:
+              helper = """async function loadHistoryFromDatabase(limit: number, requestedMatchId?: string) {
             const matchId = requestedMatchId ?? '';
             const snapshotRows = await sql`
               SELECT event_key, snapshot_data
               FROM (
-                SELECT
-                  snapshots.event_key,
-                  snapshots.snapshot_data,
-                  snapshots.captured_at,
+                SELECT snapshots.event_key, snapshots.snapshot_data, snapshots.captured_at,
                   ROW_NUMBER() OVER (PARTITION BY snapshots.event_key ORDER BY snapshots.captured_at DESC) AS row_number
                 FROM live_engine_snapshots snapshots
                 INNER JOIN live_engine_matches matches ON matches.event_key = snapshots.event_key
@@ -48,7 +46,6 @@ jobs:
               WHERE row_number <= ${limit}
               ORDER BY event_key, captured_at ASC
             ` as SnapshotRow[];
-
             const history: Record<string, Snapshot[]> = {};
             for (const row of snapshotRows) {
               const snapshot = parseJson(row.snapshot_data);
@@ -58,12 +55,11 @@ jobs:
           }
 
           """
-          if 'async function loadHistoryFromDatabase' not in s:
-              s = s.replace(helper_marker, helper + helper_marker)
+              s = s.replace(marker, helper + marker)
 
-          start = s.index("  const snapshotRows = await sql`", s.index("async function hydrateFromDatabase"))
-          end_marker = "  state.matches = matchRows.map((row) => parseJson(row.match_data));"
-          end = s.index(end_marker, start)
+          hydrate_pos = s.index('async function hydrateFromDatabase')
+          start = s.index("  const snapshotRows = await sql`", hydrate_pos)
+          end = s.index("  state.matches = matchRows.map((row) => parseJson(row.match_data));", start)
           s = s[:start] + "  const history = await loadHistoryFromDatabase(COMPACT_HISTORY_LIMIT);\n\n" + s[end:]
           s = s.replace("    await hydrateFromDatabase(true);", "    await hydrateFromDatabase();")
           s = s.replace(
@@ -71,91 +67,19 @@ jobs:
               "  const historyMode = request.nextUrl.searchParams.get('history') ?? '1';\n  const includeHistory = historyMode !== '0';\n  const requestedMatchId = request.nextUrl.searchParams.get('matchId');"
           )
           anchor = "  const sourceMatches = requestedMatchId\n    ? state.matches.filter((match) => String(match.id) === requestedMatchId)\n    : state.matches;\n\n  const matches = sourceMatches.map((match) => {"
-          repl = "  const sourceMatches = requestedMatchId\n    ? state.matches.filter((match) => String(match.id) === requestedMatchId)\n    : state.matches;\n\n  let responseHistory = state.history;\n  if (includeHistory && historyMode !== 'compact') {\n    try {\n      responseHistory = await loadHistoryFromDatabase(HISTORY_LIMIT, requestedMatchId ?? undefined);\n    } catch {\n      responseHistory = state.history;\n    }\n  }\n\n  const matches = sourceMatches.map((match) => {"
-          if anchor in s:
-              s = s.replace(anchor, repl)
+          replacement = "  const sourceMatches = requestedMatchId\n    ? state.matches.filter((match) => String(match.id) === requestedMatchId)\n    : state.matches;\n\n  let responseHistory = state.history;\n  if (includeHistory && historyMode !== 'compact') {\n    try {\n      responseHistory = await loadHistoryFromDatabase(HISTORY_LIMIT, requestedMatchId ?? undefined);\n    } catch {\n      responseHistory = state.history;\n    }\n  }\n\n  const matches = sourceMatches.map((match) => {"
+          s = s.replace(anchor, replacement)
           s = s.replace("    const history = state.history[key] ?? [];", "    const history = responseHistory[key] ?? state.history[key] ?? [];")
           s = s.replace("      mode: 'central-persistent-neon-active-live-set',", "      mode: 'central-persistent-neon-compact-live-set',")
           route.write_text(s)
 
           page = Path('apps/web/src/app/live-history/page.tsx')
           p = page.read_text()
-          p = p.replace(
-              "      const response = await fetch(`/api/live/central?t=${Date.now()}${suffix}`, { cache: 'no-store', signal: controller.signal, headers: { 'Cache-Control': 'no-cache' } });",
-              "      const response = await fetch(`/api/live/central?history=compact&t=${Date.now()}${suffix}`, { cache: 'no-store', signal: controller.signal, headers: { 'Cache-Control': 'no-cache' } });"
-          )
-          p = p.replace(
-          """      setSelectedSnapshot(current => {
-                if (!selectedKey) return current;
-                return next.find(match => matchKey(match) === selectedKey) ?? current;
-              });""",
-          """      setSelectedSnapshot(current => {
-                if (!selectedKey) return current;
-                const fresh = next.find(match => matchKey(match) === selectedKey);
-                if (!fresh) return current;
-                if (current && matchKey(current) === selectedKey && current.engineHistory.length > fresh.engineHistory.length) {
-                  return { ...fresh, engineHistory: current.engineHistory };
-                }
-                return fresh;
-              });"""
-          )
-          old = """  const selected = useMemo(() => {
-            if (!selectedKey) return null;
-            return matches.find(match => matchKey(match) === selectedKey) ?? selectedSnapshot;
-          }, [matches, selectedKey, selectedSnapshot]);
-
-          const selectMatch = useCallback((match: LiveMatch) => {
-            const key = matchKey(match);
-            setSelectedKey(current => {
-              if (current === key) {
-                setSelectedSnapshot(null);
-                return null;
-              }
-              setSelectedSnapshot(match);
-              return key;
-            });
-          }, []);"""
-          new = """  const selected = useMemo(() => {
-            if (!selectedKey) return null;
-            if (selectedSnapshot && matchKey(selectedSnapshot) === selectedKey) return selectedSnapshot;
-            return matches.find(match => matchKey(match) === selectedKey) ?? null;
-          }, [matches, selectedKey, selectedSnapshot]);
-
-          const loadMatchDetails = useCallback(async (match: LiveMatch) => {
-            const key = matchKey(match);
-            try {
-              const response = await fetch(`/api/live/central?matchId=${encodeURIComponent(String(match.id))}&history=1&t=${Date.now()}`, { cache: 'no-store' });
-              if (!response.ok) return;
-              const data = await response.json() as Record<string, unknown>;
-              const detailed = Array.isArray(data.matches)
-                ? data.matches.map(normalizeMatch).find((item): item is LiveMatch => Boolean(item))
-                : null;
-              if (!detailed) return;
-              setSelectedSnapshot(current => current && matchKey(current) === key ? detailed : current);
-            } catch {
-              // Mantém o resumo compacto caso o detalhe persistido esteja temporariamente indisponível.
-            }
-          }, []);
-
-          const selectMatch = useCallback((match: LiveMatch) => {
-            const key = matchKey(match);
-            if (selectedKey === key) {
-              setSelectedKey(null);
-              setSelectedSnapshot(null);
-              return;
-            }
-            setSelectedKey(key);
-            setSelectedSnapshot(match);
-            void loadMatchDetails(match);
-          }, [loadMatchDetails, selectedKey]);"""
-          if old in p:
-              p = p.replace(old, new)
+          p = p.replace('/api/live/central?t=${Date.now()}${suffix}', '/api/live/central?history=compact&t=${Date.now()}${suffix}')
           page.write_text(p)
 
-          if 'COMPACT_HISTORY_LIMIT = 12' not in route.read_text():
-              raise SystemExit('route patch missing')
-          if 'history=compact' not in page.read_text() or 'loadMatchDetails' not in page.read_text():
-              raise SystemExit('page patch missing')
+          if 'COMPACT_HISTORY_LIMIT = 12' not in route.read_text(): raise SystemExit('route patch missing')
+          if 'history=compact' not in page.read_text(): raise SystemExit('page compact mode missing')
           PY
       - name: Commit
         shell: bash
