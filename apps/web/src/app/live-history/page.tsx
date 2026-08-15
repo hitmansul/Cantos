@@ -441,7 +441,7 @@ export default function LiveHistoryPage() {
     requestRef.current = controller;
     try {
       const suffix = manual ? '&refresh=1' : '';
-      const response = await fetch(`/api/live/central?t=${Date.now()}${suffix}`, { cache: 'no-store', signal: controller.signal, headers: { 'Cache-Control': 'no-cache' } });
+      const response = await fetch(`/api/live/central?history=compact&t=${Date.now()}${suffix}`, { cache: 'no-store', signal: controller.signal, headers: { 'Cache-Control': 'no-cache' } });
       const data = await response.json() as Record<string, unknown>;
       if (!response.ok) throw new Error(typeof data.error === 'string' ? data.error : 'Falha ao atualizar histórico ao vivo');
       const normalized = Array.isArray(data.matches) ? data.matches.map(normalizeMatch).filter((item): item is LiveMatch => Boolean(item)) : [];

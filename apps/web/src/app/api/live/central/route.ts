@@ -89,9 +89,11 @@ const state: EngineState = globalStore.__cornerGptLiveEngine ?? {
 };
 globalStore.__cornerGptLiveEngine = state;
 
-const HISTORY_LIMIT = 360;
+const HISTORY_LIMIT = 120;
+const COMPACT_HISTORY_LIMIT = 12;
+const HISTORY_WINDOW_HOURS = 3;
 const MAX_STALE_MS = 35_000;
-const HYDRATE_MAX_AGE_MS = 15_000;
+const HYDRATE_MAX_AGE_MS = 60_000;
 const ACTIVE_MATCH_MAX_AGE_MINUTES = 15;
 const TREND_WINDOW_MINUTES = 10;
 
@@ -133,6 +135,30 @@ async function ensureSchema() {
   await schemaReady;
 }
 
+async function loadHistoryFromDatabase(limit: number, requestedMatchId?: string) {
+  const matchId = requestedMatchId ?? '';
+  const snapshotRows = await sql`
+    SELECT event_key, snapshot_data
+    FROM (
+      SELECT snapshots.event_key, snapshots.snapshot_data, snapshots.captured_at,
+        ROW_NUMBER() OVER (PARTITION BY snapshots.event_key ORDER BY snapshots.captured_at DESC) AS row_number
+      FROM live_engine_snapshots snapshots
+      INNER JOIN live_engine_matches matches ON matches.event_key = snapshots.event_key
+      WHERE matches.updated_at > NOW() - (${ACTIVE_MATCH_MAX_AGE_MINUTES} * INTERVAL '1 minute')
+        AND snapshots.captured_at > NOW() - (${HISTORY_WINDOW_HOURS} * INTERVAL '1 hour')
+        AND (${matchId} = '' OR matches.match_data->>'id' = ${matchId})
+    ) recent
+    WHERE row_number <= ${limit}
+    ORDER BY event_key, captured_at ASC
+  ` as SnapshotRow[];
+  const history: Record<string, Snapshot[]> = {};
+  for (const row of snapshotRows) {
+    const snapshot = parseJson(row.snapshot_data);
+    (history[row.event_key] ??= []).push(snapshot);
+  }
+  return history;
+}
+
 async function hydrateFromDatabase(force = false) {
   if (!force && Date.now() - state.hydratedAt < HYDRATE_MAX_AGE_MS) return;
   await ensureSchema();
@@ -144,26 +170,7 @@ async function hydrateFromDatabase(force = false) {
     ORDER BY updated_at DESC
   ` as MatchRow[];
 
-  const snapshotRows = await sql`
-    SELECT event_key, snapshot_data
-    FROM (
-      SELECT
-        event_key,
-        snapshot_data,
-        captured_at,
-        ROW_NUMBER() OVER (PARTITION BY event_key ORDER BY captured_at DESC) AS row_number
-      FROM live_engine_snapshots
-      WHERE captured_at > NOW() - INTERVAL '6 hours'
-    ) recent
-    WHERE row_number <= ${HISTORY_LIMIT}
-    ORDER BY event_key, captured_at ASC
-  ` as SnapshotRow[];
-
-  const history: Record<string, Snapshot[]> = {};
-  for (const row of snapshotRows) {
-    const snapshot = parseJson(row.snapshot_data);
-    (history[row.event_key] ??= []).push(snapshot);
-  }
+  const history = await loadHistoryFromDatabase(COMPACT_HISTORY_LIMIT);
 
   state.matches = matchRows.map((row) => parseJson(row.match_data));
   if (matchRows.length > 0) {
@@ -292,7 +299,7 @@ async function appendHistory(matches: LiveMatch[]) {
 
   for (const match of matches) {
     const key = eventKey(match);
-    const history = state.history[key] ?? [];
+    const history = responseHistory[key] ?? state.history[key] ?? [];
     const snapshot = createSnapshot(match, capturedAt);
     if (snapshotChanged(history.at(-1), snapshot)) {
       state.history[key] = [...history, snapshot].slice(-HISTORY_LIMIT);
@@ -387,7 +394,7 @@ function mergeFreshStats(previous: LiveMatch | undefined, current: LiveMatch): L
 async function refresh(origin: string) {
   if (state.refreshInFlight) return state.refreshInFlight;
   state.refreshInFlight = (async () => {
-    await hydrateFromDatabase(true);
+    await hydrateFromDatabase();
     const previousByKey = new Map(state.matches.map((match) => [eventKey(match), match] as const));
     const url = new URL('/api/live/corners-fast', origin);
     const response = await fetch(url, { cache: 'no-store' });
@@ -421,7 +428,8 @@ function scheduleRefresh(origin: string) {
 
 export async function GET(request: NextRequest) {
   const force = request.nextUrl.searchParams.get('refresh') === '1';
-  const includeHistory = request.nextUrl.searchParams.get('history') !== '0';
+  const historyMode = request.nextUrl.searchParams.get('history') ?? '1';
+  const includeHistory = historyMode !== '0';
   const requestedMatchId = request.nextUrl.searchParams.get('matchId');
   const collector = request.nextUrl.searchParams.get('collector');
 
@@ -459,9 +467,18 @@ export async function GET(request: NextRequest) {
     ? state.matches.filter((match) => String(match.id) === requestedMatchId)
     : state.matches;
 
+  let responseHistory = state.history;
+  if (includeHistory && historyMode !== 'compact') {
+    try {
+      responseHistory = await loadHistoryFromDatabase(HISTORY_LIMIT, requestedMatchId ?? undefined);
+    } catch {
+      responseHistory = state.history;
+    }
+  }
+
   const matches = sourceMatches.map((match) => {
     const key = eventKey(match);
-    const history = state.history[key] ?? [];
+    const history = responseHistory[key] ?? state.history[key] ?? [];
     return {
       ...match,
       engineHistory: includeHistory ? history : undefined,
@@ -478,7 +495,7 @@ export async function GET(request: NextRequest) {
     lastUpdated: state.updatedAt,
     refreshQueued: hasCachedMatches && shouldRefresh && collector !== 'cron',
     engine: {
-      mode: 'central-persistent-neon-active-live-set',
+      mode: 'central-persistent-neon-compact-live-set',
       persistence: 'neon-postgresql',
       refreshing: Boolean(state.refreshInFlight),
       refreshSeconds: 25,
