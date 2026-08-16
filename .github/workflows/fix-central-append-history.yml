@@ -18,27 +18,12 @@ jobs:
       - name: Patch appendHistory
         shell: bash
         run: |
-          python3 <<'PY'
+          python3 - <<'PY'
           from pathlib import Path
-
           route = Path('apps/web/src/app/api/live/central/route.ts')
           s = route.read_text()
-          old = """async function appendHistory(matches: LiveMatch[]) {
-            const capturedAt = new Date().toISOString();
-            const snapshotsToPersist: Array<{ key: string; snapshot: Snapshot }> = [];
-
-            for (const match of matches) {
-              const key = eventKey(match);
-              const history = responseHistory[key] ?? state.history[key] ?? [];
-"""
-          new = """async function appendHistory(matches: LiveMatch[]) {
-            const capturedAt = new Date().toISOString();
-            const snapshotsToPersist: Array<{ key: string; snapshot: Snapshot }> = [];
-
-            for (const match of matches) {
-              const key = eventKey(match);
-              const history = state.history[key] ?? [];
-"""
+          old = "const history = responseHistory[key] ?? state.history[key] ?? [];"
+          new = "const history = state.history[key] ?? [];"
           if old not in s:
               raise SystemExit('appendHistory target not found')
           s = s.replace(old, new, 1)
