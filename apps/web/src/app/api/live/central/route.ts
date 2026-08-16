@@ -299,7 +299,7 @@ async function appendHistory(matches: LiveMatch[]) {
 
   for (const match of matches) {
     const key = eventKey(match);
-    const history = responseHistory[key] ?? state.history[key] ?? [];
+    const history = state.history[key] ?? [];
     const snapshot = createSnapshot(match, capturedAt);
     if (snapshotChanged(history.at(-1), snapshot)) {
       state.history[key] = [...history, snapshot].slice(-HISTORY_LIMIT);
