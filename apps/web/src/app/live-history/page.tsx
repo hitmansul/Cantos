@@ -441,16 +441,33 @@ export default function LiveHistoryPage() {
     requestRef.current = controller;
     try {
       const suffix = manual ? '&refresh=1' : '';
-      const response = await fetch(`/api/live/central?history=compact&t=${Date.now()}${suffix}`, { cache: 'no-store', signal: controller.signal, headers: { 'Cache-Control': 'no-cache' } });
+      const response = await fetch(`/api/live/central?history=summary&t=${Date.now()}${suffix}`, { cache: 'no-store', signal: controller.signal, headers: { 'Cache-Control': 'no-cache' } });
       const data = await response.json() as Record<string, unknown>;
       if (!response.ok) throw new Error(typeof data.error === 'string' ? data.error : 'Falha ao atualizar histórico ao vivo');
       const normalized = Array.isArray(data.matches) ? data.matches.map(normalizeMatch).filter((item): item is LiveMatch => Boolean(item)) : [];
       const next = dedupeMatches(normalized);
+      let selectedDetail: LiveMatch | null = null;
+      if (selectedKey) {
+        const selectedMatch = next.find(match => matchKey(match) === selectedKey);
+        if (selectedMatch) {
+          try {
+            const detailResponse = await fetch(`/api/live/central?history=compact&matchId=${selectedMatch.id}&t=${Date.now()}`, { cache: 'no-store', signal: controller.signal, headers: { 'Cache-Control': 'no-cache' } });
+            if (detailResponse.ok) {
+              const detailData = await detailResponse.json() as Record<string, unknown>;
+              const detailRaw = Array.isArray(detailData.matches) ? detailData.matches[0] : null;
+              const detail = normalizeMatch(detailRaw);
+              if (detail && matchKey(detail) === selectedKey) selectedDetail = detail;
+            }
+          } catch (detailReason) {
+            if (detailReason instanceof DOMException && detailReason.name === 'AbortError') throw detailReason;
+          }
+        }
+      }
       setMatches(next);
       setLastUpdated(typeof data.lastUpdated === 'string' ? data.lastUpdated : new Date().toISOString());
       setSelectedSnapshot(current => {
         if (!selectedKey) return current;
-        return next.find(match => matchKey(match) === selectedKey) ?? current;
+        return selectedDetail ?? next.find(match => matchKey(match) === selectedKey) ?? current;
       });
     } catch (reason) {
       if (reason instanceof DOMException && reason.name === 'AbortError') return;
@@ -492,7 +509,8 @@ export default function LiveHistoryPage() {
 
   const selected = useMemo(() => {
     if (!selectedKey) return null;
-    return matches.find(match => matchKey(match) === selectedKey) ?? selectedSnapshot;
+    if (selectedSnapshot && matchKey(selectedSnapshot) === selectedKey) return selectedSnapshot;
+    return matches.find(match => matchKey(match) === selectedKey) ?? null;
   }, [matches, selectedKey, selectedSnapshot]);
 
   const selectMatch = useCallback((match: LiveMatch) => {
@@ -528,13 +546,15 @@ export default function LiveHistoryPage() {
           <div className="flex items-center justify-between text-xs text-muted-foreground"><span>{visibleMatches.length} jogo(s) encontrado(s)</span>{hasExtraFilters && <button type="button" onClick={resetExtraFilters} className="font-semibold text-emerald-400">Limpar busca</button>}</div>
         </div>
 
+        {selected && <div className="lg:hidden rounded-2xl border border-emerald-500/30 bg-background/70 p-2"><div className="mb-2 flex justify-end"><button type="button" onClick={() => selectMatch(selected)} className="inline-flex items-center gap-1 rounded-lg border border-border px-3 py-2 text-xs font-semibold text-muted-foreground"><X className="h-4 w-4" />Fechar jogo</button></div><MatchDetails match={selected} lastUpdated={lastUpdated} /></div>}
+
         {matches.length === 0 && !initialLoading && <p className="rounded-xl border border-dashed border-border p-4 text-sm text-muted-foreground">Nenhuma partida disponível neste momento.</p>}
         {matches.length > 0 && visibleMatches.length === 0 && <p className="rounded-xl border border-dashed border-border p-4 text-sm text-muted-foreground">Nenhum jogo corresponde aos filtros selecionados.</p>}
         {visibleMatches.map(match => {
           const key = matchKey(match);
           const intelligence = intelligenceByKey.get(key) ?? calculateIntelligence(match);
           const isSelected = key === selectedKey;
-          return <div key={key} className="space-y-3"><button type="button" onClick={() => selectMatch(match)} className={`w-full rounded-xl border p-3 text-left transition ${isSelected ? 'border-emerald-500 bg-emerald-500/10' : 'border-border hover:bg-muted/50'}`}><div className="flex items-center justify-between gap-2"><span className="truncate text-xs text-muted-foreground">{match.competition}</span><span className="text-xs font-semibold text-emerald-400">{minuteLabel(match.minute)}</span></div><div className="mt-2 flex items-start justify-between gap-3"><p className="font-bold">{match.homeTeam.name} x {match.awayTeam.name}</p><span className={`shrink-0 rounded-lg border px-2 py-1 text-xs font-black ${scoreClass(intelligence.score, intelligence.ready)}`}>Força {intelligence.ready ? intelligence.score : '—'}</span></div><div className="mt-2 flex items-center justify-between gap-2 text-sm"><span>{match.homeTeam.score}–{match.awayTeam.score}</span><span className={`rounded-md border px-2 py-0.5 text-[10px] font-bold ${decisionClass(intelligence.decision)}`}>{intelligence.decision}</span><span className="flex items-center gap-1 text-xs text-muted-foreground"><TrendIcon value={match.engineTrend.status} />{trendLabels[match.engineTrend.status]}</span></div></button>{isSelected && selected && <div className="lg:hidden"><MatchDetails match={selected} lastUpdated={lastUpdated} /></div>}</div>;
+          return <div key={key} className="space-y-3"><button type="button" onClick={() => selectMatch(match)} className={`w-full rounded-xl border p-3 text-left transition ${isSelected ? 'border-emerald-500 bg-emerald-500/10' : 'border-border hover:bg-muted/50'}`}><div className="flex items-center justify-between gap-2"><span className="truncate text-xs text-muted-foreground">{match.competition}</span><span className="text-xs font-semibold text-emerald-400">{minuteLabel(match.minute)}</span></div><div className="mt-2 flex items-start justify-between gap-3"><p className="font-bold">{match.homeTeam.name} x {match.awayTeam.name}</p><span className={`shrink-0 rounded-lg border px-2 py-1 text-xs font-black ${scoreClass(intelligence.score, intelligence.ready)}`}>Força {intelligence.ready ? intelligence.score : '—'}</span></div><div className="mt-2 flex items-center justify-between gap-2 text-sm"><span>{match.homeTeam.score}–{match.awayTeam.score}</span><span className={`rounded-md border px-2 py-0.5 text-[10px] font-bold ${decisionClass(intelligence.decision)}`}>{intelligence.decision}</span><span className="flex items-center gap-1 text-xs text-muted-foreground"><TrendIcon value={match.engineTrend.status} />{trendLabels[match.engineTrend.status]}</span></div></button></div>;
         })}
       </div>
 
