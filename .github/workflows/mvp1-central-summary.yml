@@ -20,54 +20,20 @@ jobs:
         run: |
           python3 <<'PY'
           from pathlib import Path
-
           route = Path('apps/web/src/app/api/live/central/route.ts')
           s = route.read_text()
-
           old = "const COMPACT_HISTORY_LIMIT = 12;\nconst HISTORY_WINDOW_HOURS = 3;"
           new = "const COMPACT_HISTORY_LIMIT = 12;\nconst SUMMARY_HISTORY_LIMIT = 3;\nconst HISTORY_WINDOW_HOURS = 3;"
-          if old not in s:
-              raise SystemExit('history constants target not found')
+          if old not in s: raise SystemExit('history constants target not found')
           s = s.replace(old, new, 1)
-
-          old = """  let responseHistory = state.history;
-  if (includeHistory && historyMode !== 'compact') {
-    try {
-      responseHistory = await loadHistoryFromDatabase(HISTORY_LIMIT, requestedMatchId ?? undefined);
-    } catch {
-      responseHistory = state.history;
-    }
-  }
-"""
-          new = """  let responseHistory = state.history;
-  if (includeHistory && historyMode === 'summary') {
-    responseHistory = Object.fromEntries(
-      Object.entries(state.history).map(([key, history]) => [key, history.slice(-SUMMARY_HISTORY_LIMIT)])
-    );
-  } else if (includeHistory && historyMode !== 'compact') {
-    try {
-      responseHistory = await loadHistoryFromDatabase(HISTORY_LIMIT, requestedMatchId ?? undefined);
-    } catch {
-      responseHistory = state.history;
-    }
-  }
-"""
-          if old not in s:
-              raise SystemExit('response history target not found')
+          old = "  let responseHistory = state.history;\n  if (includeHistory && historyMode !== 'compact') {\n    try {\n      responseHistory = await loadHistoryFromDatabase(HISTORY_LIMIT, requestedMatchId ?? undefined);\n    } catch {\n      responseHistory = state.history;\n    }\n  }\n"
+          new = "  let responseHistory = state.history;\n  if (includeHistory && historyMode === 'summary') {\n    responseHistory = Object.fromEntries(\n      Object.entries(state.history).map(([key, history]) => [key, history.slice(-SUMMARY_HISTORY_LIMIT)])\n    );\n  } else if (includeHistory && historyMode !== 'compact') {\n    try {\n      responseHistory = await loadHistoryFromDatabase(HISTORY_LIMIT, requestedMatchId ?? undefined);\n    } catch {\n      responseHistory = state.history;\n    }\n  }\n"
+          if old not in s: raise SystemExit('response history target not found')
           s = s.replace(old, new, 1)
-
-          old = """      historyLimit: HISTORY_LIMIT,
-      trendWindowMinutes: TREND_WINDOW_MINUTES,
-"""
-          new = """      historyLimit: HISTORY_LIMIT,
-      compactHistoryLimit: COMPACT_HISTORY_LIMIT,
-      summaryHistoryLimit: SUMMARY_HISTORY_LIMIT,
-      trendWindowMinutes: TREND_WINDOW_MINUTES,
-"""
-          if old not in s:
-              raise SystemExit('engine metadata target not found')
+          old = "      historyLimit: HISTORY_LIMIT,\n      trendWindowMinutes: TREND_WINDOW_MINUTES,"
+          new = "      historyLimit: HISTORY_LIMIT,\n      compactHistoryLimit: COMPACT_HISTORY_LIMIT,\n      summaryHistoryLimit: SUMMARY_HISTORY_LIMIT,\n      trendWindowMinutes: TREND_WINDOW_MINUTES,"
+          if old not in s: raise SystemExit('engine metadata target not found')
           s = s.replace(old, new, 1)
-
           route.write_text(s)
           PY
       - name: Verify and commit
