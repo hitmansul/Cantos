@@ -57,8 +57,8 @@ const SOFA_BASE = 'https://api.sofascore.com/api/v1';
 const CACHE_TTL_MS = 25_000;
 const NEGATIVE_CACHE_TTL_MS = 10_000;
 const REQUEST_TIMEOUT_MS = 2_800;
-const MAX_ENRICHMENT = 120;
-const CONCURRENCY = 12;
+const MAX_ENRICHMENT = 40;
+const CONCURRENCY = 8;
 
 const statsCache = new Map<number, CacheEntry>();
 
@@ -343,7 +343,7 @@ export async function GET(request: NextRequest) {
       if (aPriority !== bPriority) return bPriority - aPriority;
       const aHas = a.match.corners || a.match.liveStats?.length ? 1 : 0;
       const bHas = b.match.corners || b.match.liveStats?.length ? 1 : 0;
-      return aHas - bHas;
+      return bHas - aHas;
     });
 
   const candidates = requestedEventId > 0
@@ -375,18 +375,20 @@ export async function GET(request: NextRequest) {
     };
   }
 
+  const monitored = candidates.map((candidate) => enriched[candidate.index]);
+
   return NextResponse.json({
     ...payload,
-    matches: enriched,
-    count: enriched.length,
+    matches: monitored,
+    count: monitored.length,
     lastUpdated: new Date().toISOString(),
     cornerCoverage: {
-      total: enriched.length,
-      withCorners: enriched.filter((match) => Boolean(match.corners)).length,
+      total: monitored.length,
+      withCorners: monitored.filter((match) => Boolean(match.corners)).length,
       attempted: candidates.length,
       eligible: pool.length,
       sofaLiveEvents: sofaLiveEvents.length,
     },
-    enrichmentPolicy: 'all-eligible-multisource-v3',
+    enrichmentPolicy: 'focused-live-set-v1',
   });
 }
