@@ -91,6 +91,7 @@ globalStore.__cornerGptLiveEngine = state;
 
 const HISTORY_LIMIT = 120;
 const COMPACT_HISTORY_LIMIT = 12;
+const SUMMARY_HISTORY_LIMIT = 3;
 const HISTORY_WINDOW_HOURS = 3;
 const MAX_STALE_MS = 35_000;
 const HYDRATE_MAX_AGE_MS = 60_000;
@@ -468,7 +469,11 @@ export async function GET(request: NextRequest) {
     : state.matches;
 
   let responseHistory = state.history;
-  if (includeHistory && historyMode !== 'compact') {
+  if (includeHistory && historyMode === 'summary') {
+    responseHistory = Object.fromEntries(
+      Object.entries(state.history).map(([key, history]) => [key, history.slice(-SUMMARY_HISTORY_LIMIT)])
+    );
+  } else if (includeHistory && historyMode !== 'compact') {
     try {
       responseHistory = await loadHistoryFromDatabase(HISTORY_LIMIT, requestedMatchId ?? undefined);
     } catch {
@@ -500,6 +505,8 @@ export async function GET(request: NextRequest) {
       refreshing: Boolean(state.refreshInFlight),
       refreshSeconds: 25,
       historyLimit: HISTORY_LIMIT,
+      compactHistoryLimit: COMPACT_HISTORY_LIMIT,
+      summaryHistoryLimit: SUMMARY_HISTORY_LIMIT,
       trendWindowMinutes: TREND_WINDOW_MINUTES,
       trackedMatches: Object.keys(state.history).length,
       totalSnapshots: Object.values(state.history).reduce((sum, history) => sum + history.length, 0),
