@@ -1,0 +1,84 @@
+name: Apply build-safe client history cache
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - name: Patch page
+        shell: bash
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+          p = Path('apps/web/src/app/live-history/page.tsx')
+          s = p.read_text()
+
+          old = """  const requestRef = useRef<AbortController | null>(null);"""
+          new = """  const requestRef = useRef<AbortController | null>(null);
+  const clientHistoryRef = useRef<Map<string, Snapshot[]>>(new Map());"""
+          if old not in s: raise SystemExit('requestRef anchor not found')
+          s = s.replace(old, new, 1)
+
+          old = """      const nextRaw = dedupeMatches(normalized);
+      let next = nextRaw;"""
+          new = """      const nextRaw = dedupeMatches(normalized);
+      const next = nextRaw.map(match => {
+        const key = matchKey(match);
+        const history = mergeSnapshotHistory(clientHistoryRef.current.get(key) ?? [], match.engineHistory);
+        clientHistoryRef.current.set(key, history);
+        return { ...match, engineHistory: history, engineTrend: deriveClientTrend(history) };
+      });"""
+          if old not in s: raise SystemExit('nextRaw anchor not found')
+          s = s.replace(old, new, 1)
+
+          old = """        const selectedMatch = nextRaw.find(match => matchKey(match) === selectedKey);"""
+          new = """        const selectedMatch = next.find(match => matchKey(match) === selectedKey);"""
+          if old not in s: raise SystemExit('selectedMatch anchor not found')
+          s = s.replace(old, new, 1)
+
+          old = """      setMatches(current => {
+        next = mergeLiveMatches(current, nextRaw);
+        return next;
+      });"""
+          new = """      setMatches(next);"""
+          if old not in s: raise SystemExit('setMatches callback not found')
+          s = s.replace(old, new, 1)
+
+          old = """        const history = mergeSnapshotHistory(current.engineHistory, updated.engineHistory);
+        return { ...updated, engineHistory: history, engineTrend: deriveClientTrend(history) };"""
+          new = """        const key = matchKey(updated);
+        const history = mergeSnapshotHistory(clientHistoryRef.current.get(key) ?? current.engineHistory, updated.engineHistory);
+        clientHistoryRef.current.set(key, history);
+        return { ...updated, engineHistory: history, engineTrend: deriveClientTrend(history) };"""
+          if old not in s: raise SystemExit('selected history anchor not found')
+          s = s.replace(old, new, 1)
+
+          start = s.find('function mergeLiveMatches(')
+          if start != -1:
+            end = s.find('\nfunction minuteLabel(', start)
+            if end == -1: raise SystemExit('mergeLiveMatches end not found')
+            s = s[:start] + s[end+1:]
+
+          p.write_text(s)
+          PY
+      - name: Verify and commit
+        shell: bash
+        run: |
+          grep -q "clientHistoryRef" apps/web/src/app/live-history/page.tsx
+          ! grep -q "function mergeLiveMatches" apps/web/src/app/live-history/page.tsx
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add apps/web/src/app/live-history/page.tsx
+          git rm .github/workflows/fix-client-history-build.yml .github/workflows/diagnose-web-build.yml || true
+          git commit -m "fix: make live client history cache build-safe"
+          git push origin main
