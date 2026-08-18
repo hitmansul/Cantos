@@ -64,6 +64,8 @@ type CacheEntry = {
   source?: string;
 };
 
+type SourceIdKey = 'sofascore' | 'apiFootball';
+
 const SOFA_BASE = 'https://api.sofascore.com/api/v1';
 const CACHE_TTL_MS = 25_000;
 const NEGATIVE_CACHE_TTL_MS = 10_000;
@@ -227,6 +229,42 @@ function teamSimilarity(left: string, right: string) {
   return Math.min(1, overlap + lastTokenBoost);
 }
 
+function matchSimilarity(left: LiveMatch, right: LiveMatch) {
+  const names =
+    teamSimilarity(left.homeTeam.name, right.homeTeam.name) +
+    teamSimilarity(left.awayTeam.name, right.awayTeam.name);
+  if (names < 1.1) return 0;
+
+  const leftMinute = minuteValue(left.minute);
+  const rightMinute = minuteValue(right.minute);
+  const minuteGap = leftMinute > 0 && rightMinute > 0 ? Math.abs(leftMinute - rightMinute) : 0;
+  if (minuteGap > 12) return 0;
+
+  const scoreMatches =
+    left.homeTeam.score === right.homeTeam.score && left.awayTeam.score === right.awayTeam.score;
+  const minuteBoost = minuteGap <= 3 ? 0.15 : minuteGap <= 7 ? 0.08 : 0;
+  const scoreBoost = scoreMatches ? 0.2 : 0;
+  return names + minuteBoost + scoreBoost;
+}
+
+function resolvePeerSourceId(match: LiveMatch, matches: LiveMatch[], source: SourceIdKey) {
+  const ownId = match.sourceIds?.[source];
+  if (ownId) return ownId;
+
+  let bestId: number | undefined;
+  let bestScore = 0;
+  for (const peer of matches) {
+    const peerId = peer.sourceIds?.[source];
+    if (!peerId) continue;
+    const score = matchSimilarity(match, peer);
+    if (score > bestScore) {
+      bestScore = score;
+      bestId = peerId;
+    }
+  }
+  return bestScore >= 1.45 ? bestId : undefined;
+}
+
 function resolveSofaEvent(home: string, away: string, events: SofaLiveEvent[]) {
   let best: SofaLiveEvent | null = null;
   let bestScore = 0;
@@ -350,10 +388,18 @@ export async function GET(request: NextRequest) {
   }
 
   const matches = Array.isArray(payload.matches) ? payload.matches : [];
+  let recoveredSofaIds = 0;
+  let recoveredApiFootballIds = 0;
+
   const pool = matches
     .map((match, index) => {
-      const resolvedSofa = match.sourceIds?.sofascore
-        ? sofaLiveEvents.find((event) => event.id === match.sourceIds?.sofascore) ?? null
+      const peerSofaId = resolvePeerSourceId(match, matches, 'sofascore');
+      const peerApiFootballId = resolvePeerSourceId(match, matches, 'apiFootball');
+      if (!match.sourceIds?.sofascore && peerSofaId) recoveredSofaIds += 1;
+      if (!match.sourceIds?.apiFootball && peerApiFootballId) recoveredApiFootballIds += 1;
+
+      const resolvedSofa = peerSofaId
+        ? sofaLiveEvents.find((event) => event.id === peerSofaId) ?? null
         : resolveSofaEvent(match.homeTeam.name, match.awayTeam.name, sofaLiveEvents);
 
       const selectedByName = requestedEventId > 0 && (
@@ -365,8 +411,8 @@ export async function GET(request: NextRequest) {
       return {
         match,
         index,
-        eventId: selectedByName ? requestedEventId : resolvedSofa?.id ?? match.sourceIds?.sofascore,
-        fixtureId: match.sourceIds?.apiFootball,
+        eventId: selectedByName ? requestedEventId : resolvedSofa?.id ?? peerSofaId,
+        fixtureId: peerApiFootballId,
         useful: hasUsefulLiveData(match),
       };
     })
@@ -406,14 +452,21 @@ export async function GET(request: NextRequest) {
   });
 
   for (const { candidate, stats } of results) {
-    if (!stats || (!stats.corners && !stats.liveStats?.length)) continue;
     const current = enriched[candidate.index];
+    const sourceIds = {
+      ...current.sourceIds,
+      ...(candidate.eventId ? { sofascore: candidate.eventId } : {}),
+      ...(candidate.fixtureId ? { apiFootball: candidate.fixtureId } : {}),
+    };
+
+    if (!stats || (!stats.corners && !stats.liveStats?.length)) {
+      enriched[candidate.index] = { ...current, sourceIds };
+      continue;
+    }
+
     enriched[candidate.index] = {
       ...current,
-      sourceIds: {
-        ...current.sourceIds,
-        ...(candidate.eventId ? { sofascore: candidate.eventId } : {}),
-      },
+      sourceIds,
       corners: stats.corners ?? current.corners,
       liveStats: stats.liveStats?.length ? stats.liveStats : current.liveStats,
       statsSource: stats.source ?? current.statsSource,
@@ -440,7 +493,9 @@ export async function GET(request: NextRequest) {
       attempted: candidates.length,
       eligible: pool.length,
       sofaLiveEvents: sofaLiveEvents.length,
+      recoveredSofaIds,
+      recoveredApiFootballIds,
     },
-    enrichmentPolicy: 'focused-useful-live-set-v2',
+    enrichmentPolicy: 'focused-useful-live-set-v3-cross-source-ids',
   });
 }
