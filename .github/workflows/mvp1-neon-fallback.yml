@@ -73,8 +73,7 @@ function persistenceAvailable() {
 }
 
 function markPersistenceFailure(error: unknown) {
-  const message = errorMessage(error);
-  state.persistenceError = message;
+  state.persistenceError = errorMessage(error);
   state.persistenceDisabledUntil = Date.now() + PERSISTENCE_RETRY_MS;
   schemaReady = null;
 }
@@ -201,7 +200,7 @@ function markPersistenceHealthy() {
         run: |
           grep -q "memory-fallback" apps/web/src/app/api/live/central/route.ts
           grep -q "markPersistenceFailure" apps/web/src/app/api/live/central/route.ts
-          grep -q "if (persistenceAvailable())" apps/web/src/app/api/live/central/route.ts
+          grep -q "persistenceDisabledUntil" apps/web/src/app/api/live/central/route.ts
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add apps/web/src/app/api/live/central/route.ts
