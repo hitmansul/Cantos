@@ -301,9 +301,58 @@ function dedupeMatches(matches: LiveMatch[]) {
   return [...map.values()];
 }
 
+function mergeSnapshotHistory(previous: Snapshot[], incoming: Snapshot[]) {
+  const merged = new Map<string, Snapshot>();
+  for (const snapshot of [...previous, ...incoming]) {
+    const key = snapshot.capturedAt ?? `${snapshot.minute}|${snapshot.homeScore}|${snapshot.awayScore}|${snapshot.corners.total ?? 'x'}|${snapshot.shots.total ?? 'x'}|${snapshot.dangerousAttacks.total ?? 'x'}`;
+    merged.set(key, snapshot);
+  }
+  return [...merged.values()]
+    .sort((a, b) => {
+      const left = a.capturedAt ? new Date(a.capturedAt).getTime() : 0;
+      const right = b.capturedAt ? new Date(b.capturedAt).getTime() : 0;
+      return left - right;
+    })
+    .slice(-12);
+}
+
 function minuteNumber(value: number | string | null) {
   const match = String(value ?? '').match(/(\d{1,3})(?:\s*\+\s*(\d{1,2}))?/);
   return match ? number(match[1]) + number(match[2]) : 0;
+}
+
+function pairDelta(current: Pair, previous: Pair) {
+  return current.total !== null && previous.total !== null ? current.total - previous.total : 0;
+}
+
+function deriveClientTrend(history: Snapshot[]): Trend {
+  if (history.length < 2) {
+    return { status: 'insufficient-data', cornersDelta: 0, shotsDelta: 0, dangerousAttacksDelta: 0, stoppedMinutesDelta: 0 };
+  }
+  const latest = history.at(-1)!;
+  const latestMinute = minuteNumber(latest.minute);
+  const candidates = history.filter(snapshot => latestMinute - minuteNumber(snapshot.minute) <= 10);
+  const baseline = candidates[0] ?? history[0];
+  const cornersDelta = pairDelta(latest.corners, baseline.corners);
+  const shotsDelta = pairDelta(latest.shots, baseline.shots);
+  const dangerousAttacksDelta = pairDelta(latest.dangerousAttacks, baseline.dangerousAttacks);
+  const activity = Math.max(cornersDelta, 0) * 3 + Math.max(shotsDelta, 0) + Math.max(dangerousAttacksDelta, 0) * 0.25;
+  const status: TrendStatus = candidates.length < 2 ? 'insufficient-data' : activity >= 8 ? 'accelerating' : activity <= 1 ? 'cooling' : 'stable';
+  return { status, cornersDelta, shotsDelta, dangerousAttacksDelta, stoppedMinutesDelta: 0 };
+}
+
+function mergeLiveMatches(previous: LiveMatch[], incoming: LiveMatch[]) {
+  const previousByKey = new Map(previous.map(match => [matchKey(match), match] as const));
+  return incoming.map(match => {
+    const old = previousByKey.get(matchKey(match));
+    if (!old) return match;
+    const engineHistory = mergeSnapshotHistory(old.engineHistory, match.engineHistory);
+    return {
+      ...match,
+      engineHistory,
+      engineTrend: deriveClientTrend(engineHistory),
+    };
+  });
 }
 
 function minuteLabel(value: number | string) {
@@ -445,10 +494,11 @@ export default function LiveHistoryPage() {
       const data = await response.json() as Record<string, unknown>;
       if (!response.ok) throw new Error(typeof data.error === 'string' ? data.error : 'Falha ao atualizar histórico ao vivo');
       const normalized = Array.isArray(data.matches) ? data.matches.map(normalizeMatch).filter((item): item is LiveMatch => Boolean(item)) : [];
-      const next = dedupeMatches(normalized);
+      const nextRaw = dedupeMatches(normalized);
+      let next = nextRaw;
       let selectedDetail: LiveMatch | null = null;
       if (selectedKey) {
-        const selectedMatch = next.find(match => matchKey(match) === selectedKey);
+        const selectedMatch = nextRaw.find(match => matchKey(match) === selectedKey);
         if (selectedMatch) {
           try {
             const detailResponse = await fetch(`/api/live/central?history=compact&matchId=${selectedMatch.id}&t=${Date.now()}`, { cache: 'no-store', signal: controller.signal, headers: { 'Cache-Control': 'no-cache' } });
@@ -463,11 +513,18 @@ export default function LiveHistoryPage() {
           }
         }
       }
-      setMatches(next);
+      setMatches(current => {
+        next = mergeLiveMatches(current, nextRaw);
+        return next;
+      });
       setLastUpdated(typeof data.lastUpdated === 'string' ? data.lastUpdated : new Date().toISOString());
       setSelectedSnapshot(current => {
         if (!selectedKey) return current;
-        return selectedDetail ?? next.find(match => matchKey(match) === selectedKey) ?? current;
+        const updated = selectedDetail ?? next.find(match => matchKey(match) === selectedKey);
+        if (!updated) return current;
+        if (!current) return updated;
+        const history = mergeSnapshotHistory(current.engineHistory, updated.engineHistory);
+        return { ...updated, engineHistory: history, engineTrend: deriveClientTrend(history) };
       });
     } catch (reason) {
       if (reason instanceof DOMException && reason.name === 'AbortError') return;
