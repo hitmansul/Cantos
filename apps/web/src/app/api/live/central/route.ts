@@ -308,12 +308,16 @@ async function appendHistory(matches: LiveMatch[]) {
     }
   }
 
-  await persistMatches(matches, capturedAt);
-  await Promise.all(snapshotsToPersist.map(({ key, snapshot }) => sql`
-    INSERT INTO live_engine_snapshots (event_key, captured_at, snapshot_data)
-    VALUES (${key}, ${snapshot.capturedAt}::timestamptz, ${JSON.stringify(snapshot)}::jsonb)
-    ON CONFLICT (event_key, captured_at) DO NOTHING
-  `));
+  try {
+    await persistMatches(matches, capturedAt);
+    await Promise.all(snapshotsToPersist.map(({ key, snapshot }) => sql`
+      INSERT INTO live_engine_snapshots (event_key, captured_at, snapshot_data)
+      VALUES (${key}, ${snapshot.capturedAt}::timestamptz, ${JSON.stringify(snapshot)}::jsonb)
+      ON CONFLICT (event_key, captured_at) DO NOTHING
+    `));
+  } catch (error) {
+    console.warn('[live-engine] Persistência indisponível; mantendo histórico em memória.', error);
+  }
 
   state.hydratedAt = Date.now();
 }
@@ -395,7 +399,11 @@ function mergeFreshStats(previous: LiveMatch | undefined, current: LiveMatch): L
 async function refresh(origin: string) {
   if (state.refreshInFlight) return state.refreshInFlight;
   state.refreshInFlight = (async () => {
-    await hydrateFromDatabase();
+    try {
+      await hydrateFromDatabase();
+    } catch (error) {
+      console.warn('[live-engine] Neon indisponível durante hidratação; seguindo com coleta ao vivo.', error);
+    }
     const previousByKey = new Map(state.matches.map((match) => [eventKey(match), match] as const));
     const url = new URL('/api/live/corners-fast', origin);
     const response = await fetch(url, { cache: 'no-store' });
@@ -437,12 +445,7 @@ export async function GET(request: NextRequest) {
   try {
     await hydrateFromDatabase();
   } catch (error) {
-    if (state.matches.length === 0) {
-      return NextResponse.json(
-        { matches: [], error: error instanceof Error ? error.message : 'Falha ao carregar histórico persistente' },
-        { status: 502 }
-      );
-    }
+    console.warn('[live-engine] Neon indisponível no GET; usando coleta/memória.', error);
   }
 
   const age = state.updatedAt ? Date.now() - new Date(state.updatedAt).getTime() : Number.POSITIVE_INFINITY;
