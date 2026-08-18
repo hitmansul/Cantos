@@ -82,3 +82,4 @@ jobs:
           git rm .github/workflows/fix-client-history-build.yml .github/workflows/diagnose-web-build.yml || true
           git commit -m "fix: make live client history cache build-safe"
           git push origin main
+# trigger
