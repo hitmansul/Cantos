@@ -1,0 +1,98 @@
+name: Apply scoped Neon fallback to central engine
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - name: Patch central engine
+        shell: bash
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+          route = Path('apps/web/src/app/api/live/central/route.ts')
+          s = route.read_text()
+
+          old = """  await persistMatches(matches, capturedAt);
+  await Promise.all(snapshotsToPersist.map(({ key, snapshot }) => sql`
+    INSERT INTO live_engine_snapshots (event_key, captured_at, snapshot_data)
+    VALUES (${key}, ${snapshot.capturedAt}::timestamptz, ${JSON.stringify(snapshot)}::jsonb)
+    ON CONFLICT (event_key, captured_at) DO NOTHING
+  `));
+
+  state.hydratedAt = Date.now();"""
+          new = """  try {
+    await persistMatches(matches, capturedAt);
+    await Promise.all(snapshotsToPersist.map(({ key, snapshot }) => sql`
+      INSERT INTO live_engine_snapshots (event_key, captured_at, snapshot_data)
+      VALUES (${key}, ${snapshot.capturedAt}::timestamptz, ${JSON.stringify(snapshot)}::jsonb)
+      ON CONFLICT (event_key, captured_at) DO NOTHING
+    `));
+  } catch (error) {
+    console.warn('[live-engine] Persistência indisponível; mantendo histórico em memória.', error);
+  }
+
+  state.hydratedAt = Date.now();"""
+          if old not in s:
+              raise SystemExit('appendHistory persistence block not found')
+          s = s.replace(old, new, 1)
+
+          old = """  state.refreshInFlight = (async () => {
+    await hydrateFromDatabase();
+    const previousByKey = new Map(state.matches.map((match) => [eventKey(match), match] as const));"""
+          new = """  state.refreshInFlight = (async () => {
+    try {
+      await hydrateFromDatabase();
+    } catch (error) {
+      console.warn('[live-engine] Neon indisponível durante hidratação; seguindo com coleta ao vivo.', error);
+    }
+    const previousByKey = new Map(state.matches.map((match) => [eventKey(match), match] as const));"""
+          if old not in s:
+              raise SystemExit('refresh hydrate block not found')
+          s = s.replace(old, new, 1)
+
+          old = """  try {
+    await hydrateFromDatabase();
+  } catch (error) {
+    if (state.matches.length === 0) {
+      return NextResponse.json(
+        { matches: [], error: error instanceof Error ? error.message : 'Falha ao carregar histórico persistente' },
+        { status: 502 }
+      );
+    }
+  }
+"""
+          new = """  try {
+    await hydrateFromDatabase();
+  } catch (error) {
+    console.warn('[live-engine] Neon indisponível no GET; usando coleta/memória.', error);
+  }
+"""
+          if old not in s:
+              raise SystemExit('GET hydrate block not found')
+          s = s.replace(old, new, 1)
+
+          route.write_text(s)
+          PY
+      - name: Verify and commit
+        shell: bash
+        run: |
+          grep -q "seguindo com coleta ao vivo" apps/web/src/app/api/live/central/route.ts
+          grep -q "mantendo histórico em memória" apps/web/src/app/api/live/central/route.ts
+          grep -q "usando coleta/memória" apps/web/src/app/api/live/central/route.ts
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add apps/web/src/app/api/live/central/route.ts
+          git rm .github/workflows/fix-central-neon-fallback.yml
+          git commit -m "fix: keep central live engine running without Neon"
+          git push origin main
