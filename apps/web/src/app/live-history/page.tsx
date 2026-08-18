@@ -117,13 +117,25 @@ function enrichMatch(value: unknown) {
   };
 }
 
-function isCentralRequest(input: RequestInfo | URL) {
-  const url = typeof input === 'string'
+function inputUrl(input: RequestInfo | URL) {
+  return typeof input === 'string'
     ? input
     : input instanceof URL
       ? input.toString()
       : input.url;
-  return url.includes('/api/live/central?');
+}
+
+function isCentralRequest(input: RequestInfo | URL) {
+  return inputUrl(input).includes('/api/live/central?');
+}
+
+function forceCentralRefresh(input: RequestInfo | URL): RequestInfo | URL {
+  if (!isCentralRequest(input)) return input;
+  if (typeof input !== 'string' && !(input instanceof URL)) return input;
+
+  const url = new URL(inputUrl(input), window.location.origin);
+  url.searchParams.set('refresh', '1');
+  return url;
 }
 
 export default function LiveHistoryPage() {
@@ -132,8 +144,9 @@ export default function LiveHistoryPage() {
   useEffect(() => {
     const originalFetch = window.fetch.bind(window);
     const wrappedFetch: typeof window.fetch = async (input, init) => {
-      const response = await originalFetch(input, init);
-      if (!response.ok || !isCentralRequest(input)) return response;
+      const effectiveInput = forceCentralRefresh(input);
+      const response = await originalFetch(effectiveInput, init);
+      if (!response.ok || !isCentralRequest(effectiveInput)) return response;
 
       try {
         const data = await response.clone().json() as Record<string, unknown>;
