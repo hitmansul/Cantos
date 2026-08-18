@@ -1,0 +1,210 @@
+name: Apply Neon quota fallback
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - name: Patch Motor Central fallback
+        shell: bash
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+
+          route = Path('apps/web/src/app/api/live/central/route.ts')
+          s = route.read_text()
+
+          old = """type EngineState = {
+  matches: LiveMatch[];
+  history: Record<string, Snapshot[]>;
+  updatedAt: string | null;
+  refreshInFlight: Promise<void> | null;
+  coverage?: Record<string, unknown>;
+  hydratedAt: number;
+};"""
+          new = """type EngineState = {
+  matches: LiveMatch[];
+  history: Record<string, Snapshot[]>;
+  updatedAt: string | null;
+  refreshInFlight: Promise<void> | null;
+  coverage?: Record<string, unknown>;
+  hydratedAt: number;
+  persistenceDisabledUntil: number;
+  persistenceError: string | null;
+};"""
+          if old not in s: raise SystemExit('EngineState target not found')
+          s = s.replace(old, new, 1)
+
+          old = """  refreshInFlight: null,
+  hydratedAt: 0,
+};"""
+          new = """  refreshInFlight: null,
+  hydratedAt: 0,
+  persistenceDisabledUntil: 0,
+  persistenceError: null,
+};"""
+          if old not in s: raise SystemExit('state init target not found')
+          s = s.replace(old, new, 1)
+
+          old = """const TREND_WINDOW_MINUTES = 10;
+
+let schemaReady: Promise<void> | null = null;"""
+          new = """const TREND_WINDOW_MINUTES = 10;
+const PERSISTENCE_RETRY_MS = 5 * 60_000;
+
+let schemaReady: Promise<void> | null = null;
+
+function errorMessage(error: unknown) {
+  return error instanceof Error ? error.message : String(error ?? 'Erro desconhecido');
+}
+
+function persistenceAvailable() {
+  return Date.now() >= state.persistenceDisabledUntil;
+}
+
+function markPersistenceFailure(error: unknown) {
+  const message = errorMessage(error);
+  state.persistenceError = message;
+  state.persistenceDisabledUntil = Date.now() + PERSISTENCE_RETRY_MS;
+  schemaReady = null;
+}
+
+function markPersistenceHealthy() {
+  state.persistenceError = null;
+  state.persistenceDisabledUntil = 0;
+}"""
+          if old not in s: raise SystemExit('constants target not found')
+          s = s.replace(old, new, 1)
+
+          old = """async function hydrateFromDatabase(force = false) {
+  if (!force && Date.now() - state.hydratedAt < HYDRATE_MAX_AGE_MS) return;
+  await ensureSchema();"""
+          new = """async function hydrateFromDatabase(force = false) {
+  if (!persistenceAvailable()) return;
+  if (!force && Date.now() - state.hydratedAt < HYDRATE_MAX_AGE_MS) return;
+  await ensureSchema();"""
+          if old not in s: raise SystemExit('hydrate target not found')
+          s = s.replace(old, new, 1)
+
+          old = """  state.history = history;
+  state.hydratedAt = Date.now();
+}"""
+          new = """  state.history = history;
+  state.hydratedAt = Date.now();
+  markPersistenceHealthy();
+}"""
+          if old not in s: raise SystemExit('hydrate success target not found')
+          s = s.replace(old, new, 1)
+
+          old = """  await persistMatches(matches, capturedAt);
+  await Promise.all(snapshotsToPersist.map(({ key, snapshot }) => sql`
+    INSERT INTO live_engine_snapshots (event_key, captured_at, snapshot_data)
+    VALUES (${key}, ${snapshot.capturedAt}::timestamptz, ${JSON.stringify(snapshot)}::jsonb)
+    ON CONFLICT (event_key, captured_at) DO NOTHING
+  `));
+
+  state.hydratedAt = Date.now();"""
+          new = """  if (persistenceAvailable()) {
+    try {
+      await persistMatches(matches, capturedAt);
+      await Promise.all(snapshotsToPersist.map(({ key, snapshot }) => sql`
+        INSERT INTO live_engine_snapshots (event_key, captured_at, snapshot_data)
+        VALUES (${key}, ${snapshot.capturedAt}::timestamptz, ${JSON.stringify(snapshot)}::jsonb)
+        ON CONFLICT (event_key, captured_at) DO NOTHING
+      `));
+      markPersistenceHealthy();
+    } catch (error) {
+      markPersistenceFailure(error);
+    }
+  }
+
+  state.hydratedAt = Date.now();"""
+          if old not in s: raise SystemExit('append persistence target not found')
+          s = s.replace(old, new, 1)
+
+          old = """  state.refreshInFlight = (async () => {
+    await hydrateFromDatabase();
+    const previousByKey = new Map(state.matches.map((match) => [eventKey(match), match] as const));"""
+          new = """  state.refreshInFlight = (async () => {
+    try {
+      await hydrateFromDatabase();
+    } catch (error) {
+      markPersistenceFailure(error);
+    }
+    const previousByKey = new Map(state.matches.map((match) => [eventKey(match), match] as const));"""
+          if old not in s: raise SystemExit('refresh hydrate target not found')
+          s = s.replace(old, new, 1)
+
+          old = """  try {
+    await hydrateFromDatabase();
+  } catch (error) {
+    if (state.matches.length === 0) {
+      return NextResponse.json(
+        { matches: [], error: error instanceof Error ? error.message : 'Falha ao carregar histórico persistente' },
+        { status: 502 }
+      );
+    }
+  }
+"""
+          new = """  try {
+    await hydrateFromDatabase();
+  } catch (error) {
+    markPersistenceFailure(error);
+  }
+"""
+          if old not in s: raise SystemExit('GET hydrate target not found')
+          s = s.replace(old, new, 1)
+
+          old = """  } else if (includeHistory && historyMode !== 'compact') {
+    try {
+      responseHistory = await loadHistoryFromDatabase(HISTORY_LIMIT, requestedMatchId ?? undefined);
+    } catch {
+      responseHistory = state.history;
+    }
+  }"""
+          new = """  } else if (includeHistory && historyMode !== 'compact' && persistenceAvailable()) {
+    try {
+      responseHistory = await loadHistoryFromDatabase(HISTORY_LIMIT, requestedMatchId ?? undefined);
+      markPersistenceHealthy();
+    } catch (error) {
+      markPersistenceFailure(error);
+      responseHistory = state.history;
+    }
+  }"""
+          if old not in s: raise SystemExit('history DB target not found')
+          s = s.replace(old, new, 1)
+
+          old = """      persistence: 'neon-postgresql',
+      refreshing: Boolean(state.refreshInFlight),"""
+          new = """      persistence: persistenceAvailable() ? 'neon-postgresql' : 'memory-fallback',
+      persistenceAvailable: persistenceAvailable(),
+      persistenceRetryAt: state.persistenceDisabledUntil > Date.now() ? new Date(state.persistenceDisabledUntil).toISOString() : null,
+      persistenceError: state.persistenceError,
+      refreshing: Boolean(state.refreshInFlight),"""
+          if old not in s: raise SystemExit('engine persistence metadata target not found')
+          s = s.replace(old, new, 1)
+
+          route.write_text(s)
+          PY
+      - name: Verify and commit
+        shell: bash
+        run: |
+          grep -q "memory-fallback" apps/web/src/app/api/live/central/route.ts
+          grep -q "markPersistenceFailure" apps/web/src/app/api/live/central/route.ts
+          grep -q "if (persistenceAvailable())" apps/web/src/app/api/live/central/route.ts
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add apps/web/src/app/api/live/central/route.ts
+          git rm .github/workflows/mvp1-neon-fallback.yml
+          git commit -m "fix: keep live engine running when Neon quota is unavailable"
+          git push origin main
