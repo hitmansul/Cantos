@@ -1,0 +1,145 @@
+name: Apply client-side live history resilience
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - name: Patch live history client resilience
+        shell: bash
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+          page = Path('apps/web/src/app/live-history/page.tsx')
+          s = page.read_text()
+
+          anchor = """function dedupeMatches(matches: LiveMatch[]) {
+  const map = new Map<string, LiveMatch>();
+  for (const match of matches) {
+    const key = matchKey(match);
+    const current = map.get(key);
+    if (!current) {
+      map.set(key, match);
+      continue;
+    }
+    const currentQuality = current.engineHistory.length * 10 + (current.corners ? 5 : 0);
+    const nextQuality = match.engineHistory.length * 10 + (match.corners ? 5 : 0);
+    if (nextQuality >= currentQuality) map.set(key, match);
+  }
+  return [...map.values()];
+}
+"""
+          addition = anchor + """
+function mergeSnapshotHistory(previous: Snapshot[], incoming: Snapshot[]) {
+  const merged = new Map<string, Snapshot>();
+  for (const snapshot of [...previous, ...incoming]) {
+    const key = snapshot.capturedAt ?? `${snapshot.minute}|${snapshot.homeScore}|${snapshot.awayScore}|${snapshot.corners.total ?? 'x'}|${snapshot.shots.total ?? 'x'}|${snapshot.dangerousAttacks.total ?? 'x'}`;
+    merged.set(key, snapshot);
+  }
+  return [...merged.values()]
+    .sort((a, b) => {
+      const left = a.capturedAt ? new Date(a.capturedAt).getTime() : 0;
+      const right = b.capturedAt ? new Date(b.capturedAt).getTime() : 0;
+      return left - right;
+    })
+    .slice(-12);
+}
+
+function pairDelta(current: Pair, previous: Pair) {
+  return current.total !== null && previous.total !== null ? current.total - previous.total : 0;
+}
+
+function deriveClientTrend(history: Snapshot[]): Trend {
+  if (history.length < 2) {
+    return { status: 'insufficient-data', cornersDelta: 0, shotsDelta: 0, dangerousAttacksDelta: 0, stoppedMinutesDelta: 0 };
+  }
+  const latest = history.at(-1)!;
+  const latestMinute = minuteNumber(latest.minute);
+  const candidates = history.filter(snapshot => latestMinute - minuteNumber(snapshot.minute) <= 10);
+  const baseline = candidates[0] ?? history[0];
+  const cornersDelta = pairDelta(latest.corners, baseline.corners);
+  const shotsDelta = pairDelta(latest.shots, baseline.shots);
+  const dangerousAttacksDelta = pairDelta(latest.dangerousAttacks, baseline.dangerousAttacks);
+  const activity = Math.max(cornersDelta, 0) * 3 + Math.max(shotsDelta, 0) + Math.max(dangerousAttacksDelta, 0) * 0.25;
+  const status: TrendStatus = candidates.length < 2 ? 'insufficient-data' : activity >= 8 ? 'accelerating' : activity <= 1 ? 'cooling' : 'stable';
+  return { status, cornersDelta, shotsDelta, dangerousAttacksDelta, stoppedMinutesDelta: 0 };
+}
+
+function mergeLiveMatches(previous: LiveMatch[], incoming: LiveMatch[]) {
+  const previousByKey = new Map(previous.map(match => [matchKey(match), match] as const));
+  return incoming.map(match => {
+    const old = previousByKey.get(matchKey(match));
+    if (!old) return match;
+    const engineHistory = mergeSnapshotHistory(old.engineHistory, match.engineHistory);
+    return {
+      ...match,
+      engineHistory,
+      engineTrend: deriveClientTrend(engineHistory),
+    };
+  });
+}
+"""
+          if anchor not in s:
+              raise SystemExit('dedupe anchor not found')
+          s = s.replace(anchor, addition, 1)
+
+          old = """      const normalized = Array.isArray(data.matches) ? data.matches.map(normalizeMatch).filter((item): item is LiveMatch => Boolean(item)) : [];
+      const next = dedupeMatches(normalized);
+"""
+          new = """      const normalized = Array.isArray(data.matches) ? data.matches.map(normalizeMatch).filter((item): item is LiveMatch => Boolean(item)) : [];
+      const nextRaw = dedupeMatches(normalized);
+      let next = nextRaw;
+"""
+          if old not in s:
+              raise SystemExit('load normalized block not found')
+          s = s.replace(old, new, 1)
+
+          old = """      setMatches(next);
+      setLastUpdated(typeof data.lastUpdated === 'string' ? data.lastUpdated : new Date().toISOString());
+"""
+          new = """      setMatches(current => {
+        next = mergeLiveMatches(current, nextRaw);
+        return next;
+      });
+      setLastUpdated(typeof data.lastUpdated === 'string' ? data.lastUpdated : new Date().toISOString());
+"""
+          if old not in s:
+              raise SystemExit('setMatches block not found')
+          s = s.replace(old, new, 1)
+
+          old = """          return selectedDetail ?? next.find(match => matchKey(match) === selectedKey) ?? current;
+"""
+          new = """          const updated = selectedDetail ?? next.find(match => matchKey(match) === selectedKey);
+          if (!updated) return current;
+          if (!current) return updated;
+          const history = mergeSnapshotHistory(current.engineHistory, updated.engineHistory);
+          return { ...updated, engineHistory: history, engineTrend: deriveClientTrend(history) };
+"""
+          if old not in s:
+              raise SystemExit('selected snapshot block not found')
+          s = s.replace(old, new, 1)
+
+          page.write_text(s)
+          PY
+      - name: Verify and commit
+        shell: bash
+        run: |
+          grep -q "function mergeSnapshotHistory" apps/web/src/app/live-history/page.tsx
+          grep -q "function deriveClientTrend" apps/web/src/app/live-history/page.tsx
+          grep -q "mergeLiveMatches(current, nextRaw)" apps/web/src/app/live-history/page.tsx
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add apps/web/src/app/live-history/page.tsx
+          git rm .github/workflows/mvp1-client-history.yml
+          git commit -m "fix: accumulate short live history in client for MVP1"
+          git push origin main
