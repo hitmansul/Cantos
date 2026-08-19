@@ -340,23 +340,34 @@ function calculateIntelligence(match: LiveMatch): Intelligence {
     explanation: 'Ainda não há histórico e estatísticas suficientes para classificar este jogo com segurança.',
   };
 
-  const corners = match.corners?.total ?? history.at(-1)?.corners.total ?? 0;
+  const latest = history.at(-1);
+  const corners = match.corners?.total ?? latest?.corners.total ?? 0;
   const recentCorners = Math.max(match.engineTrend.cornersDelta, 0);
   const recentShots = Math.max(match.engineTrend.shotsDelta, 0);
   const recentDangerous = Math.max(match.engineTrend.dangerousAttacksDelta, 0);
-  const coverage = Math.min(history.length / 8, 1);
+  const hasCorners = match.corners?.total !== undefined || latest?.corners.total !== null;
+  const hasShots = latest?.shots.total !== null;
+  const hasDangerousAttacks = latest?.dangerousAttacks.total !== null;
+  const statisticalCoverage = Number(hasCorners) + Number(hasShots) + Number(hasDangerousAttacks);
   const pressure = Math.min(100, Math.round(recentDangerous * 8 + recentShots * 7 + recentCorners * 16 + (match.engineTrend.status === 'accelerating' ? 25 : match.engineTrend.status === 'stable' ? 12 : 2)));
   const speed = Math.min(100, Math.round(recentCorners * 22 + recentShots * 10 + recentDangerous * 5 + (match.engineTrend.status === 'accelerating' ? 28 : match.engineTrend.status === 'stable' ? 14 : 3)));
   const minuteWindow = minute >= 50 && minute <= 88 ? 16 : minute >= 20 && minute < 50 ? 9 : 2;
   const score = Math.max(0, Math.min(100, Math.round(Math.min(corners * 2.2, 22) + Math.min(history.length * 2.2, 18) + pressure * 0.22 + speed * 0.18 + minuteWindow)));
   const nextCornerProbability = Math.max(8, Math.min(92, Math.round(18 + pressure * 0.32 + speed * 0.22 + Math.min(corners, 12) * 1.4 + minuteWindow * 0.5)));
-  const confidence: Confidence = coverage >= 0.75 && history.length >= 6 ? 'Alta' : 'Média';
+  const confidence: Confidence = statisticalCoverage === 3 && history.length >= 6
+    ? 'Alta'
+    : statisticalCoverage >= 2 && history.length >= 4
+      ? 'Média'
+      : 'Baixa';
   const decision: Decision = score >= 72 ? 'OPORTUNIDADE' : score >= 46 ? 'ACOMPANHAR' : 'EVITAR';
-  const explanation = pressure >= 65
-    ? 'O jogo está pressionando e criando ações ofensivas. Há sinais favoráveis para um novo escanteio.'
-    : match.engineTrend.status === 'cooling'
-      ? 'O ritmo caiu nos últimos registros. Neste momento, a tendência de novo escanteio enfraqueceu.'
-      : 'O jogo tem atividade, mas ainda não há força suficiente para indicar entrada. Continue acompanhando.';
+  const limitedCoverage = statisticalCoverage < 2;
+  const explanation = limitedCoverage
+    ? 'A leitura usa principalmente escanteios e histórico recente. Faltam estatísticas ofensivas para aumentar a confiança da recomendação.'
+    : pressure >= 65
+      ? 'O jogo está pressionando e criando ações ofensivas. Há sinais favoráveis para um novo escanteio.'
+      : match.engineTrend.status === 'cooling'
+        ? 'O ritmo caiu nos últimos registros. Neste momento, a tendência de novo escanteio enfraqueceu.'
+        : 'O jogo tem atividade, mas ainda não há força suficiente para indicar entrada. Continue acompanhando.';
   return { score, nextCornerProbability, pressure, speed, confidence, decision, explanation, ready: true };
 }
 
