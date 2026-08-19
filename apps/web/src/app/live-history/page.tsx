@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import LiveHistoryPageBase from './LiveHistoryPageBase';
 
 type RawSnapshot = Record<string, unknown>;
@@ -129,6 +129,11 @@ function isCentralRequest(input: RequestInfo | URL) {
   return inputUrl(input).includes('/api/live/central?');
 }
 
+function centralUrl(input: RequestInfo | URL) {
+  if (!isCentralRequest(input)) return null;
+  return new URL(inputUrl(input), window.location.origin);
+}
+
 function forceCentralRefresh(input: RequestInfo | URL): RequestInfo | URL {
   if (!isCentralRequest(input)) return input;
   if (typeof input !== 'string' && !(input instanceof URL)) return input;
@@ -140,17 +145,40 @@ function forceCentralRefresh(input: RequestInfo | URL): RequestInfo | URL {
 
 export default function LiveHistoryPage() {
   const [ready, setReady] = useState(false);
+  const [pageGeneration, setPageGeneration] = useState(0);
+  const selectedMatchIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     const originalFetch = window.fetch.bind(window);
     const wrappedFetch: typeof window.fetch = async (input, init) => {
       const effectiveInput = forceCentralRefresh(input);
+      const requestUrl = centralUrl(effectiveInput);
+      const requestedMatchId = requestUrl?.searchParams.get('matchId') ?? null;
+      const historyMode = requestUrl?.searchParams.get('history') ?? null;
+
+      if (requestedMatchId) selectedMatchIdRef.current = requestedMatchId;
+
       const response = await originalFetch(effectiveInput, init);
-      if (!response.ok || !isCentralRequest(effectiveInput)) return response;
+      if (!response.ok || !requestUrl) return response;
 
       try {
         const data = await response.clone().json() as Record<string, unknown>;
         if (!Array.isArray(data.matches)) return response;
+
+        if (historyMode === 'summary' && selectedMatchIdRef.current) {
+          const activeIds = new Set(
+            data.matches
+              .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === 'object')
+              .map((item) => String(item.id ?? ''))
+              .filter(Boolean)
+          );
+          if (!activeIds.has(selectedMatchIdRef.current)) {
+            historyCache.delete(selectedMatchIdRef.current);
+            selectedMatchIdRef.current = null;
+            setPageGeneration((value) => value + 1);
+          }
+        }
+
         const enriched = { ...data, matches: data.matches.map(enrichMatch) };
         const headers = new Headers(response.headers);
         headers.set('content-type', 'application/json');
@@ -177,5 +205,5 @@ export default function LiveHistoryPage() {
     return <main className="mx-auto w-full max-w-7xl px-4 py-6 text-sm text-muted-foreground">Preparando acompanhamento ao vivo...</main>;
   }
 
-  return <LiveHistoryPageBase />;
+  return <LiveHistoryPageBase key={pageGeneration} />;
 }
