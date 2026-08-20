@@ -120,25 +120,32 @@ function buildTrend(history: Snapshot[]) {
 }
 
 function mergeFresh(previous: LiveMatch | undefined,current: LiveMatch): LiveMatch { return previous ? {...previous,...current,corners:current.corners??previous.corners,liveStats:current.liveStats?.length?current.liveStats:previous.liveStats} : current; }
-async function refresh(origin:string){
+async function refresh(origin:string, follow:string){
   if(state.refreshInFlight) return state.refreshInFlight;
   state.refreshInFlight=(async()=>{
     try{await hydrate();}catch(error){console.warn('[live-engine] Neon indisponível durante hidratação.',error);}
-    const previous=new Map(state.matches.map(m=>[eventKey(m),m] as const)); const url=new URL('/api/live/corners-fast',origin); const response=await fetch(url,{cache:'no-store'}); if(!response.ok) throw new Error(`live enrichment failed: ${response.status}`);
+    const previous=new Map(state.matches.map(m=>[eventKey(m),m] as const));
+    const url=new URL('/api/live/corners-fast',origin);
+    if(follow) url.searchParams.set('follow',follow);
+    const response=await fetch(url,{cache:'no-store'}); if(!response.ok) throw new Error(`live enrichment failed: ${response.status}`);
     const payload=await response.json() as {matches?:LiveMatch[];statisticsCoverage?:Record<string,unknown>;cornerCoverage?:Record<string,unknown>}; const raw=Array.isArray(payload.matches)?payload.matches:[]; const matches=raw.map(m=>mergeFresh(previous.get(eventKey(m)),m));
     await appendHistory(matches); state.matches=matches; state.coverage=payload.statisticsCoverage??payload.cornerCoverage; state.updatedAt=new Date().toISOString();
   })().finally(()=>{state.refreshInFlight=null;}); return state.refreshInFlight;
 }
 
 export async function GET(request:NextRequest){
-  const force=request.nextUrl.searchParams.get('refresh')==='1'; const historyMode=request.nextUrl.searchParams.get('history')??'1'; const includeHistory=historyMode!=='0'; const requestedMatchId=request.nextUrl.searchParams.get('matchId');
+  const force=request.nextUrl.searchParams.get('refresh')==='1';
+  const historyMode=request.nextUrl.searchParams.get('history')??'1';
+  const includeHistory=historyMode!=='0';
+  const requestedMatchId=request.nextUrl.searchParams.get('matchId');
+  const follow=(request.nextUrl.searchParams.get('follow')??'').split(',').map(v=>Number(v)).filter(v=>Number.isFinite(v)&&v>0).slice(0,12).join(',');
   try{await hydrate();}catch(error){console.warn('[live-engine] Neon indisponível no GET; usando coleta/memória.',error);}
   const hadCached=state.matches.length>0;
-  if(force || !hadCached){ try{await refresh(request.nextUrl.origin);}catch(error){ if(!hadCached) return NextResponse.json({matches:[],error:error instanceof Error?error.message:'Falha no motor ao vivo'},{status:502}); } }
+  if(force || !hadCached){ try{await refresh(request.nextUrl.origin,follow);}catch(error){ if(!hadCached) return NextResponse.json({matches:[],error:error instanceof Error?error.message:'Falha no motor ao vivo'},{status:502}); } }
   const source=requestedMatchId?state.matches.filter(m=>String(m.id)===requestedMatchId):state.matches;
   let responseHistory=state.history;
   if(includeHistory&&historyMode==='summary') responseHistory=Object.fromEntries(Object.entries(state.history).map(([key,h])=>[key,h.slice(-SUMMARY_HISTORY_LIMIT)]));
   else if(includeHistory&&historyMode!=='compact'){try{responseHistory=await loadHistory(HISTORY_LIMIT,requestedMatchId??undefined);}catch{responseHistory=state.history;}}
   const matches=source.map(match=>{const key=eventKey(match);const history=responseHistory[key]??state.history[key]??[];return {...match,engineHistory:includeHistory?history:undefined,engineTrend:buildTrend(history),engineUpdatedAt:state.updatedAt,engineTrackedSince:history[0]?.capturedAt??null,engineSnapshotCount:history.length};});
-  return NextResponse.json({matches,count:matches.length,lastUpdated:state.updatedAt,refreshQueued:false,engine:{mode:'central-persistent-neon-compact-live-set',persistence:'neon-postgresql',refreshing:Boolean(state.refreshInFlight),refreshSeconds:25,historyLimit:HISTORY_LIMIT,compactHistoryLimit:COMPACT_HISTORY_LIMIT,summaryHistoryLimit:SUMMARY_HISTORY_LIMIT,trendWindowMinutes:TREND_WINDOW_MINUTES,trackedMatches:Object.keys(state.history).length,totalSnapshots:Object.values(state.history).reduce((sum,h)=>sum+h.length,0),coverage:state.coverage??null}});
+  return NextResponse.json({matches,count:matches.length,lastUpdated:state.updatedAt,refreshQueued:false,engine:{mode:'central-persistent-neon-compact-live-set-user-follow',persistence:'neon-postgresql',refreshing:Boolean(state.refreshInFlight),refreshSeconds:25,historyLimit:HISTORY_LIMIT,compactHistoryLimit:COMPACT_HISTORY_LIMIT,summaryHistoryLimit:SUMMARY_HISTORY_LIMIT,trendWindowMinutes:TREND_WINDOW_MINUTES,trackedMatches:Object.keys(state.history).length,totalSnapshots:Object.values(state.history).reduce((sum,h)=>sum+h.length,0),coverage:state.coverage??null}});
 }
