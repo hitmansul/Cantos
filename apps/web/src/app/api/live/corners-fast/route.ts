@@ -57,11 +57,6 @@ function hasUsefulLiveData(match: LiveMatch) {
   );
 }
 
-function isLibertadores(match: LiveMatch) {
-  const competition = normalize(match.competition);
-  return competition.includes('libertadores');
-}
-
 function sameRequestedMatch(match: LiveMatch, eventId: number, home: string, away: string) {
   if (eventId > 0) {
     if (match.id === eventId) return true;
@@ -79,7 +74,6 @@ function sameRequestedMatch(match: LiveMatch, eventId: number, home: string, awa
 
 function qualityScore(match: LiveMatch) {
   let score = 0;
-  if (isLibertadores(match)) score += 250;
   if (match.corners) score += 100;
   if (match.liveStats?.length) score += Math.min(match.liveStats.length, 30) * 3;
   if (match.statsSource === '365scores') score += 15;
@@ -114,7 +108,6 @@ export async function GET(request: NextRequest) {
   const matches = Array.isArray(payload.matches) ? payload.matches : [];
   const sorted = [...matches].sort((a, b) => qualityScore(b) - qualityScore(a));
   const useful = sorted.filter(hasUsefulLiveData);
-  const priority = sorted.filter(isLibertadores);
 
   let monitored: LiveMatch[];
   if (requestedEventId > 0 || (requestedHome && requestedAway)) {
@@ -122,16 +115,8 @@ export async function GET(request: NextRequest) {
       sameRequestedMatch(match, requestedEventId, requestedHome, requestedAway)
     );
     monitored = requested ? [requested] : [];
-  } else if (priority.length > 0 || useful.length > 0) {
-    const selected = new Map<number, LiveMatch>();
-    for (const match of priority) selected.set(match.id, match);
-    for (const match of useful) {
-      if (selected.size >= MAX_MONITORED) break;
-      selected.set(match.id, match);
-    }
-    monitored = [...selected.values()]
-      .sort((a, b) => qualityScore(b) - qualityScore(a))
-      .slice(0, MAX_MONITORED);
+  } else if (useful.length > 0) {
+    monitored = useful.slice(0, MAX_MONITORED);
   } else {
     monitored = sorted.slice(0, FALLBACK_MONITORED);
   }
@@ -147,13 +132,12 @@ export async function GET(request: NextRequest) {
       withStats: monitored.filter((match) => Boolean(match.liveStats?.length)).length,
       baseMatches: matches.length,
       usefulBaseMatches: useful.length,
-      priorityLibertadoresMatches: priority.length,
       statsSources: monitored.reduce<Record<string, number>>((acc, match) => {
         const source = match.statsSource ?? 'sem-estatistica';
         acc[source] = (acc[source] ?? 0) + 1;
         return acc;
       }, {}),
     },
-    enrichmentPolicy: 'trust-base-live-stats-v1-libertadores-priority',
+    enrichmentPolicy: 'trust-base-live-stats-v1-user-selection-ready',
   });
 }
