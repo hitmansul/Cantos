@@ -10,6 +10,7 @@ type LiveStatRow = {
 type LiveMatch = {
   id: number;
   minute: number | string;
+  statusText?: string;
   competition?: string;
   homeTeam: { id: number; name: string; score: number };
   awayTeam: { id: number; name: string; score: number };
@@ -51,25 +52,22 @@ function minuteValue(value: number | string) {
 }
 
 function hasUsefulLiveData(match: LiveMatch) {
-  return Boolean(
-    match.corners ||
-      (Array.isArray(match.liveStats) && match.liveStats.length > 0)
-  );
+  return Boolean(match.corners || (Array.isArray(match.liveStats) && match.liveStats.length > 0));
+}
+
+function sourceIds(match: LiveMatch) {
+  return [match.id, match.sourceIds?.scores365, match.sourceIds?.sofascore, match.sourceIds?.apiFootball]
+    .filter((value): value is number => typeof value === 'number' && Number.isFinite(value));
+}
+
+function matchesAnyId(match: LiveMatch, ids: Set<number>) {
+  return sourceIds(match).some((id) => ids.has(id));
 }
 
 function sameRequestedMatch(match: LiveMatch, eventId: number, home: string, away: string) {
-  if (eventId > 0) {
-    if (match.id === eventId) return true;
-    if (match.sourceIds?.scores365 === eventId) return true;
-    if (match.sourceIds?.sofascore === eventId) return true;
-    if (match.sourceIds?.apiFootball === eventId) return true;
-  }
-
+  if (eventId > 0 && sourceIds(match).includes(eventId)) return true;
   if (!home || !away) return false;
-  return (
-    canonicalTeam(match.homeTeam.name) === canonicalTeam(home) &&
-    canonicalTeam(match.awayTeam.name) === canonicalTeam(away)
-  );
+  return canonicalTeam(match.homeTeam.name) === canonicalTeam(home) && canonicalTeam(match.awayTeam.name) === canonicalTeam(away);
 }
 
 function qualityScore(match: LiveMatch) {
@@ -78,10 +76,9 @@ function qualityScore(match: LiveMatch) {
   if (match.liveStats?.length) score += Math.min(match.liveStats.length, 30) * 3;
   if (match.statsSource === '365scores') score += 15;
   if (match.sourceIds?.scores365) score += 5;
-
   const minute = minuteValue(match.minute);
   if (minute >= 15 && minute <= 92) score += 10;
-  if (minute > 92) score -= 5;
+  if (minute > 120) score -= 25;
   return score;
 }
 
@@ -89,6 +86,12 @@ export async function GET(request: NextRequest) {
   const requestedEventId = Number(request.nextUrl.searchParams.get('eventId') ?? '0');
   const requestedHome = request.nextUrl.searchParams.get('home') ?? '';
   const requestedAway = request.nextUrl.searchParams.get('away') ?? '';
+  const followedIds = new Set(
+    (request.nextUrl.searchParams.get('follow') ?? '')
+      .split(',')
+      .map((value) => Number(value))
+      .filter((value) => Number.isFinite(value) && value > 0)
+  );
 
   const rawUrl = new URL('/api/365scores/live', request.nextUrl.origin);
   rawUrl.searchParams.set('raw', '1');
@@ -99,10 +102,7 @@ export async function GET(request: NextRequest) {
     payload = (await response.json()) as Record<string, unknown> & { matches?: LiveMatch[] };
     if (!response.ok) return NextResponse.json(payload, { status: response.status });
   } catch {
-    return NextResponse.json(
-      { matches: [], error: 'Erro ao carregar jogos ao vivo' },
-      { status: 502 }
-    );
+    return NextResponse.json({ matches: [], error: 'Erro ao carregar jogos ao vivo' }, { status: 502 });
   }
 
   const matches = Array.isArray(payload.matches) ? payload.matches : [];
@@ -111,14 +111,22 @@ export async function GET(request: NextRequest) {
 
   let monitored: LiveMatch[];
   if (requestedEventId > 0 || (requestedHome && requestedAway)) {
-    const requested = sorted.find((match) =>
-      sameRequestedMatch(match, requestedEventId, requestedHome, requestedAway)
-    );
+    const requested = sorted.find((match) => sameRequestedMatch(match, requestedEventId, requestedHome, requestedAway));
     monitored = requested ? [requested] : [];
-  } else if (useful.length > 0) {
-    monitored = useful.slice(0, MAX_MONITORED);
   } else {
-    monitored = sorted.slice(0, FALLBACK_MONITORED);
+    const selected = new Map<number, LiveMatch>();
+    for (const match of sorted) {
+      if (matchesAnyId(match, followedIds)) selected.set(match.id, match);
+      if (selected.size >= MAX_MONITORED) break;
+    }
+    for (const match of useful) {
+      if (selected.size >= MAX_MONITORED) break;
+      selected.set(match.id, match);
+    }
+    if (selected.size === 0) {
+      for (const match of sorted.slice(0, FALLBACK_MONITORED)) selected.set(match.id, match);
+    }
+    monitored = [...selected.values()].slice(0, MAX_MONITORED);
   }
 
   return NextResponse.json({
@@ -130,6 +138,8 @@ export async function GET(request: NextRequest) {
       total: monitored.length,
       withCorners: monitored.filter((match) => Boolean(match.corners)).length,
       withStats: monitored.filter((match) => Boolean(match.liveStats?.length)).length,
+      followedRequested: followedIds.size,
+      followedFound: monitored.filter((match) => matchesAnyId(match, followedIds)).length,
       baseMatches: matches.length,
       usefulBaseMatches: useful.length,
       statsSources: monitored.reduce<Record<string, number>>((acc, match) => {
@@ -138,6 +148,6 @@ export async function GET(request: NextRequest) {
         return acc;
       }, {}),
     },
-    enrichmentPolicy: 'trust-base-live-stats-v1-user-selection-ready',
+    enrichmentPolicy: 'trust-base-live-stats-v2-user-follow-priority',
   });
 }
