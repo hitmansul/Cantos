@@ -16,8 +16,9 @@ type LiveMatch = {
   [key: string]: unknown;
 };
 type ApiFixture = {
-  fixture: { id: number };
+  fixture: { id: number; status?: { elapsed?: number | null; extra?: number | null } };
   teams: { home: { name: string }; away: { name: string } };
+  goals?: { home?: number | null; away?: number | null };
 };
 type ApiTeamStats = {
   team: { name?: string };
@@ -27,6 +28,8 @@ type ApiTeamStats = {
 const MAX_MONITORED = 12;
 const FALLBACK_MONITORED = 3;
 const MAX_FOLLOWED_FALLBACK = 4;
+const MIN_TEAM_SIMILARITY = 0.72;
+const MIN_FIXTURE_SIMILARITY = 0.8;
 
 function normalize(value: unknown) {
   return String(value ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').replace(/\s+/g, ' ').trim();
@@ -68,10 +71,62 @@ function statValue(rows: ApiTeamStats['statistics'], names: string[]) {
   const row = rows.find((item) => wanted.includes(normalize(item.type)));
   return row ? numeric(row.value) : null;
 }
-function fixtureMatches(match: LiveMatch, fixture: ApiFixture) {
-  const home = canonicalTeam(match.homeTeam.name), away = canonicalTeam(match.awayTeam.name);
-  const fh = canonicalTeam(fixture.teams.home.name), fa = canonicalTeam(fixture.teams.away.name);
-  return (home === fh && away === fa) || (home === fa && away === fh);
+function teamSimilarity(left: string, right: string) {
+  const a = canonicalTeam(left);
+  const b = canonicalTeam(right);
+  if (!a || !b) return 0;
+  if (a === b) return 1;
+  if ((a.includes(b) && b.length >= 4) || (b.includes(a) && a.length >= 4)) return 0.92;
+  const aTokens = new Set(a.split(' ').filter((token) => token.length > 1));
+  const bTokens = new Set(b.split(' ').filter((token) => token.length > 1));
+  if (!aTokens.size || !bTokens.size) return 0;
+  let common = 0;
+  for (const token of aTokens) if (bTokens.has(token)) common += 1;
+  return (2 * common) / (aTokens.size + bTokens.size);
+}
+function fixtureSimilarity(match: LiveMatch, fixture: ApiFixture) {
+  const directHome = teamSimilarity(match.homeTeam.name, fixture.teams.home.name);
+  const directAway = teamSimilarity(match.awayTeam.name, fixture.teams.away.name);
+  const swappedHome = teamSimilarity(match.homeTeam.name, fixture.teams.away.name);
+  const swappedAway = teamSimilarity(match.awayTeam.name, fixture.teams.home.name);
+  const direct = Math.min(directHome, directAway) >= MIN_TEAM_SIMILARITY ? (directHome + directAway) / 2 : 0;
+  const swapped = Math.min(swappedHome, swappedAway) >= MIN_TEAM_SIMILARITY ? (swappedHome + swappedAway) / 2 : 0;
+  let score = Math.max(direct, swapped);
+  if (score < MIN_FIXTURE_SIMILARITY) return 0;
+
+  const fixtureMinute = Number(fixture.fixture.status?.elapsed ?? 0) + Number(fixture.fixture.status?.extra ?? 0);
+  const localMinute = minuteValue(match.minute);
+  if (fixtureMinute > 0 && localMinute > 0) {
+    const diff = Math.abs(fixtureMinute - localMinute);
+    if (diff <= 3) score += 0.04;
+    else if (diff > 15) score -= 0.08;
+  }
+
+  const homeGoal = fixture.goals?.home;
+  const awayGoal = fixture.goals?.away;
+  if (typeof homeGoal === 'number' && typeof awayGoal === 'number') {
+    const directScore = homeGoal === match.homeTeam.score && awayGoal === match.awayTeam.score;
+    const swappedScore = homeGoal === match.awayTeam.score && awayGoal === match.homeTeam.score;
+    if (directScore || swappedScore) score += 0.05;
+  }
+  return score;
+}
+function findBestFixture(match: LiveMatch, fixtures: ApiFixture[]) {
+  let best: { fixture: ApiFixture; score: number } | null = null;
+  for (const fixture of fixtures) {
+    const score = fixtureSimilarity(match, fixture);
+    if (score <= 0) continue;
+    if (!best || score > best.score) best = { fixture, score };
+  }
+  return best?.fixture ?? null;
+}
+function bestTeamStats(teams: ApiTeamStats[], name: string, fallbackIndex: number) {
+  let best: { team: ApiTeamStats; score: number } | null = null;
+  for (const team of teams) {
+    const score = teamSimilarity(name, team.team.name ?? '');
+    if (!best || score > best.score) best = { team, score };
+  }
+  return best && best.score >= MIN_TEAM_SIMILARITY ? best.team.statistics : teams[fallbackIndex]?.statistics ?? [];
 }
 async function enrichFollowedFallback(matches: LiveMatch[], followedIds: Set<number>) {
   const targets = matches.filter((match) => matchesAnyId(match, followedIds) && !hasUsefulLiveData(match)).slice(0, MAX_FOLLOWED_FALLBACK);
@@ -81,13 +136,13 @@ async function enrichFollowedFallback(matches: LiveMatch[], followedIds: Set<num
     const fixtures = live?.response ?? [];
     const replacements = new Map<number, LiveMatch>();
     await Promise.all(targets.map(async (match) => {
-      const fixture = fixtures.find((item) => fixtureMatches(match, item));
+      const fixture = findBestFixture(match, fixtures);
       if (!fixture) return;
       const result = await apiFootballGet<ApiTeamStats[]>('/fixtures/statistics', { params: { fixture: fixture.fixture.id }, cache: 'no-store', timeoutMs: 8_000 });
       const teams = result?.response ?? [];
       if (teams.length < 2) return;
-      const homeStats = teams.find((team) => canonicalTeam(team.team.name ?? '') === canonicalTeam(match.homeTeam.name))?.statistics ?? teams[0]?.statistics ?? [];
-      const awayStats = teams.find((team) => canonicalTeam(team.team.name ?? '') === canonicalTeam(match.awayTeam.name))?.statistics ?? teams[1]?.statistics ?? [];
+      const homeStats = bestTeamStats(teams, match.homeTeam.name, 0);
+      const awayStats = bestTeamStats(teams, match.awayTeam.name, 1);
       const cornersHome = statValue(homeStats, ['Corner Kicks', 'Corners']);
       const cornersAway = statValue(awayStats, ['Corner Kicks', 'Corners']);
       const shotsHome = statValue(homeStats, ['Total Shots']);
@@ -157,6 +212,6 @@ export async function GET(request: NextRequest) {
       usefulBaseMatches: useful.length,
       statsSources: monitored.reduce<Record<string, number>>((acc, match) => { const source = match.statsSource ?? 'sem-estatistica'; acc[source] = (acc[source] ?? 0) + 1; return acc; }, {}),
     },
-    enrichmentPolicy: 'trust-base-live-stats-v3-user-follow-api-football-fallback',
+    enrichmentPolicy: 'trust-base-live-stats-v4-user-follow-fuzzy-api-football-fallback',
   });
 }
