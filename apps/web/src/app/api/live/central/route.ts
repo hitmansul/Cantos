@@ -34,6 +34,7 @@ const COMPACT_HISTORY_LIMIT = 12;
 const SUMMARY_HISTORY_LIMIT = 3;
 const HISTORY_WINDOW_HOURS = 3;
 const HYDRATE_MAX_AGE_MS = 60_000;
+const REFRESH_MAX_AGE_MS = 25_000;
 const ACTIVE_MATCH_MAX_AGE_MINUTES = 15;
 const TREND_WINDOW_MINUTES = 10;
 let schemaReady: Promise<void> | null = null;
@@ -141,11 +142,13 @@ export async function GET(request:NextRequest){
   const follow=(request.nextUrl.searchParams.get('follow')??'').split(',').map(v=>Number(v)).filter(v=>Number.isFinite(v)&&v>0).slice(0,12).join(',');
   try{await hydrate();}catch(error){console.warn('[live-engine] Neon indisponível no GET; usando coleta/memória.',error);}
   const hadCached=state.matches.length>0;
-  if(force || !hadCached){ try{await refresh(request.nextUrl.origin,follow);}catch(error){ if(!hadCached) return NextResponse.json({matches:[],error:error instanceof Error?error.message:'Falha no motor ao vivo'},{status:502}); } }
+  const updatedAtMs=state.updatedAt ? Date.parse(state.updatedAt) : 0;
+  const stale=!Number.isFinite(updatedAtMs) || updatedAtMs<=0 || Date.now()-updatedAtMs>=REFRESH_MAX_AGE_MS;
+  if(force || !hadCached || stale){ try{await refresh(request.nextUrl.origin,follow);}catch(error){ if(!hadCached) return NextResponse.json({matches:[],error:error instanceof Error?error.message:'Falha no motor ao vivo'},{status:502}); } }
   const source=requestedMatchId?state.matches.filter(m=>String(m.id)===requestedMatchId):state.matches;
   let responseHistory=state.history;
   if(includeHistory&&historyMode==='summary') responseHistory=Object.fromEntries(Object.entries(state.history).map(([key,h])=>[key,h.slice(-SUMMARY_HISTORY_LIMIT)]));
   else if(includeHistory&&historyMode!=='compact'){try{responseHistory=await loadHistory(HISTORY_LIMIT,requestedMatchId??undefined);}catch{responseHistory=state.history;}}
   const matches=source.map(match=>{const key=eventKey(match);const history=responseHistory[key]??state.history[key]??[];return {...match,engineHistory:includeHistory?history:undefined,engineTrend:buildTrend(history),engineUpdatedAt:state.updatedAt,engineTrackedSince:history[0]?.capturedAt??null,engineSnapshotCount:history.length};});
-  return NextResponse.json({matches,count:matches.length,lastUpdated:state.updatedAt,refreshQueued:false,engine:{mode:'central-persistent-neon-compact-live-set-user-follow',persistence:'neon-postgresql',refreshing:Boolean(state.refreshInFlight),refreshSeconds:25,historyLimit:HISTORY_LIMIT,compactHistoryLimit:COMPACT_HISTORY_LIMIT,summaryHistoryLimit:SUMMARY_HISTORY_LIMIT,trendWindowMinutes:TREND_WINDOW_MINUTES,trackedMatches:Object.keys(state.history).length,totalSnapshots:Object.values(state.history).reduce((sum,h)=>sum+h.length,0),coverage:state.coverage??null}});
+  return NextResponse.json({matches,count:matches.length,lastUpdated:state.updatedAt,refreshQueued:false,engine:{mode:'central-persistent-neon-compact-live-set-user-follow',persistence:'neon-postgresql',refreshing:Boolean(state.refreshInFlight),refreshSeconds:REFRESH_MAX_AGE_MS/1000,refreshStrategy:'server-stale-guard',historyLimit:HISTORY_LIMIT,compactHistoryLimit:COMPACT_HISTORY_LIMIT,summaryHistoryLimit:SUMMARY_HISTORY_LIMIT,trendWindowMinutes:TREND_WINDOW_MINUTES,trackedMatches:Object.keys(state.history).length,totalSnapshots:Object.values(state.history).reduce((sum,h)=>sum+h.length,0),coverage:state.coverage??null}});
 }
