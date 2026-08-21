@@ -15,6 +15,7 @@ type CatalogMatch = {
 
 const historyCache = new Map<string, RawSnapshot[]>();
 const FOLLOW_KEY = 'ia-cantos-followed-live-v1';
+let followRefreshPending = false;
 
 function numeric(value: unknown) {
   const parsed = typeof value === 'number' ? value : Number(value);
@@ -126,14 +127,17 @@ function writeFollowedIds(ids: number[]) {
   window.localStorage.setItem(FOLLOW_KEY, JSON.stringify([...new Set(ids)].slice(0, 12)));
 }
 
-function forceCentralRefresh(input: RequestInfo | URL): RequestInfo | URL {
+function prepareCentralRequest(input: RequestInfo | URL): RequestInfo | URL {
   if (!isCentralRequest(input)) return input;
   if (typeof input !== 'string' && !(input instanceof URL)) return input;
   const url = new URL(inputUrl(input), window.location.origin);
-  url.searchParams.set('refresh', '1');
   const followed = readFollowedIds();
   if (followed.length) url.searchParams.set('follow', followed.join(','));
   else url.searchParams.delete('follow');
+  if (followRefreshPending) {
+    url.searchParams.set('refresh', '1');
+    followRefreshPending = false;
+  }
   return url;
 }
 
@@ -151,7 +155,9 @@ export default function LiveHistoryPage() {
   const selectedMatchIdRef = useRef<string | null>(null);
 
   useEffect(() => {
-    setFollowedIds(readFollowedIds());
+    const initialFollowed = readFollowedIds();
+    setFollowedIds(initialFollowed);
+    if (initialFollowed.length) followRefreshPending = true;
   }, []);
 
   useEffect(() => {
@@ -166,10 +172,12 @@ export default function LiveHistoryPage() {
         setCatalog(matches);
         setCatalogError(null);
         const liveIds = new Set(matches.map((match) => match.id));
-        const kept = readFollowedIds().filter((id) => liveIds.has(id));
-        if (kept.length !== readFollowedIds().length) {
+        const currentFollowed = readFollowedIds();
+        const kept = currentFollowed.filter((id) => liveIds.has(id));
+        if (kept.length !== currentFollowed.length) {
           writeFollowedIds(kept);
           setFollowedIds(kept);
+          followRefreshPending = true;
           setPageGeneration((value) => value + 1);
         }
       } catch (error) {
@@ -184,7 +192,7 @@ export default function LiveHistoryPage() {
   useEffect(() => {
     const originalFetch = window.fetch.bind(window);
     const wrappedFetch: typeof window.fetch = async (input, init) => {
-      const effectiveInput = forceCentralRefresh(input);
+      const effectiveInput = prepareCentralRequest(input);
       const requestUrl = centralUrl(effectiveInput);
       const requestedMatchId = requestUrl?.searchParams.get('matchId') ?? null;
       const historyMode = requestUrl?.searchParams.get('history') ?? null;
@@ -227,6 +235,7 @@ export default function LiveHistoryPage() {
     const next = current.includes(id) ? current.filter((value) => value !== id) : [id, ...current].slice(0, 12);
     writeFollowedIds(next);
     setFollowedIds(next);
+    followRefreshPending = true;
     setPageGeneration((value) => value + 1);
   };
 
