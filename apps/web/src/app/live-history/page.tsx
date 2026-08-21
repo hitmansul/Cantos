@@ -60,6 +60,10 @@ function delta(latest: RawSnapshot, baseline: RawSnapshot, field: 'corners' | 's
   return current !== null && previous !== null ? current - previous : 0;
 }
 
+function hasMetric(snapshot: RawSnapshot, field: 'corners' | 'shots' | 'dangerousAttacks') {
+  return pairTotal(snapshot[field]).total !== null;
+}
+
 function deriveTrend(history: RawSnapshot[]) {
   if (history.length < 2) return { pace: 'insufficient-data', cornersDelta: 0, shotsDelta: 0, dangerousAttacksDelta: 0, stoppedMinutesDelta: 0 };
   const latest = history.at(-1)!;
@@ -69,8 +73,24 @@ function deriveTrend(history: RawSnapshot[]) {
   const cornersDelta = delta(latest, baseline, 'corners');
   const shotsDelta = delta(latest, baseline, 'shots');
   const dangerousAttacksDelta = delta(latest, baseline, 'dangerousAttacks');
-  const activity = Math.max(cornersDelta, 0) * 3 + Math.max(shotsDelta, 0) + Math.max(dangerousAttacksDelta, 0) * 0.25;
-  const pace = candidates.length < 2 ? 'insufficient-data' : activity >= 8 ? 'accelerating' : activity <= 1 ? 'cooling' : 'stable';
+
+  const hasCorners = hasMetric(latest, 'corners') && hasMetric(baseline, 'corners');
+  const hasShots = hasMetric(latest, 'shots') && hasMetric(baseline, 'shots');
+  const hasDangerous = hasMetric(latest, 'dangerousAttacks') && hasMetric(baseline, 'dangerousAttacks');
+  const availableWeight = (hasCorners ? 3 : 0) + (hasShots ? 1 : 0) + (hasDangerous ? 0.25 : 0);
+  const rawActivity = (hasCorners ? Math.max(cornersDelta, 0) * 3 : 0)
+    + (hasShots ? Math.max(shotsDelta, 0) : 0)
+    + (hasDangerous ? Math.max(dangerousAttacksDelta, 0) * 0.25 : 0);
+  const fullWeight = 4.25;
+  const activity = availableWeight > 0 ? rawActivity * (fullWeight / availableWeight) : 0;
+  const pace = candidates.length < 2 || availableWeight === 0
+    ? 'insufficient-data'
+    : activity >= 8
+      ? 'accelerating'
+      : activity <= 1
+        ? 'cooling'
+        : 'stable';
+
   return { pace, cornersDelta, shotsDelta, dangerousAttacksDelta, stoppedMinutesDelta: 0 };
 }
 
