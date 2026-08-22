@@ -4,6 +4,7 @@ on:
   push:
     paths:
       - '.github/workflows/recalibrate-live-opportunity.yml'
+      - '.github/recalibrate-live-opportunity.trigger'
   workflow_dispatch:
 
 permissions:
