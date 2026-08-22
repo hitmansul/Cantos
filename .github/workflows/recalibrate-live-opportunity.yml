@@ -14,10 +14,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: main
 
       - name: Recalibrate live opportunity scoring
-        shell: python
         run: |
+          python3 - <<'PY'
           from pathlib import Path
 
           path = Path('apps/web/src/app/live-history/LiveHistoryPageBase.tsx')
@@ -51,10 +53,14 @@ jobs:
   )));
 """
 
-          if old not in text:
-            raise SystemExit('Scoring block not found; refusing unsafe patch')
-          text = text.replace(old, new, 1)
-          path.write_text(text, encoding='utf-8')
+          if new in text:
+              print('Scoring already recalibrated')
+          elif old in text:
+              path.write_text(text.replace(old, new, 1), encoding='utf-8')
+              print('Scoring recalibrated')
+          else:
+              raise SystemExit('Scoring block not found; refusing unsafe patch')
+          PY
 
       - name: Commit changes
         run: |
@@ -66,4 +72,4 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add apps/web/src/app/live-history/LiveHistoryPageBase.tsx
           git commit -m "feat: recalibrate live opportunity scoring"
-          git push
+          git push origin HEAD:main
