@@ -349,11 +349,23 @@ function calculateIntelligence(match: LiveMatch): Intelligence {
   const hasShots = latest?.shots.total !== null;
   const hasDangerousAttacks = latest?.dangerousAttacks.total !== null;
   const statisticalCoverage = Number(hasCorners) + Number(hasShots) + Number(hasDangerousAttacks);
-  const pressure = Math.min(100, Math.round(recentDangerous * 8 + recentShots * 7 + recentCorners * 16 + (match.engineTrend.status === 'accelerating' ? 25 : match.engineTrend.status === 'stable' ? 12 : 2)));
-  const speed = Math.min(100, Math.round(recentCorners * 22 + recentShots * 10 + recentDangerous * 5 + (match.engineTrend.status === 'accelerating' ? 28 : match.engineTrend.status === 'stable' ? 14 : 3)));
-  const minuteWindow = minute >= 50 && minute <= 88 ? 16 : minute >= 20 && minute < 50 ? 9 : 2;
-  const score = Math.max(0, Math.min(100, Math.round(Math.min(corners * 2.2, 22) + Math.min(history.length * 2.2, 18) + pressure * 0.22 + speed * 0.18 + minuteWindow)));
-  const nextCornerProbability = Math.max(8, Math.min(92, Math.round(18 + pressure * 0.32 + speed * 0.22 + Math.min(corners, 12) * 1.4 + minuteWindow * 0.5)));
+  const trendBoost = match.engineTrend.status === 'accelerating' ? 24 : match.engineTrend.status === 'stable' ? 11 : -8;
+  const pressure = Math.max(0, Math.min(100, Math.round(
+    recentDangerous * 7 + recentShots * 8 + recentCorners * 20 + trendBoost
+  )));
+  const speed = Math.max(0, Math.min(100, Math.round(
+    recentCorners * 24 + recentShots * 11 + recentDangerous * 4 + trendBoost
+  )));
+  const minuteWindow = minute >= 55 && minute <= 88 ? 12 : minute >= 25 && minute < 55 ? 7 : 1;
+  const recentActivity = Math.min(30, recentCorners * 10 + recentShots * 3 + recentDangerous * 1.5);
+  const accumulatedContext = Math.min(10, corners * 0.8) + Math.min(8, history.length * 1.2);
+  const coolingPenalty = match.engineTrend.status === 'cooling' && recentCorners === 0 && recentShots === 0 ? 12 : 0;
+  const score = Math.max(0, Math.min(100, Math.round(
+    pressure * 0.28 + speed * 0.24 + recentActivity + accumulatedContext + minuteWindow - coolingPenalty
+  )));
+  const nextCornerProbability = Math.max(8, Math.min(92, Math.round(
+    12 + pressure * 0.34 + speed * 0.26 + recentCorners * 5 + minuteWindow * 0.45 - coolingPenalty * 0.5
+  )));
   const confidence: Confidence = statisticalCoverage === 3 && history.length >= 6
     ? 'Alta'
     : statisticalCoverage >= 2 && history.length >= 4
