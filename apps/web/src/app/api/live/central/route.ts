@@ -40,7 +40,33 @@ const TREND_WINDOW_MINUTES = 10;
 let schemaReady: Promise<void> | null = null;
 
 function parseJson<T>(value: T | string): T { return typeof value === 'string' ? JSON.parse(value) as T : value; }
-function eventKey(match: LiveMatch) { return String(match.sourceIds?.sofascore ?? match.sourceIds?.apiFootball ?? match.sourceIds?.scores365 ?? match.id); }
+
+// A identidade do jogo precisa permanecer estável mesmo quando uma fonte de
+// enriquecimento (SofaScore/API-Football) é encontrada no meio da partida.
+// O feed base é 365Scores, então ele/ID-base é a chave canônica.
+function eventKey(match: LiveMatch) { return String(match.sourceIds?.scores365 ?? match.id); }
+function eventAliases(match: LiveMatch) {
+  return [...new Set([
+    eventKey(match),
+    String(match.id),
+    match.sourceIds?.scores365 !== undefined ? String(match.sourceIds.scores365) : '',
+    match.sourceIds?.apiFootball !== undefined ? String(match.sourceIds.apiFootball) : '',
+    match.sourceIds?.sofascore !== undefined ? String(match.sourceIds.sofascore) : '',
+  ].filter(Boolean))];
+}
+function mergeHistories(histories: Snapshot[][], limit = HISTORY_LIMIT) {
+  const merged = new Map<string, Snapshot>();
+  for (const history of histories) {
+    for (const item of history) {
+      const key = item.capturedAt || `${item.minute}|${item.homeScore}|${item.awayScore}|${item.corners.total ?? ''}`;
+      merged.set(key, item);
+    }
+  }
+  return [...merged.values()].sort((a, b) => Date.parse(a.capturedAt) - Date.parse(b.capturedAt)).slice(-limit);
+}
+function historyForMatch(match: LiveMatch, source: Record<string, Snapshot[]> = state.history, limit = HISTORY_LIMIT) {
+  return mergeHistories(eventAliases(match).map(key => source[key] ?? []), limit);
+}
 function normalize(value: string) { return value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim(); }
 function parseNumber(value: unknown) { if (typeof value === 'number') return Number.isFinite(value) ? value : null; if (value === null || value === undefined || value === '') return null; const n = Number(String(value).replace(',', '.').replace(/[^0-9.-]/g, '')); return Number.isFinite(n) ? n : null; }
 function minuteNumber(value: number | string) { if (typeof value === 'number') return Number.isFinite(value) ? value : null; const m = String(value).match(/(\d{1,3})(?:\s*\+\s*(\d{1,2}))?/); return m ? Number(m[1]) + Number(m[2] ?? 0) : null; }
@@ -76,7 +102,13 @@ async function hydrate(force = false) {
   if (!force && Date.now() - state.hydratedAt < HYDRATE_MAX_AGE_MS) return;
   await ensureSchema();
   const rows = await sql`SELECT event_key, match_data, updated_at FROM live_engine_matches WHERE updated_at > NOW() - (${ACTIVE_MATCH_MAX_AGE_MINUTES} * INTERVAL '1 minute') ORDER BY updated_at DESC` as MatchRow[];
-  state.matches = rows.map(row => parseJson(row.match_data));
+  const canonical = new Map<string, LiveMatch>();
+  for (const row of rows) {
+    const match = parseJson(row.match_data);
+    const key = eventKey(match);
+    if (!canonical.has(key)) canonical.set(key, match);
+  }
+  state.matches = [...canonical.values()];
   state.history = await loadHistory(COMPACT_HISTORY_LIMIT);
   if (rows[0]?.updated_at) state.updatedAt = new Date(rows[0].updated_at).toISOString();
   state.hydratedAt = Date.now();
@@ -104,8 +136,19 @@ async function persist(matches: LiveMatch[], capturedAt: string, pending: Array<
 }
 
 async function appendHistory(matches: LiveMatch[]) {
-  const capturedAt = new Date().toISOString(); const pending: Array<{key:string;snapshot:Snapshot}> = [];
-  for (const match of matches) { const key=eventKey(match); const history=state.history[key] ?? []; const next=snapshot(match,capturedAt); if(changed(history.at(-1),next)){ state.history[key]=[...history,next].slice(-HISTORY_LIMIT); pending.push({key,snapshot:next}); } }
+  const capturedAt = new Date().toISOString();
+  const pending: Array<{key:string;snapshot:Snapshot}> = [];
+  for (const match of matches) {
+    const key = eventKey(match);
+    const history = historyForMatch(match);
+    const next = snapshot(match, capturedAt);
+    if (changed(history.at(-1), next)) {
+      state.history[key] = [...history, next].slice(-HISTORY_LIMIT);
+      pending.push({ key, snapshot: next });
+    } else if (history.length && !state.history[key]?.length) {
+      state.history[key] = history;
+    }
+  }
   try { await persist(matches,capturedAt,pending); } catch(error) { console.warn('[live-engine] Persistência indisponível; mantendo histórico em memória.',error); }
   state.hydratedAt=Date.now();
 }
@@ -149,6 +192,7 @@ export async function GET(request:NextRequest){
   let responseHistory=state.history;
   if(includeHistory&&historyMode==='summary') responseHistory=Object.fromEntries(Object.entries(state.history).map(([key,h])=>[key,h.slice(-SUMMARY_HISTORY_LIMIT)]));
   else if(includeHistory&&historyMode!=='compact'){try{responseHistory=await loadHistory(HISTORY_LIMIT,requestedMatchId??undefined);}catch{responseHistory=state.history;}}
-  const matches=source.map(match=>{const key=eventKey(match);const history=responseHistory[key]??state.history[key]??[];return {...match,engineHistory:includeHistory?history:undefined,engineTrend:buildTrend(history),engineUpdatedAt:state.updatedAt,engineTrackedSince:history[0]?.capturedAt??null,engineSnapshotCount:history.length};});
-  return NextResponse.json({matches,count:matches.length,lastUpdated:state.updatedAt,refreshQueued:false,engine:{mode:'central-persistent-neon-compact-live-set-user-follow',persistence:'neon-postgresql',refreshing:Boolean(state.refreshInFlight),refreshSeconds:REFRESH_MAX_AGE_MS/1000,refreshStrategy:'server-stale-guard',historyLimit:HISTORY_LIMIT,compactHistoryLimit:COMPACT_HISTORY_LIMIT,summaryHistoryLimit:SUMMARY_HISTORY_LIMIT,trendWindowMinutes:TREND_WINDOW_MINUTES,trackedMatches:Object.keys(state.history).length,totalSnapshots:Object.values(state.history).reduce((sum,h)=>sum+h.length,0),coverage:state.coverage??null}});
+  const responseLimit = historyMode === 'summary' ? SUMMARY_HISTORY_LIMIT : historyMode === 'compact' ? COMPACT_HISTORY_LIMIT : HISTORY_LIMIT;
+  const matches=source.map(match=>{const history=historyForMatch(match,responseHistory,responseLimit);return {...match,engineHistory:includeHistory?history:undefined,engineTrend:buildTrend(history),engineUpdatedAt:state.updatedAt,engineTrackedSince:history[0]?.capturedAt??null,engineSnapshotCount:history.length};});
+  return NextResponse.json({matches,count:matches.length,lastUpdated:state.updatedAt,refreshQueued:false,engine:{mode:'central-persistent-neon-compact-live-set-user-follow-stable-key',persistence:'neon-postgresql',refreshing:Boolean(state.refreshInFlight),refreshSeconds:REFRESH_MAX_AGE_MS/1000,refreshStrategy:'server-stale-guard',historyLimit:HISTORY_LIMIT,compactHistoryLimit:COMPACT_HISTORY_LIMIT,summaryHistoryLimit:SUMMARY_HISTORY_LIMIT,trendWindowMinutes:TREND_WINDOW_MINUTES,trackedMatches:Object.keys(state.history).length,totalSnapshots:Object.values(state.history).reduce((sum,h)=>sum+h.length,0),coverage:state.coverage??null}});
 }
