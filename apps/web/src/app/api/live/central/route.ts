@@ -68,8 +68,49 @@ function historyForMatch(match: LiveMatch, source: Record<string, Snapshot[]> = 
   return mergeHistories(eventAliases(match).map(key => source[key] ?? []), limit);
 }
 function normalize(value: string) { return value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim(); }
+function canonicalTeam(value: string) {
+  return normalize(value)
+    .replace(/\b(football|futebol|club|clube|fc|cf|sc|ac|ec|afc|fk|cs|sp)\b/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+function teamSimilarity(left: string, right: string) {
+  const a = canonicalTeam(left); const b = canonicalTeam(right);
+  if (!a || !b) return 0;
+  if (a === b) return 1;
+  if ((a.includes(b) && b.length >= 4) || (b.includes(a) && a.length >= 4)) return 0.94;
+  const aTokens = new Set(a.split(' ').filter(token => token.length > 1));
+  const bTokens = new Set(b.split(' ').filter(token => token.length > 1));
+  if (!aTokens.size || !bTokens.size) return 0;
+  let common = 0;
+  for (const token of aTokens) if (bTokens.has(token)) common += 1;
+  return (2 * common) / (aTokens.size + bTokens.size);
+}
 function parseNumber(value: unknown) { if (typeof value === 'number') return Number.isFinite(value) ? value : null; if (value === null || value === undefined || value === '') return null; const n = Number(String(value).replace(',', '.').replace(/[^0-9.-]/g, '')); return Number.isFinite(n) ? n : null; }
 function minuteNumber(value: number | string) { if (typeof value === 'number') return Number.isFinite(value) ? value : null; const m = String(value).match(/(\d{1,3})(?:\s*\+\s*(\d{1,2}))?/); return m ? Number(m[1]) + Number(m[2] ?? 0) : null; }
+function sameFixture(a: LiveMatch, b: LiveMatch) {
+  if (a.homeTeam.score !== b.homeTeam.score || a.awayTeam.score !== b.awayTeam.score) return false;
+  const am = minuteNumber(a.minute); const bm = minuteNumber(b.minute);
+  if (am !== null && bm !== null && Math.abs(am - bm) > 4) return false;
+  return teamSimilarity(a.homeTeam.name, b.homeTeam.name) >= 0.72
+    && teamSimilarity(a.awayTeam.name, b.awayTeam.name) >= 0.72;
+}
+function matchQuality(match: LiveMatch) {
+  return historyForMatch(match).length * 20
+    + (match.corners ? 20 : 0)
+    + Math.min(match.liveStats?.length ?? 0, 30) * 3
+    + (match.sourceIds?.scores365 ? 5 : 0);
+}
+function dedupeLiveMatches(matches: LiveMatch[]) {
+  const result: LiveMatch[] = [];
+  for (const match of matches) {
+    const index = result.findIndex(current => sameFixture(current, match));
+    if (index < 0) { result.push(match); continue; }
+    const current = result[index];
+    if (matchQuality(match) > matchQuality(current)) result[index] = match;
+  }
+  return result;
+}
 function pair(home: number | null, away: number | null): Pair { return { home, away, total: home !== null && away !== null ? home + away : null }; }
 function statPair(match: LiveMatch, aliases: string[]): Pair { const row = (match.liveStats ?? []).find(item => { const text = normalize(`${item.key ?? ''} ${item.label ?? ''}`); return aliases.some(alias => text.includes(alias)); }); return pair(parseNumber(row?.home), parseNumber(row?.away)); }
 
@@ -108,8 +149,8 @@ async function hydrate(force = false) {
     const key = eventKey(match);
     if (!canonical.has(key)) canonical.set(key, match);
   }
-  state.matches = [...canonical.values()];
   state.history = await loadHistory(COMPACT_HISTORY_LIMIT);
+  state.matches = dedupeLiveMatches([...canonical.values()]);
   if (rows[0]?.updated_at) state.updatedAt = new Date(rows[0].updated_at).toISOString();
   state.hydratedAt = Date.now();
 }
@@ -172,7 +213,9 @@ async function refresh(origin:string, follow:string){
     const url=new URL('/api/live/corners-fast',origin);
     if(follow) url.searchParams.set('follow',follow);
     const response=await fetch(url,{cache:'no-store'}); if(!response.ok) throw new Error(`live enrichment failed: ${response.status}`);
-    const payload=await response.json() as {matches?:LiveMatch[];statisticsCoverage?:Record<string,unknown>;cornerCoverage?:Record<string,unknown>}; const raw=Array.isArray(payload.matches)?payload.matches:[]; const matches=raw.map(m=>mergeFresh(previous.get(eventKey(m)),m));
+    const payload=await response.json() as {matches?:LiveMatch[];statisticsCoverage?:Record<string,unknown>;cornerCoverage?:Record<string,unknown>};
+    const raw=Array.isArray(payload.matches)?payload.matches:[];
+    const matches=dedupeLiveMatches(raw.map(m=>mergeFresh(previous.get(eventKey(m)),m)));
     await appendHistory(matches); state.matches=matches; state.coverage=payload.statisticsCoverage??payload.cornerCoverage; state.updatedAt=new Date().toISOString();
   })().finally(()=>{state.refreshInFlight=null;}); return state.refreshInFlight;
 }
@@ -194,5 +237,5 @@ export async function GET(request:NextRequest){
   else if(includeHistory&&historyMode!=='compact'){try{responseHistory=await loadHistory(HISTORY_LIMIT,requestedMatchId??undefined);}catch{responseHistory=state.history;}}
   const responseLimit = historyMode === 'summary' ? SUMMARY_HISTORY_LIMIT : historyMode === 'compact' ? COMPACT_HISTORY_LIMIT : HISTORY_LIMIT;
   const matches=source.map(match=>{const history=historyForMatch(match,responseHistory,responseLimit);return {...match,engineHistory:includeHistory?history:undefined,engineTrend:buildTrend(history),engineUpdatedAt:state.updatedAt,engineTrackedSince:history[0]?.capturedAt??null,engineSnapshotCount:history.length};});
-  return NextResponse.json({matches,count:matches.length,lastUpdated:state.updatedAt,refreshQueued:false,engine:{mode:'central-persistent-neon-compact-live-set-user-follow-stable-key',persistence:'neon-postgresql',refreshing:Boolean(state.refreshInFlight),refreshSeconds:REFRESH_MAX_AGE_MS/1000,refreshStrategy:'server-stale-guard',historyLimit:HISTORY_LIMIT,compactHistoryLimit:COMPACT_HISTORY_LIMIT,summaryHistoryLimit:SUMMARY_HISTORY_LIMIT,trendWindowMinutes:TREND_WINDOW_MINUTES,trackedMatches:Object.keys(state.history).length,totalSnapshots:Object.values(state.history).reduce((sum,h)=>sum+h.length,0),coverage:state.coverage??null}});
+  return NextResponse.json({matches,count:matches.length,lastUpdated:state.updatedAt,refreshQueued:false,engine:{mode:'central-persistent-neon-compact-live-set-user-follow-stable-key-dedupe',persistence:'neon-postgresql',refreshing:Boolean(state.refreshInFlight),refreshSeconds:REFRESH_MAX_AGE_MS/1000,refreshStrategy:'server-stale-guard',historyLimit:HISTORY_LIMIT,compactHistoryLimit:COMPACT_HISTORY_LIMIT,summaryHistoryLimit:SUMMARY_HISTORY_LIMIT,trendWindowMinutes:TREND_WINDOW_MINUTES,trackedMatches:Object.keys(state.history).length,totalSnapshots:Object.values(state.history).reduce((sum,h)=>sum+h.length,0),coverage:state.coverage??null}});
 }
