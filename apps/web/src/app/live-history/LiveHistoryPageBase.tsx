@@ -463,9 +463,12 @@ export default function LiveHistoryPage() {
   const requestRef = useRef<AbortController | null>(null);
 
   const load = useCallback(async (manual = false) => {
-    if (manual) setRefreshing(true);
+    if (!manual && requestRef.current) return;
+    if (manual) {
+      setRefreshing(true);
+      requestRef.current?.abort();
+    }
     setError(null);
-    requestRef.current?.abort();
     const controller = new AbortController();
     requestRef.current = controller;
     try {
@@ -502,7 +505,11 @@ export default function LiveHistoryPage() {
       if (reason instanceof DOMException && reason.name === 'AbortError') return;
       setError(reason instanceof Error ? reason.message : 'Erro desconhecido');
     } finally {
-      if (requestRef.current === controller) { setInitialLoading(false); setRefreshing(false); }
+      if (requestRef.current === controller) {
+        requestRef.current = null;
+        setInitialLoading(false);
+        setRefreshing(false);
+      }
     }
   }, [selectedKey]);
 
