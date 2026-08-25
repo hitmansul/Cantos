@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 export async function GET(request: NextRequest) {
   const url = new URL('/api/live/central', request.nextUrl.origin);
   url.searchParams.set('refresh', '1');
+  url.searchParams.set('history', '0');
 
   const response = await fetch(url, { cache: 'no-store' });
   const payload = await response.json().catch(() => ({ matches: [], error: 'Resposta inválida do motor ao vivo' }));
