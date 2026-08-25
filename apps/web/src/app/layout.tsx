@@ -3,6 +3,7 @@ import type { Metadata, Viewport } from 'next';
 import './global.css';
 import './responsive.css';
 import './hide-world-cup.css';
+import './live-history.css';
 import { Providers } from './providers';
 import { DesignModeInit } from '../__create/DesignModeInit';
 import { ProductNavigation } from '@/components/ProductNavigation';
