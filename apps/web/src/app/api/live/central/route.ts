@@ -168,7 +168,7 @@ function snapshot(match: LiveMatch, capturedAt: string): Snapshot {
   };
 }
 function pairChanged(a: Pair, b: Pair) { return a.home !== b.home || a.away !== b.away || a.total !== b.total; }
-function changed(a: Snapshot | undefined, b: Snapshot) { return !a || a.minute !== b.minute || a.homeScore !== b.homeScore || a.awayScore !== b.awayScore || pairChanged(a.corners,b.corners) || pairChanged(a.shots,b.shots) || pairChanged(a.shotsOnTarget,b.shotsOnTarget) || pairChanged(a.dangerousAttacks,b.dangerousAttacks) || a.statsCount !== b.statsCount; }
+function changed(a: Snapshot | undefined, b: Snapshot) { return !a || a.minute !== b.minute || a.homeScore !== b.homeScore || a.awayScore !== b.awayScore || pairChanged(a.corners,b.corners) || pairChanged(a.shots,b.shots) || pairChanged(a.shotsOnTarget,b.shotsOnTarget) || pairChanged(a.dangerousAttacks,b.dangerousAttacks); }
 
 async function persist(matches: LiveMatch[], capturedAt: string, pending: Array<{key:string;snapshot:Snapshot}>) {
   await Promise.all(matches.map(match => sql`INSERT INTO live_engine_matches (event_key,match_data,updated_at) VALUES (${eventKey(match)},${JSON.stringify(match)}::jsonb,${capturedAt}::timestamptz) ON CONFLICT(event_key) DO UPDATE SET match_data=EXCLUDED.match_data,updated_at=EXCLUDED.updated_at`));
