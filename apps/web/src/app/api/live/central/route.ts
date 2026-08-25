@@ -33,7 +33,7 @@ const HISTORY_LIMIT = 120;
 const COMPACT_HISTORY_LIMIT = 12;
 const SUMMARY_HISTORY_LIMIT = 3;
 const HISTORY_WINDOW_HOURS = 3;
-const HYDRATE_MAX_AGE_MS = 60_000;
+const HYDRATE_MAX_AGE_MS = 5 * 60_000;
 const REFRESH_MAX_AGE_MS = 25_000;
 const ACTIVE_MATCH_MAX_AGE_MINUTES = 15;
 const TREND_WINDOW_MINUTES = 10;
@@ -41,9 +41,6 @@ let schemaReady: Promise<void> | null = null;
 
 function parseJson<T>(value: T | string): T { return typeof value === 'string' ? JSON.parse(value) as T : value; }
 
-// A identidade do jogo precisa permanecer estável mesmo quando uma fonte de
-// enriquecimento (SofaScore/API-Football) é encontrada no meio da partida.
-// O feed base é 365Scores, então ele/ID-base é a chave canônica.
 function eventKey(match: LiveMatch) { return String(match.sourceIds?.scores365 ?? match.id); }
 function eventAliases(match: LiveMatch) {
   return [...new Set([
@@ -149,7 +146,7 @@ async function hydrate(force = false) {
     const key = eventKey(match);
     if (!canonical.has(key)) canonical.set(key, match);
   }
-  state.history = await loadHistory(COMPACT_HISTORY_LIMIT);
+  state.history = await loadHistory(SUMMARY_HISTORY_LIMIT);
   state.matches = dedupeLiveMatches([...canonical.values()]);
   if (rows[0]?.updated_at) state.updatedAt = new Date(rows[0].updated_at).toISOString();
   state.hydratedAt = Date.now();
@@ -222,7 +219,7 @@ async function refresh(origin:string, follow:string){
 
 export async function GET(request:NextRequest){
   const force=request.nextUrl.searchParams.get('refresh')==='1';
-  const historyMode=request.nextUrl.searchParams.get('history')??'1';
+  const historyMode=request.nextUrl.searchParams.get('history')??'summary';
   const includeHistory=historyMode!=='0';
   const requestedMatchId=request.nextUrl.searchParams.get('matchId');
   const follow=(request.nextUrl.searchParams.get('follow')??'').split(',').map(v=>Number(v)).filter(v=>Number.isFinite(v)&&v>0).slice(0,12).join(',');
@@ -234,8 +231,9 @@ export async function GET(request:NextRequest){
   const source=requestedMatchId?state.matches.filter(m=>String(m.id)===requestedMatchId):state.matches;
   let responseHistory=state.history;
   if(includeHistory&&historyMode==='summary') responseHistory=Object.fromEntries(Object.entries(state.history).map(([key,h])=>[key,h.slice(-SUMMARY_HISTORY_LIMIT)]));
-  else if(includeHistory&&historyMode!=='compact'){try{responseHistory=await loadHistory(HISTORY_LIMIT,requestedMatchId??undefined);}catch{responseHistory=state.history;}}
-  const responseLimit = historyMode === 'summary' ? SUMMARY_HISTORY_LIMIT : historyMode === 'compact' ? COMPACT_HISTORY_LIMIT : HISTORY_LIMIT;
-  const matches=source.map(match=>{const history=historyForMatch(match,responseHistory,responseLimit);return {...match,engineHistory:includeHistory?history:undefined,engineTrend:buildTrend(history),engineUpdatedAt:state.updatedAt,engineTrackedSince:history[0]?.capturedAt??null,engineSnapshotCount:history.length};});
-  return NextResponse.json({matches,count:matches.length,lastUpdated:state.updatedAt,refreshQueued:false,engine:{mode:'central-persistent-neon-compact-live-set-user-follow-stable-key-dedupe',persistence:'neon-postgresql',refreshing:Boolean(state.refreshInFlight),refreshSeconds:REFRESH_MAX_AGE_MS/1000,refreshStrategy:'server-stale-guard',historyLimit:HISTORY_LIMIT,compactHistoryLimit:COMPACT_HISTORY_LIMIT,summaryHistoryLimit:SUMMARY_HISTORY_LIMIT,trendWindowMinutes:TREND_WINDOW_MINUTES,trackedMatches:Object.keys(state.history).length,totalSnapshots:Object.values(state.history).reduce((sum,h)=>sum+h.length,0),coverage:state.coverage??null}});
+  else if(includeHistory&&historyMode==='compact'&&requestedMatchId){try{responseHistory=await loadHistory(COMPACT_HISTORY_LIMIT,requestedMatchId);}catch{responseHistory=state.history;}}
+  else if(includeHistory&&historyMode==='full'){try{responseHistory=await loadHistory(HISTORY_LIMIT,requestedMatchId??undefined);}catch{responseHistory=state.history;}}
+  const responseLimit = historyMode === 'summary' ? SUMMARY_HISTORY_LIMIT : historyMode === 'compact' ? COMPACT_HISTORY_LIMIT : historyMode === 'full' ? HISTORY_LIMIT : 0;
+  const matches=source.map(match=>{const history=includeHistory?historyForMatch(match,responseHistory,responseLimit):[];return {...match,engineHistory:includeHistory?history:undefined,engineTrend:buildTrend(history),engineUpdatedAt:state.updatedAt,engineTrackedSince:history[0]?.capturedAt??null,engineSnapshotCount:history.length};});
+  return NextResponse.json({matches,count:matches.length,lastUpdated:state.updatedAt,refreshQueued:false,engine:{mode:'central-persistent-neon-minimal-hydration-user-detail',persistence:'neon-postgresql',refreshing:Boolean(state.refreshInFlight),refreshSeconds:REFRESH_MAX_AGE_MS/1000,refreshStrategy:'server-stale-guard',historyLimit:HISTORY_LIMIT,compactHistoryLimit:COMPACT_HISTORY_LIMIT,summaryHistoryLimit:SUMMARY_HISTORY_LIMIT,trendWindowMinutes:TREND_WINDOW_MINUTES,trackedMatches:Object.keys(state.history).length,totalSnapshots:Object.values(state.history).reduce((sum,h)=>sum+h.length,0),coverage:state.coverage??null}});
 }
