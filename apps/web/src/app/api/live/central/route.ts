@@ -168,8 +168,32 @@ function pairChanged(a: Pair, b: Pair) { return a.home !== b.home || a.away !== 
 function changed(a: Snapshot | undefined, b: Snapshot) { return !a || a.minute !== b.minute || a.homeScore !== b.homeScore || a.awayScore !== b.awayScore || pairChanged(a.corners,b.corners) || pairChanged(a.shots,b.shots) || pairChanged(a.shotsOnTarget,b.shotsOnTarget) || pairChanged(a.dangerousAttacks,b.dangerousAttacks); }
 
 async function persist(matches: LiveMatch[], capturedAt: string, pending: Array<{key:string;snapshot:Snapshot}>) {
-  await Promise.all(matches.map(match => sql`INSERT INTO live_engine_matches (event_key,match_data,updated_at) VALUES (${eventKey(match)},${JSON.stringify(match)}::jsonb,${capturedAt}::timestamptz) ON CONFLICT(event_key) DO UPDATE SET match_data=EXCLUDED.match_data,updated_at=EXCLUDED.updated_at`));
-  await Promise.all(pending.map(item => sql`INSERT INTO live_engine_snapshots (event_key,captured_at,snapshot_data) VALUES (${item.key},${item.snapshot.capturedAt}::timestamptz,${JSON.stringify(item.snapshot)}::jsonb) ON CONFLICT(event_key,captured_at) DO NOTHING`));
+  if (matches.length) {
+    const matchPayload = JSON.stringify(matches.map(match => ({
+      event_key: eventKey(match),
+      match_data: match,
+    })));
+    await sql`
+      INSERT INTO live_engine_matches (event_key, match_data, updated_at)
+      SELECT item.event_key, item.match_data, ${capturedAt}::timestamptz
+      FROM jsonb_to_recordset(${matchPayload}::jsonb) AS item(event_key text, match_data jsonb)
+      ON CONFLICT(event_key) DO UPDATE
+      SET match_data=EXCLUDED.match_data, updated_at=EXCLUDED.updated_at
+    `;
+  }
+  if (pending.length) {
+    const snapshotPayload = JSON.stringify(pending.map(item => ({
+      event_key: item.key,
+      captured_at: item.snapshot.capturedAt,
+      snapshot_data: item.snapshot,
+    })));
+    await sql`
+      INSERT INTO live_engine_snapshots (event_key, captured_at, snapshot_data)
+      SELECT item.event_key, item.captured_at, item.snapshot_data
+      FROM jsonb_to_recordset(${snapshotPayload}::jsonb) AS item(event_key text, captured_at timestamptz, snapshot_data jsonb)
+      ON CONFLICT(event_key,captured_at) DO NOTHING
+    `;
+  }
   await sql`DELETE FROM live_engine_matches WHERE updated_at <= ${capturedAt}::timestamptz - (${ACTIVE_MATCH_MAX_AGE_MINUTES} * INTERVAL '1 minute')`;
 }
 
@@ -235,5 +259,5 @@ export async function GET(request:NextRequest){
   else if(includeHistory&&historyMode==='full'){try{responseHistory=await loadHistory(HISTORY_LIMIT,requestedMatchId??undefined);}catch{responseHistory=state.history;}}
   const responseLimit = historyMode === 'summary' ? SUMMARY_HISTORY_LIMIT : historyMode === 'compact' ? COMPACT_HISTORY_LIMIT : historyMode === 'full' ? HISTORY_LIMIT : 0;
   const matches=source.map(match=>{const history=includeHistory?historyForMatch(match,responseHistory,responseLimit):[];return {...match,engineHistory:includeHistory?history:undefined,engineTrend:buildTrend(history),engineUpdatedAt:state.updatedAt,engineTrackedSince:history[0]?.capturedAt??null,engineSnapshotCount:history.length};});
-  return NextResponse.json({matches,count:matches.length,lastUpdated:state.updatedAt,refreshQueued:false,engine:{mode:'central-persistent-neon-minimal-hydration-user-detail',persistence:'neon-postgresql',refreshing:Boolean(state.refreshInFlight),refreshSeconds:REFRESH_MAX_AGE_MS/1000,refreshStrategy:'server-stale-guard',historyLimit:HISTORY_LIMIT,compactHistoryLimit:COMPACT_HISTORY_LIMIT,summaryHistoryLimit:SUMMARY_HISTORY_LIMIT,trendWindowMinutes:TREND_WINDOW_MINUTES,trackedMatches:Object.keys(state.history).length,totalSnapshots:Object.values(state.history).reduce((sum,h)=>sum+h.length,0),coverage:state.coverage??null}});
+  return NextResponse.json({matches,count:matches.length,lastUpdated:state.updatedAt,refreshQueued:false,engine:{mode:'central-persistent-neon-minimal-hydration-user-detail-batched-persistence',persistence:'neon-postgresql',refreshing:Boolean(state.refreshInFlight),refreshSeconds:REFRESH_MAX_AGE_MS/1000,refreshStrategy:'server-stale-guard',historyLimit:HISTORY_LIMIT,compactHistoryLimit:COMPACT_HISTORY_LIMIT,summaryHistoryLimit:SUMMARY_HISTORY_LIMIT,trendWindowMinutes:TREND_WINDOW_MINUTES,trackedMatches:Object.keys(state.history).length,totalSnapshots:Object.values(state.history).reduce((sum,h)=>sum+h.length,0),coverage:state.coverage??null}});
 }
