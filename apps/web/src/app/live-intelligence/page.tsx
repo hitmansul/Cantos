@@ -146,7 +146,7 @@ export default function LiveIntelligencePage() {
     setLoading(true);
     setError(null);
     try {
-      const suffix = force ? `?refresh=1&t=${Date.now()}` : '';
+      const suffix = force ? `?refresh=1&history=summary&t=${Date.now()}` : '?history=summary';
       const response = await fetch(`/api/live/central${suffix}`, { cache: 'no-store' });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Falha ao carregar inteligência ao vivo');
@@ -161,7 +161,7 @@ export default function LiveIntelligencePage() {
 
   useEffect(() => {
     void load();
-    const timer = window.setInterval(() => void load(), 25_000);
+    const timer = window.setInterval(() => void load(), 60_000);
     return () => window.clearInterval(timer);
   }, [load]);
 
