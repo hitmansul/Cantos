@@ -9,6 +9,7 @@ type CatalogMatch = { id:number; minute:number|string; competition:string; homeT
 
 const historyCache = new Map<string, RawSnapshot[]>();
 const FOLLOW_KEY='ia-cantos-followed-live-v1';
+const STALE_ENGINE_MS=3*60_000;
 let followRefreshPending=false;
 
 function numeric(value:unknown){const parsed=typeof value==='number'?value:Number(value);return Number.isFinite(parsed)?parsed:null;}
@@ -45,7 +46,19 @@ function deriveTrend(history:RawSnapshot[]){
   const pace=activity>=8?'accelerating':activity<=1?'cooling':'stable';
   return{pace,cornersDelta,shotsDelta,dangerousAttacksDelta,stoppedMinutesDelta:0};
 }
-function enrichMatch(value:unknown){if(!value||typeof value!=='object')return value;const match=value as Record<string,unknown>;const id=String(match.id??'');if(!id)return match;const incoming=Array.isArray(match.engineHistory)?match.engineHistory.filter((item):item is RawSnapshot=>Boolean(item)&&typeof item==='object'):[];const history=mergeHistory(historyCache.get(id)??[],incoming);historyCache.set(id,history);return{...match,engineHistory:history,engineTrend:deriveTrend(history)};}
+function enrichMatch(value:unknown){
+  if(!value||typeof value!=='object')return value;
+  const match=value as Record<string,unknown>;
+  const id=String(match.id??'');
+  if(!id)return match;
+  const incoming=Array.isArray(match.engineHistory)?match.engineHistory.filter((item):item is RawSnapshot=>Boolean(item)&&typeof item==='object'):[];
+  const history=mergeHistory(historyCache.get(id)??[],incoming);
+  historyCache.set(id,history);
+  const trend=deriveTrend(history);
+  const updatedAt=typeof match.engineUpdatedAt==='string'?Date.parse(match.engineUpdatedAt):NaN;
+  const stale=Number.isFinite(updatedAt)&&Date.now()-updatedAt>STALE_ENGINE_MS;
+  return{...match,engineHistory:history,engineTrend:stale?{...trend,pace:'insufficient-data'}:trend};
+}
 function inputUrl(input:RequestInfo|URL){return typeof input==='string'?input:input instanceof URL?input.toString():input.url;}
 function isCentralRequest(input:RequestInfo|URL){return inputUrl(input).includes('/api/live/central?');}
 function centralUrl(input:RequestInfo|URL){return isCentralRequest(input)?new URL(inputUrl(input),window.location.origin):null;}
