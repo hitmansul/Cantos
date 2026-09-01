@@ -48,6 +48,11 @@ jobs:
               exit 22
             fi
 
+            if [[ "$HTTP_CODE" == "402" ]]; then
+              echo "Quota de transferência indisponível neste ciclo; não haverá novas tentativas até a próxima execução agendada."
+              exit 0
+            fi
+
             if [ "$attempt" -lt 6 ]; then
               sleep 20
             fi
