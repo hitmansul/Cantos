@@ -53,6 +53,11 @@ jobs:
               exit 0
             fi
 
+            if [[ "$HTTP_CODE" == "429" ]]; then
+              echo "Limite de requisições atingido neste ciclo; aguardando a próxima execução agendada em vez de insistir."
+              exit 0
+            fi
+
             if [ "$attempt" -lt 6 ]; then
               sleep 20
             fi
