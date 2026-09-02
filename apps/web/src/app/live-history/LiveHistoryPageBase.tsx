@@ -371,15 +371,17 @@ function calculateIntelligence(match: LiveMatch): Intelligence {
     : statisticalCoverage >= 2 && history.length >= 4
       ? 'Média'
       : 'Baixa';
-  const canBeOpportunity = confidence === 'Alta' || confidence === 'Média';
+  const canBeOpportunity = (confidence === 'Alta' || confidence === 'Média') && nextCornerProbability >= 60;
   const decision: Decision = score >= 72 && canBeOpportunity ? 'OPORTUNIDADE' : score >= 46 ? 'ACOMPANHAR' : 'EVITAR';
   const limitedCoverage = statisticalCoverage < 2;
   const explanation = limitedCoverage
     ? score >= 72
       ? 'Os sinais recentes são fortes, mas a cobertura estatística ainda é baixa. Continue acompanhando antes de considerar entrada.'
       : 'A leitura usa principalmente escanteios e histórico recente. Faltam estatísticas ofensivas para aumentar a confiança da recomendação.'
-    : pressure >= 65
+    : pressure >= 65 && nextCornerProbability >= 60
       ? 'O jogo está pressionando e criando ações ofensivas. Há sinais favoráveis para um novo escanteio.'
+      : pressure >= 65
+        ? 'O jogo apresenta pressão, mas a probabilidade calculada ainda não atingiu o nível mínimo para indicar oportunidade. Continue acompanhando.'
       : match.engineTrend.status === 'cooling'
         ? 'O ritmo caiu nos últimos registros. Neste momento, a tendência de novo escanteio enfraqueceu.'
         : 'O jogo tem atividade, mas ainda não há força suficiente para indicar entrada. Continue acompanhando.';
