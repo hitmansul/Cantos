@@ -57,7 +57,7 @@ function enrichMatch(value:unknown){
   historyCache.set(id,history);
   const trend=deriveTrend(history);
   const updatedAt=typeof match.engineUpdatedAt==='string'?Date.parse(match.engineUpdatedAt):NaN;
-  const stale=Number.isFinite(updatedAt)&&Date.now()-updatedAt>STALE_ENGINE_MS;
+  const stale=!Number.isFinite(updatedAt)||Date.now()-updatedAt>STALE_ENGINE_MS;
   return{...match,engineHistory:history,engineTrend:stale?{...trend,pace:'insufficient-data'}:trend};
 }
 function inputUrl(input:RequestInfo|URL){return typeof input==='string'?input:input instanceof URL?input.toString():input.url;}
