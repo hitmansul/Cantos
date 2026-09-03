@@ -3,7 +3,20 @@ import sql from '../../utils/sql';
 
 export const dynamic = 'force-dynamic';
 
+function errorMessage(error: unknown) {
+  return error instanceof Error ? error.message : 'live health diagnostics failed';
+}
+
+function isQuotaError(message: string) {
+  const normalized = message.toLowerCase();
+  return normalized.includes('http status 402')
+    || normalized.includes('data transfer quota')
+    || normalized.includes('exceeded the data transfer');
+}
+
 export async function GET() {
+  const generatedAt = new Date().toISOString();
+
   try {
     const [matchRow] = await sql`
       SELECT
@@ -54,8 +67,9 @@ export async function GET() {
     const status = stale || snapshotStale || duplicateRatio > 0.15 ? 'degraded' : 'healthy';
 
     return NextResponse.json({
-      generatedAt: new Date().toISOString(),
+      generatedAt,
       status,
+      databaseReachable: true,
       activeMatches,
       newestMatchAgeSeconds,
       snapshots10m,
@@ -69,9 +83,20 @@ export async function GET() {
       },
     });
   } catch (error) {
+    const message = errorMessage(error);
+    const quota = isQuotaError(message);
+
     return NextResponse.json({
-      status: 'error',
-      error: error instanceof Error ? error.message : 'live health diagnostics failed',
-    }, { status: 500 });
+      generatedAt,
+      status: quota ? 'degraded-quota' : 'degraded-database',
+      databaseReachable: false,
+      retryable: true,
+      error: message,
+    }, {
+      status: 503,
+      headers: {
+        'Cache-Control': 'no-store, max-age=0',
+      },
+    });
   }
 }
