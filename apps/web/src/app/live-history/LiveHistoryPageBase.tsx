@@ -516,9 +516,12 @@ export default function LiveHistoryPage() {
   }, [selectedKey]);
 
   useEffect(() => {
+    const refreshIfVisible = () => { if (document.visibilityState === 'visible') void load(false); };
     void load(false);
-    const timer = window.setInterval(() => void load(false), 25_000);
-    return () => { window.clearInterval(timer); requestRef.current?.abort(); };
+    const timer = window.setInterval(refreshIfVisible, 25_000);
+    const onVisibilityChange = () => { if (document.visibilityState === 'visible') void load(false); };
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    return () => { window.clearInterval(timer); document.removeEventListener('visibilitychange', onVisibilityChange); requestRef.current?.abort(); };
   }, [load]);
 
   const intelligenceByKey = useMemo(() => new Map(matches.map(match => [matchKey(match), calculateIntelligence(match)] as const)), [matches]);
