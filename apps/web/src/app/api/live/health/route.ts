@@ -64,7 +64,11 @@ export async function GET() {
     const stale = activeMatches > 0 && (newestMatchAgeSeconds === null || newestMatchAgeSeconds > 120);
     const snapshotStale = activeMatches > 0 && (newestSnapshotAgeSeconds === null || newestSnapshotAgeSeconds > 180);
     const duplicateRatio = snapshots10m > 0 ? exactNearDuplicates / snapshots10m : 0;
-    const status = stale || snapshotStale || duplicateRatio > 0.15 ? 'degraded' : 'healthy';
+    const status = activeMatches === 0
+      ? 'idle'
+      : stale || snapshotStale || duplicateRatio > 0.15
+        ? 'degraded'
+        : 'healthy';
 
     return NextResponse.json({
       generatedAt,
