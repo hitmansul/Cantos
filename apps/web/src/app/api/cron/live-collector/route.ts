@@ -25,6 +25,34 @@ async function fetchCentral(url: URL) {
   return { response, payload };
 }
 
+async function collectRecommendationAnalytics(request: NextRequest) {
+  const url = new URL('/api/live/recommendations/collect', request.nextUrl.origin);
+  url.searchParams.set('t', String(Date.now()));
+  const authorization = request.headers.get('authorization');
+  const headers: Record<string, string> = { 'Cache-Control': 'no-cache' };
+  if (authorization) headers.Authorization = authorization;
+
+  try {
+    const response = await fetch(url, { cache: 'no-store', headers });
+    const payload = await response.json() as Record<string, unknown>;
+    return {
+      ok: response.ok,
+      status: response.status,
+      inserted: typeof payload.inserted === 'number' ? payload.inserted : 0,
+      summary: payload.summary ?? null,
+      error: response.ok ? null : (typeof payload.error === 'string' ? payload.error : 'Falha na avaliação de recomendações'),
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      status: 0,
+      inserted: 0,
+      summary: null,
+      error: error instanceof Error ? error.message : 'Falha desconhecida na avaliação de recomendações',
+    };
+  }
+}
+
 export async function GET(request: NextRequest) {
   if (!isAuthorized(request)) {
     return NextResponse.json({ ok: false, error: 'Não autorizado' }, { status: 401 });
@@ -96,6 +124,8 @@ export async function GET(request: NextRequest) {
       );
     }
 
+    const recommendationAnalytics = await collectRecommendationAnalytics(request);
+
     return NextResponse.json({
       ok: true,
       collectionConfirmed: true,
@@ -106,6 +136,7 @@ export async function GET(request: NextRequest) {
       lastUpdated: confirmedPayload.lastUpdated ?? null,
       refreshQueued: confirmedPayload.refreshQueued ?? false,
       engine: confirmedPayload.engine ?? null,
+      recommendationAnalytics,
     });
   } catch (error) {
     return NextResponse.json(
