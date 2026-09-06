@@ -15,6 +15,7 @@ type Match = {
   homeTeam?: { name?: string; score?: number };
   awayTeam?: { name?: string; score?: number };
   corners?: { home?: number; away?: number; total?: number };
+  sourceIds?: { scores365?: number; sofascore?: number; apiFootball?: number };
   engineHistory?: Snapshot[];
   engineTrend?: {
     pace?: string;
@@ -103,7 +104,7 @@ function calculate(match: Match): Intelligence {
 }
 
 function eventKey(match: Match) {
-  return String(match.id);
+  return String(match.sourceIds?.scores365 ?? match.id);
 }
 
 async function ensureSchema() {
