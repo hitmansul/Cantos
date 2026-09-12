@@ -92,13 +92,13 @@ export async function settleCornerPrediction(input: {
 }): Promise<SettlementResult> {
   if (!process.env.DATABASE_URL) return { predictionKey: input.predictionKey, status: 'not-found' };
 
-  const rows = await sql<PredictionRow[]>`
+  const rows = await sql`
     SELECT p.id, p.prediction_key, p.model_key, p.competition_key, p.created_at, o.match_status
     FROM ai_prediction_runs p
     LEFT JOIN ai_prediction_outcomes o ON o.prediction_run_id = p.id
     WHERE p.prediction_key = ${input.predictionKey}
     LIMIT 1
-  `;
+  ` as PredictionRow[];
   const prediction = rows[0];
   if (!prediction) return { predictionKey: input.predictionKey, status: 'not-found' };
   if (prediction.match_status === 'finished') return { predictionKey: input.predictionKey, status: 'already-settled' };
@@ -128,11 +128,11 @@ export async function settleCornerPrediction(input: {
       updated_at = NOW()
   `;
 
-  const offers = await sql<Array<{ id: string | number; side: string; line: string | number; odd: string | number; recommended_stake_percent: string | number }>>`
+  const offers = await sql`
     SELECT id, side, line, odd, recommended_stake_percent
     FROM ai_prediction_offers
     WHERE prediction_run_id = ${prediction.id} AND is_value_bet = TRUE
-  `;
+  ` as Array<{ id: string | number; side: string; line: string | number; odd: string | number; recommended_stake_percent: string | number }>;
 
   for (const offer of offers) {
     const result = offerResult(offer.side, asNumber(offer.line), totalCorners);
@@ -158,7 +158,7 @@ export async function settlePendingPredictionsFromDatabase(limit = 100) {
   if (!process.env.DATABASE_URL) return { checked: 0, settled: 0, skipped: 0, results: [] as SettlementResult[] };
   const safeLimit = Math.max(1, Math.min(500, Math.trunc(limit)));
 
-  const candidates = await sql<Array<{ prediction_key: string; home_corners: string | number | null; away_corners: string | number | null }>>`
+  const candidates = await sql`
     SELECT
       p.prediction_key,
       SUM(CASE WHEN s.team_id = m.home_team_id THEN s.value_numeric ELSE 0 END) AS home_corners,
@@ -180,7 +180,7 @@ export async function settlePendingPredictionsFromDatabase(limit = 100) {
     GROUP BY p.prediction_key, m.id
     HAVING COUNT(s.id) >= 2
     LIMIT ${safeLimit}
-  `;
+  ` as Array<{ prediction_key: string; home_corners: string | number | null; away_corners: string | number | null }>;
 
   const results: SettlementResult[] = [];
   for (const candidate of candidates) {

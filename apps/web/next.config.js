@@ -7,7 +7,7 @@ const nextConfig = {
     root: path.resolve(__dirname, '../..'),
   },
   typescript: {
-    ignoreBuildErrors: true,
+    ignoreBuildErrors: false,
   },
   outputFileTracingIncludes: {
     '/api/ai/chat': ['../../node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs'],

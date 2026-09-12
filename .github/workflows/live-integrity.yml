@@ -1,0 +1,19 @@
+name: Live integrity checks
+on:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm install --ignore-scripts --package-lock=false
+      - run: npm run typecheck --workspace apps/web
+      - run: npm run test:live --workspace apps/web
+      - run: npm run build --workspace apps/web

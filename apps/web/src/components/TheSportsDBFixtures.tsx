@@ -193,7 +193,7 @@ export function TheSportsDBFixtures({
           <div className="flex items-start justify-between gap-3">
             <div>
               <h4 className="font-semibold">{selectedReferee.name}</h4>
-              <p className="text-sm text-muted-foreground mt-1">{getRefereeStatsSummary(selectedReferee)}</p>
+              <p className="text-sm text-muted-foreground mt-1">{getRefereeStatsSummary(selectedReferee).avgCardsPerMatch.toFixed(1)} cartões por partida</p>
             </div>
             <Button variant="ghost" size="sm" onClick={() => setSelectedReferee(null)}>Fechar</Button>
           </div>

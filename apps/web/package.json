@@ -10,7 +10,8 @@
     "dev": "next dev --port 4000",
     "build": "next build",
     "start": "next start",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test:live": "vitest run src/lib/live --maxWorkers=1"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1034.0",
@@ -43,6 +44,7 @@
     "zod": "^3.24.3"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "0.5.8",
     "@opennextjs/aws": "3.9.14",
     "@tailwindcss/postcss": "^4.1.16",
     "@testing-library/dom": "^10.4.0",

@@ -86,7 +86,7 @@ export default function AiPerformancePage() {
       <header className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <div className="inline-flex items-center gap-2 rounded-full border bg-card px-3 py-1 text-xs font-bold text-primary"><BrainCircuit className="h-4 w-4" /> Evaluation Framework</div>
-          <h1 className="mt-3 text-3xl font-black tracking-tight sm:text-4xl">Performance da IA</h1>
+          <h1 className="mt-3 text-3xl font-black tracking-tight sm:text-4xl">Performance da IA</h1><p className="mt-2 text-sm text-muted-foreground">Resultados dos modelos de linhas e odds. As recomendações de novo escanteio do Motor Central têm uma apuração separada.</p>
           <p className="mt-2 max-w-3xl text-muted-foreground">Acompanhe ROI, precisão, lucro, calibração e desempenho por competição e mercado. As tabelas, classificações e jogos de todas as ligas permanecem disponíveis na área Estatísticas.</p>
         </div>
         <button onClick={() => void load()} disabled={loading} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border bg-card px-4 font-bold disabled:opacity-50"><RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} /> Atualizar</button>

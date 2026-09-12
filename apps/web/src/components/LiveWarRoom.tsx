@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState, useRef } from 'react';
 import { Activity, AlertTriangle, BarChart3, BrainCircuit, Clock3, CornerUpRight, RefreshCw, Radio, ShieldCheck, Sparkles, TrendingUp } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -110,11 +110,14 @@ export function LiveWarRoom() {
   const [error, setError] = useState<string | null>(null);
   const [updatedAt, setUpdatedAt] = useState('');
 
+  const pollingRef=useRef(false);
   const load = useCallback(async (manual = false) => {
+    if(pollingRef.current||document.visibilityState!=='visible')return;
+    pollingRef.current=true;
     manual ? setRefreshing(true) : setLoading(true);
     try {
       setError(null);
-      const response = await fetch('/api/live', { cache: 'no-store' });
+      const response = await fetch('/api/live', { cache: 'no-store', signal: AbortSignal.timeout(45_000) });
       const data = await response.json() as { matches?: LiveMatch[]; error?: string };
       if (!response.ok) throw new Error(data.error ?? 'Falha ao carregar jogos ao vivo.');
 
@@ -146,6 +149,7 @@ export function LiveWarRoom() {
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : 'Falha ao atualizar a central.');
     } finally {
+      pollingRef.current=false;
       setLoading(false);
       setRefreshing(false);
     }
@@ -182,12 +186,12 @@ export function LiveWarRoom() {
       </div>
 
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        {[
+        {([
           ['Jogos monitorados', matches.length, Radio],
           ['Entradas recomendadas', metrics.opportunities, ShieldCheck],
           ['Em monitoramento', metrics.monitoring, Activity],
           ['Pressão média', `${metrics.averagePressure.toFixed(0)}%`, TrendingUp],
-        ].map(([label, value, Icon]) => (
+        ] as const).map(([label, value, Icon]) => (
           <Card key={String(label)} className="p-4">
             <div className="flex items-center justify-between"><p className="text-sm text-muted-foreground">{String(label)}</p><Icon className="h-4 w-4 text-primary" /></div>
             <p className="mt-2 text-2xl font-bold">{String(value)}</p>

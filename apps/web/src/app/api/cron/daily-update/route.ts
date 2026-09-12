@@ -1,52 +1,17 @@
+import { cleanupLiveData as cleanupLiveSnapshots } from '@/lib/live/maintenance';
 import { NextRequest, NextResponse } from 'next/server';
 import { getFifaWorldCupSquads } from '@/lib/fifaWorldCup';
 import { runPostGamePipeline } from '@/lib/pipeline/postGamePipeline';
-import sql from '../../utils/sql';
+import { authorized as isAuthorized } from '@/lib/live/cronAuth';
 
-const SNAPSHOT_RETENTION_HOURS = 6;
 
-function isAuthorized(request: NextRequest): boolean {
-  const cronSecret = process.env.CRON_SECRET;
-  if (!cronSecret) return process.env.NODE_ENV === 'development';
-  const authHeader = request.headers.get('authorization');
-  if (authHeader === `Bearer ${cronSecret}`) return true;
-  const { searchParams } = new URL(request.url);
-  return searchParams.get('secret') === cronSecret;
-}
+
 
 async function runWorldCupFifaPmsrSync(baseUrl: string) {
   const url = `${baseUrl}/api/world-cup/fifa-pmsr-sync?dryRun=false&onlyMissing=true&mode=both&limit=20&maxMatchNumber=104`;
   const response = await fetch(url, { cache: 'no-store' });
   const payload = await response.json().catch(async () => ({ raw: await response.text().catch(() => '') }));
   return { success: response.ok, status: response.status, url, ...payload };
-}
-
-async function cleanupLiveSnapshots() {
-  if (!process.env.DATABASE_URL) {
-    return { success: false, skipped: true, reason: 'DATABASE_URL nao configurado.' };
-  }
-
-  try {
-    const deleted = await sql`
-      DELETE FROM live_engine_snapshots
-      WHERE captured_at < NOW() - (${SNAPSHOT_RETENTION_HOURS} * INTERVAL '1 hour')
-      RETURNING id
-    ` as Array<{ id: number }>;
-
-    return {
-      success: true,
-      retentionHours: SNAPSHOT_RETENTION_HOURS,
-      deletedSnapshots: deleted.length,
-    };
-  } catch (error) {
-    console.warn('[CRON] Limpeza de snapshots ao vivo ignorada.', error);
-    return {
-      success: false,
-      skipped: true,
-      retentionHours: SNAPSHOT_RETENTION_HOURS,
-      error: error instanceof Error ? error.message : 'Falha na limpeza de snapshots ao vivo.',
-    };
-  }
 }
 
 export async function GET(request: NextRequest) {
@@ -59,6 +24,7 @@ export async function GET(request: NextRequest) {
   const baseUrl = process.env.NEXT_PUBLIC_CREATE_APP_URL ?? request.nextUrl.origin ?? 'http://localhost:3000';
 
   try {
+    const liveSnapshotCleanup=await cleanupLiveSnapshots().catch(error=>({success:false,error:String(error)}));
     const fifaRefresh = await getFifaWorldCupSquads(true)
       .then((data) => ({
         success: true,
@@ -81,7 +47,7 @@ export async function GET(request: NextRequest) {
           success: fifaRefresh.success || worldCupPmsr.success,
           fifa: fifaRefresh,
           worldCupPmsr,
-          liveSnapshotCleanup: { skipped: true, reason: !process.env.DATABASE_URL ? 'DATABASE_URL nao configurado.' : 'Tarefa FIFA solicitada.' },
+          liveSnapshotCleanup,
           sync: { skipped: !process.env.DATABASE_URL, reason: !process.env.DATABASE_URL ? 'DATABASE_URL nao configurado.' : 'Sincronizacao FIFA executada.' },
           timestamp: new Date().toISOString(),
         },
@@ -89,12 +55,11 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    const [postGamePipeline, liveSnapshotCleanup] = await Promise.all([
+    const [postGamePipeline] = await Promise.all([
       runPostGamePipeline().catch((error) => ({
         success: false,
         error: error instanceof Error ? error.message : 'Erro ao executar pipeline persistente.',
       })),
-      cleanupLiveSnapshots(),
     ]);
 
     const res = await fetch(`${baseUrl}/api/admin/sync-all`, {

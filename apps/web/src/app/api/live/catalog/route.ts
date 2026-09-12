@@ -42,12 +42,7 @@ function minuteNumber(value: number | string) {
   return match ? Number(match[1]) + Number(match[2] ?? 0) : 0;
 }
 
-function catalogKey(match: CatalogMatch) {
-  if (match.homeTeam.id > 0 && match.awayTeam.id > 0) {
-    return `teams:${match.homeTeam.id}:${match.awayTeam.id}`;
-  }
-  return `names:${normalize(match.homeTeam.name)}:${normalize(match.awayTeam.name)}:${match.homeTeam.score}:${match.awayTeam.score}`;
-}
+function catalogKey(match: CatalogMatch) { return `scores365:${match.id}`; }
 
 function dedupeMatches(matches: CatalogMatch[]) {
   const unique = new Map<string, CatalogMatch>();
@@ -63,7 +58,7 @@ export async function GET() {
   try {
     const response = await fetch(
       'https://webws.365scores.com/web/games/?appTypeId=5&langId=31&statuses=2',
-      { headers: HEADERS, cache: 'no-store' }
+      { headers: HEADERS, next: { revalidate: 25 }, signal: AbortSignal.timeout(8_000) }
     );
     if (!response.ok) {
       return NextResponse.json({ matches: [], error: `365Scores ${response.status}` }, { status: 502 });

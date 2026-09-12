@@ -83,6 +83,12 @@ export async function GET(request: NextRequest) {
 
     const normalized = rows.map((row) => ({
       ...row,
+      result: String(row.result),
+      settled_at: row.settled_at as string | null,
+      kickoff_at: row.kickoff_at as string | null,
+      competition_name: row.competition_name as string | null,
+      competition_key: row.competition_key as string | null,
+      side: String(row.side),
       score_ia: Number(row.score_ia),
       confidence_score: Number(row.confidence_score),
       line: Number(row.line),

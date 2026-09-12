@@ -3,7 +3,6 @@ import {
   upsertWorldCupMatch,
   type WorldCupStatisticInput,
 } from '@/lib/persistence/worldCupRepository';
-// @ts-expect-error pdf-parse não possui tipos oficiais neste projeto.
 import pdfParse from 'pdf-parse';
 
 const SOURCE_KEY = 'fifa';

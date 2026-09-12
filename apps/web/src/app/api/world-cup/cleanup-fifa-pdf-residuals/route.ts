@@ -1,3 +1,4 @@
+import { isAdmin } from '@/app/api/utils/adminAuth';
 import { NextRequest, NextResponse } from 'next/server';
 import sql from '@/app/api/utils/sql';
 
@@ -6,6 +7,7 @@ export const dynamic = 'force-dynamic';
 const WORLD_CUP_2026_KEY = 'world_cup_2026';
 
 export async function GET(request: NextRequest) {
+  if(!await isAdmin(request))return NextResponse.json({error:'Não autorizado'},{status:401});
   try {
     const dryRun = request.nextUrl.searchParams.get('dryRun') !== 'false';
     const limit = Math.max(1, Math.min(Number(request.nextUrl.searchParams.get('limit') ?? 200), 500));
