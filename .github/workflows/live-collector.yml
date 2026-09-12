@@ -1,67 +1,48 @@
 name: Live Collector
-
 on:
   schedule:
     - cron: '*/5 * * * *'
   workflow_dispatch:
-
+permissions:
+  contents: read
 concurrency:
   group: live-collector
-  cancel-in-progress: true
-
+  cancel-in-progress: false
 jobs:
   collect:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 6
     steps:
-      - name: Trigger persistent live collector
+      - name: Collect and validate each minute within this scheduled cycle
         env:
           LIVE_COLLECTOR_URL: ${{ secrets.LIVE_COLLECTOR_URL }}
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        shell: bash
         run: |
+          set -euo pipefail
+          : "${CRON_SECRET:?Configure CRON_SECRET}"
           URL="${LIVE_COLLECTOR_URL:-https://cantos-web-final.vercel.app/api/cron/live-collector}"
-          AUTH=()
-          if [ -n "$CRON_SECRET" ]; then
-            AUTH+=(--header "Authorization: Bearer $CRON_SECRET")
-          fi
-
           TMP_BODY="$(mktemp)"
           trap 'rm -f "$TMP_BODY"' EXIT
-
-          for attempt in 1 2 3 4 5 6; do
-            HTTP_CODE=$(curl --silent --show-error --max-time 90 \
-              "${AUTH[@]}" \
-              --output "$TMP_BODY" \
-              --write-out "%{http_code}" \
-              "$URL" || echo "000")
-
-            cat "$TMP_BODY" || true
-            echo
-            echo "Live Collector HTTP $HTTP_CODE (tentativa $attempt/6)"
-
-            if [[ "$HTTP_CODE" =~ ^2 ]]; then
-              exit 0
+          # Five bounded observations, no retry storm and no dependence on browser traffic.
+          for cycle in 0 1 2 3 4; do
+            TARGET=$((SECONDS + 60))
+            HTTP_CODE=$(curl --silent --show-error --max-time 55 \
+              --header "Authorization: Bearer $CRON_SECRET" \
+              --output "$TMP_BODY" --write-out '%{http_code}' "$URL") || HTTP_CODE=000
+            if [[ "$HTTP_CODE" != 200 ]]; then
+              echo "::error::Live collector HTTP $HTTP_CODE; coleta não confirmada."
+              exit 1
             fi
-
-            if [[ "$HTTP_CODE" == "401" || "$HTTP_CODE" == "403" ]]; then
-              echo "Erro permanente de autorização; verifique CRON_SECRET."
-              exit 22
-            fi
-
-            if [[ "$HTTP_CODE" == "402" ]]; then
-              echo "Quota de transferência indisponível neste ciclo; não haverá novas tentativas até a próxima execução agendada."
-              exit 0
-            fi
-
-            if [[ "$HTTP_CODE" == "429" ]]; then
-              echo "Limite de requisições atingido neste ciclo; aguardando a próxima execução agendada em vez de insistir."
-              exit 0
-            fi
-
-            if [ "$attempt" -lt 6 ]; then
-              sleep 20
-            fi
+            python3 - "$TMP_BODY" <<'PY'
+          import json,sys
+          p=json.load(open(sys.argv[1]))
+          if p.get('collectionConfirmed') is not True or p.get('persistenceConfirmed') is not True:
+              sys.exit('Persistência não confirmada')
+          print(json.dumps({k:p.get(k) for k in ['lastUpdated','matches','recommendationAnalytics']},ensure_ascii=False))
+          analytics=p.get('recommendationAnalytics') or {}
+          if (analytics.get('recording') or {}).get('ok') is False or (analytics.get('resolution') or {}).get('ok') is False:
+              print('::warning::Coleta preservada; avaliação de recomendações degradada.')
+          PY
+            if (( cycle < 4 && TARGET > SECONDS )); then sleep "$((TARGET-SECONDS))"; fi
           done
-
-          echo "::warning::O endpoint do coletor permaneceu indisponível após 6 tentativas. Esta execução será encerrada sem falhar para evitar alertas por indisponibilidade transitória; o próximo ciclo tentará novamente automaticamente."
-          exit 0

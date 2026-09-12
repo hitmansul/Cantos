@@ -97,7 +97,7 @@ export default function LearningEnginePage() {
       <header className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <div className="inline-flex items-center gap-2 rounded-full border bg-card px-3 py-1 text-xs font-black text-primary"><BrainCircuit className="h-4 w-4" /> IA Aprendiz</div>
-          <h1 className="mt-3 text-3xl font-black tracking-tight sm:text-4xl">Motor de Aprendizado</h1>
+          <h1 className="mt-3 text-3xl font-black tracking-tight sm:text-4xl">Motor de Aprendizado</h1><p className="mt-2 text-sm text-muted-foreground">Esta análise usa as operações registradas neste navegador. Ela não mede automaticamente as recomendações do Motor Central.</p>
           <p className="mt-2 max-w-3xl text-muted-foreground">Acompanha os resultados registrados, identifica padrões e prepara recomendações para evolução dos pesos da IA.</p>
         </div>
         <button onClick={load} disabled={loading} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border bg-card px-4 font-bold disabled:opacity-50"><RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} /> Atualizar aprendizado</button>

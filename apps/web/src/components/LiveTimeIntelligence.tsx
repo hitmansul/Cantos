@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState, useRef } from 'react';
 import { Activity, AlertTriangle, Clock3, RefreshCw, ShieldCheck, TimerReset } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -86,17 +86,21 @@ export function LiveTimeIntelligence() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
+  const pollingRef=useRef(false);
   const load = useCallback(async () => {
+    if(pollingRef.current||document.visibilityState!=='visible')return;
+    pollingRef.current=true;
     setLoading(true);
     setError('');
     try {
-      const response = await fetch('/api/live', { cache: 'no-store' });
+      const response = await fetch('/api/live', { cache: 'no-store', signal: AbortSignal.timeout(45_000) });
       const payload = await response.json() as { matches?: Match[]; error?: string };
       if (!response.ok) throw new Error(payload.error || 'Não foi possível carregar a inteligência de tempo.');
       setMatches(payload.matches ?? []);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Falha ao carregar os dados ao vivo.');
     } finally {
+      pollingRef.current=false;
       setLoading(false);
     }
   }, []);

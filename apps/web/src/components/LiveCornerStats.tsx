@@ -709,10 +709,13 @@ export function LiveMatches() {
   const matchRefs = useRef<Record<number, HTMLDivElement | null>>({});
   const detailRefs = useRef<Record<number, HTMLDivElement | null>>({});
 
+  const pollingRef=useRef(false);
   const fetchLiveMatches = useCallback(async () => {
+    if(pollingRef.current||document.visibilityState!=='visible')return;
+    pollingRef.current=true;
     try {
       setError(null);
-      const response = await fetch('/api/live/central?refresh=1', { cache: 'no-store' });
+      const response = await fetch('/api/live/central?history=summary', { cache: 'no-store', signal: AbortSignal.timeout(45_000) });
       const data = (await response.json()) as {
         matches?: LiveMatch[];
         lastUpdated?: string;
@@ -736,6 +739,7 @@ export function LiveMatches() {
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Erro desconhecido');
     } finally {
+      pollingRef.current=false;
       setLoading(false);
     }
   }, []);

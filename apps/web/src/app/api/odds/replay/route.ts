@@ -30,7 +30,7 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const rows = await sql<ReplayRow[]>`
+    const rows = await sql`
       SELECT
         e.id AS event_id,
         e.home_team_name,
@@ -54,7 +54,7 @@ export async function GET(request: NextRequest) {
         AND (${marketId} = 0 OR m.id = ${marketId})
       ORDER BY e.kickoff_at DESC NULLS LAST, m.id, p.captured_at ASC
       LIMIT 3000
-    `;
+    ` as ReplayRow[];
 
     const eventMap = new Map<number, { id: number; homeTeam: string; awayTeam: string; competition: string | null; kickoffAt: string | null }>();
     const marketMap = new Map<number, { id: number; eventId: number; marketName: string; selectionLabel: string; line: number | null }>();

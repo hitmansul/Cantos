@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState, useRef } from 'react';
 import { Activity, AlertTriangle, RefreshCw, Sparkles, Target, TrendingUp } from 'lucide-react';
 
 type NumericPair = { home?: number | null; away?: number | null; total?: number | null };
@@ -142,12 +142,15 @@ export default function LiveIntelligencePage() {
   const [error, setError] = useState<string | null>(null);
   const [lastUpdated, setLastUpdated] = useState<string | null>(null);
 
+  const pollingRef=useRef(false);
   const load = useCallback(async (force = false) => {
+    if(pollingRef.current||document.visibilityState!=='visible')return;
+    pollingRef.current=true;
     setLoading(true);
     setError(null);
     try {
       const suffix = force ? `?refresh=1&history=summary&t=${Date.now()}` : '?history=summary';
-      const response = await fetch(`/api/live/central${suffix}`, { cache: 'no-store' });
+      const response = await fetch(`/api/live/central${suffix}`, { cache: 'no-store', signal: AbortSignal.timeout(45_000) });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Falha ao carregar inteligência ao vivo');
       setMatches(Array.isArray(data.matches) ? data.matches : []);
@@ -155,6 +158,7 @@ export default function LiveIntelligencePage() {
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Erro desconhecido');
     } finally {
+      pollingRef.current=false;
       setLoading(false);
     }
   }, []);

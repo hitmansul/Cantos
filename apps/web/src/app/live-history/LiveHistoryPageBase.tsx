@@ -1,4 +1,5 @@
 'use client';
+import { collecting, MAX_AGE_MS, type Assessment } from '@/lib/live/intelligence';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -41,6 +42,8 @@ type Trend = {
 };
 
 type LiveMatch = {
+  eventKey: string;
+  assessment: Assessment;
   id: number;
   minute: number | string;
   competition: string;
@@ -256,6 +259,8 @@ function normalizeMatch(value: unknown): LiveMatch | null {
 
   return {
     id,
+    eventKey: typeof item.eventKey==='string'?item.eventKey:String(id),
+    assessment:item.assessment&&typeof item.assessment==='object'?item.assessment as Assessment:collecting(),
     minute: typeof item.minute === 'string' || typeof item.minute === 'number' ? item.minute : '—',
     competition: translateCompetition(typeof item.competition === 'string' ? item.competition : 'Competição'),
     homeTeam: { name: String(home.name ?? 'Mandante'), score: number(home.score) },
@@ -282,7 +287,7 @@ function textKey(value: string) {
 }
 
 function matchKey(match: LiveMatch) {
-  return `${textKey(match.competition)}|${textKey(match.homeTeam.name)}|${textKey(match.awayTeam.name)}`;
+  return match.eventKey;
 }
 
 function dedupeMatches(matches: LiveMatch[]) {
@@ -322,70 +327,10 @@ function formatTime(value?: string | null) {
 
 function signed(value: number) { return value >= 0 ? `+${value}` : String(value); }
 
-function hasUsefulStatistics(match: LiveMatch) {
-  const latest = match.engineHistory.at(-1);
-  return match.corners?.total !== undefined
-    || latest?.corners.total !== null
-    || latest?.shots.total !== null
-    || latest?.dangerousAttacks.total !== null;
-}
-
 function calculateIntelligence(match: LiveMatch): Intelligence {
-  const minute = minuteNumber(match.minute);
-  const history = match.engineHistory;
-  const ready = history.length >= 3 && hasUsefulStatistics(match) && match.engineTrend.status !== 'insufficient-data';
-  if (!ready) return {
-    score: 0, nextCornerProbability: null, pressure: null, speed: null,
-    confidence: 'Insuficiente', decision: 'COLETANDO', ready: false,
-    explanation: 'Ainda não há histórico e estatísticas suficientes para classificar este jogo com segurança.',
-  };
-
-  const latest = history.at(-1);
-  const corners = match.corners?.total ?? latest?.corners.total ?? 0;
-  const recentCorners = Math.max(match.engineTrend.cornersDelta, 0);
-  const recentShots = Math.max(match.engineTrend.shotsDelta, 0);
-  const recentDangerous = Math.max(match.engineTrend.dangerousAttacksDelta, 0);
-  const hasCorners = match.corners?.total !== undefined || latest?.corners.total !== null;
-  const hasShots = latest?.shots.total !== null;
-  const hasDangerousAttacks = latest?.dangerousAttacks.total !== null;
-  const statisticalCoverage = Number(hasCorners) + Number(hasShots) + Number(hasDangerousAttacks);
-  const trendBoost = match.engineTrend.status === 'accelerating' ? 24 : match.engineTrend.status === 'stable' ? 11 : -8;
-  const pressure = Math.max(0, Math.min(100, Math.round(
-    recentDangerous * 7 + recentShots * 8 + recentCorners * 20 + trendBoost
-  )));
-  const speed = Math.max(0, Math.min(100, Math.round(
-    recentCorners * 24 + recentShots * 11 + recentDangerous * 4 + trendBoost
-  )));
-  const minuteWindow = minute >= 55 && minute <= 88 ? 12 : minute >= 25 && minute < 55 ? 7 : 1;
-  const recentActivity = Math.min(30, recentCorners * 10 + recentShots * 3 + recentDangerous * 1.5);
-  const accumulatedContext = Math.min(10, corners * 0.8) + Math.min(8, history.length * 1.2);
-  const coolingPenalty = match.engineTrend.status === 'cooling' && recentCorners === 0 && recentShots === 0 ? 12 : 0;
-  const score = Math.max(0, Math.min(100, Math.round(
-    pressure * 0.28 + speed * 0.24 + recentActivity + accumulatedContext + minuteWindow - coolingPenalty
-  )));
-  const nextCornerProbability = Math.max(8, Math.min(92, Math.round(
-    12 + pressure * 0.34 + speed * 0.26 + recentCorners * 5 + minuteWindow * 0.45 - coolingPenalty * 0.5
-  )));
-  const confidence: Confidence = statisticalCoverage === 3 && history.length >= 6
-    ? 'Alta'
-    : statisticalCoverage >= 2 && history.length >= 4
-      ? 'Média'
-      : 'Baixa';
-  const canBeOpportunity = (confidence === 'Alta' || confidence === 'Média') && nextCornerProbability >= 60;
-  const decision: Decision = score >= 72 && canBeOpportunity ? 'OPORTUNIDADE' : score >= 46 ? 'ACOMPANHAR' : 'EVITAR';
-  const limitedCoverage = statisticalCoverage < 2;
-  const explanation = limitedCoverage
-    ? score >= 72
-      ? 'Os sinais recentes são fortes, mas a cobertura estatística ainda é baixa. Continue acompanhando antes de considerar entrada.'
-      : 'A leitura usa principalmente escanteios e histórico recente. Faltam estatísticas ofensivas para aumentar a confiança da recomendação.'
-    : pressure >= 65 && nextCornerProbability >= 60
-      ? 'O jogo está pressionando e criando ações ofensivas. Há sinais favoráveis para um novo escanteio.'
-      : pressure >= 65
-        ? 'O jogo apresenta pressão, mas a probabilidade calculada ainda não atingiu o nível mínimo para indicar oportunidade. Continue acompanhando.'
-      : match.engineTrend.status === 'cooling'
-        ? 'O ritmo caiu nos últimos registros. Neste momento, a tendência de novo escanteio enfraqueceu.'
-        : 'O jogo tem atividade, mas ainda não há força suficiente para indicar entrada. Continue acompanhando.';
-  return { score, nextCornerProbability, pressure, speed, confidence, decision, explanation, ready: true };
+  const a=match.assessment;
+  if(!a||!a.ready||!Number.isFinite(Date.parse(a.evaluatedAt))||Date.now()-Date.parse(a.evaluatedAt)>MAX_AGE_MS)return collecting('Aguardando uma avaliação atualizada do Motor Central.');
+  return a;
 }
 
 function scoreClass(score: number, ready = true) {
@@ -417,9 +362,9 @@ function MatchDetails({ match, lastUpdated }: { match: LiveMatch; lastUpdated: s
   const first = history[0];
   const latest = history.at(-1);
   const intelligence = calculateIntelligence(match);
-  const hasCorners = match.corners?.total !== undefined || latest?.corners.total !== null;
-  const hasShots = latest?.shots.total !== null;
-  const hasDangerousAttacks = latest?.dangerousAttacks.total !== null;
+  const hasCorners = match.corners?.total !== undefined || latest?.corners.total != null;
+  const hasShots = latest?.shots.total != null;
+  const hasDangerousAttacks = latest?.dangerousAttacks.total != null;
   return <div className="space-y-4">
     <section className="rounded-2xl border border-border bg-card p-5">
       <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
@@ -430,7 +375,7 @@ function MatchDetails({ match, lastUpdated }: { match: LiveMatch; lastUpdated: s
     <section className={`rounded-2xl border p-5 ${decisionClass(intelligence.decision)}`}>
       <div className="flex items-center gap-2"><BrainCircuit className="h-5 w-5" /><h3 className="text-lg font-black">Recomendação da IA · {intelligence.decision}</h3></div>
       <p className="mt-2 text-sm opacity-90">{intelligence.explanation}</p>
-      <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4"><Metric label="Chance de novo escanteio" value={intelligence.nextCornerProbability === null ? '—' : `${intelligence.nextCornerProbability}%`} /><Metric label="Pressão do jogo" value={intelligence.pressure === null ? '—' : `${intelligence.pressure}/100`} /><Metric label="Intensidade recente" value={intelligence.speed === null ? '—' : `${intelligence.speed}/100`} /><Metric label="Confiabilidade da leitura" value={intelligence.confidence} /></div>
+      <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4"><Metric label="Chance de escanteio em até 10 min" value={intelligence.nextCornerProbability === null ? '—' : `${intelligence.nextCornerProbability}%`} /><Metric label="Pressão do jogo" value={intelligence.pressure === null ? '—' : `${intelligence.pressure}/100`} /><Metric label="Intensidade recente" value={intelligence.speed === null ? '—' : `${intelligence.speed}/100`} /><Metric label="Confiabilidade da leitura" value={intelligence.confidence} /></div>
     </section>
     <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4"><Metric label="Leituras registradas" value={history.length} /><Metric label="Escanteios atuais" value={match.corners?.total ?? '—'} /><Metric label="Acompanhamento iniciado" value={formatTime(first?.capturedAt)} /><Metric label="Dados mais recentes" value={formatTime(latest?.capturedAt)} /></section>
     <section className="rounded-2xl border border-border bg-card p-5"><div className="flex items-center gap-2"><BarChart3 className="h-5 w-5 text-emerald-400" /><h3 className="text-lg font-bold">O que mudou nos últimos 10 minutos</h3></div><div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-5"><div className="rounded-xl border border-border p-3"><p className="text-xs text-muted-foreground">Tendência atual</p><p className="mt-1 flex items-center gap-2 text-lg font-bold"><TrendIcon value={match.engineTrend.status} />{trendLabels[match.engineTrend.status]}</p></div><Metric label="Novos escanteios" value={hasCorners ? signed(match.engineTrend.cornersDelta) : '—'} /><Metric label="Novas finalizações" value={hasShots ? signed(match.engineTrend.shotsDelta) : '—'} /><Metric label="Novos ataques perigosos" value={hasDangerousAttacks ? signed(match.engineTrend.dangerousAttacksDelta) : '—'} /><Metric label="Tempo de jogo parado" value={`${match.engineTrend.stoppedMinutesDelta.toFixed(1)} min`} /></div></section>
@@ -449,7 +394,10 @@ function matchesMinuteFilter(match: LiveMatch, filter: MinuteFilter) {
   return minute >= 76;
 }
 
-export default function LiveHistoryPage() {
+const EMPTY_FOLLOWED_IDS:number[]=[];
+export default function LiveHistoryPage({followedIds=EMPTY_FOLLOWED_IDS}:{followedIds?:number[]}) {
+  const [clock,setClock]=useState(0);
+  useEffect(()=>{const timer=setInterval(()=>setClock(v=>v+1),15_000);return()=>clearInterval(timer);},[]);
   const [matches, setMatches] = useState<LiveMatch[]>([]);
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [selectedSnapshot, setSelectedSnapshot] = useState<LiveMatch | null>(null);
@@ -474,10 +422,10 @@ export default function LiveHistoryPage() {
     const controller = new AbortController();
     requestRef.current = controller;
     try {
-      const suffix = manual ? '&refresh=1' : '';
-      const response = await fetch(`/api/live/central?history=summary&t=${Date.now()}${suffix}`, { cache: 'no-store', signal: controller.signal, headers: { 'Cache-Control': 'no-cache' } });
+      const suffix = followedIds.length ? `&follow=${followedIds.join(',')}` : '';
+      const response = await fetch(`/api/live/central?history=summary&t=${Date.now()}${suffix}`, { cache: 'no-store', signal: AbortSignal.any([controller.signal,AbortSignal.timeout(45_000)]), headers: { 'Cache-Control': 'no-cache' } });
       const data = await response.json() as Record<string, unknown>;
-      if (!response.ok) throw new Error(typeof data.error === 'string' ? data.error : 'Falha ao atualizar histórico ao vivo');
+      if (!response.ok || data.error) throw new Error(typeof data.error === 'string' ? data.error : 'Falha ao atualizar histórico ao vivo');
       const normalized = Array.isArray(data.matches) ? data.matches.map(normalizeMatch).filter((item): item is LiveMatch => Boolean(item)) : [];
       const next = dedupeMatches(normalized);
       let selectedDetail: LiveMatch | null = null;
@@ -485,7 +433,7 @@ export default function LiveHistoryPage() {
         const selectedMatch = next.find(match => matchKey(match) === selectedKey);
         if (selectedMatch) {
           try {
-            const detailResponse = await fetch(`/api/live/central?history=compact&matchId=${selectedMatch.id}&t=${Date.now()}`, { cache: 'no-store', signal: controller.signal, headers: { 'Cache-Control': 'no-cache' } });
+            const detailResponse = await fetch(`/api/live/central?history=compact&eventKey=${encodeURIComponent(selectedMatch.eventKey)}&t=${Date.now()}${suffix}`, { cache: 'no-store', signal: AbortSignal.any([controller.signal,AbortSignal.timeout(45_000)]), headers: { 'Cache-Control': 'no-cache' } });
             if (detailResponse.ok) {
               const detailData = await detailResponse.json() as Record<string, unknown>;
               const detailRaw = Array.isArray(detailData.matches) ? detailData.matches[0] : null;
@@ -501,7 +449,7 @@ export default function LiveHistoryPage() {
       setLastUpdated(typeof data.lastUpdated === 'string' ? data.lastUpdated : new Date().toISOString());
       setSelectedSnapshot(current => {
         if (!selectedKey) return current;
-        return selectedDetail ?? next.find(match => matchKey(match) === selectedKey) ?? current;
+        return selectedDetail ?? next.find(match => matchKey(match) === selectedKey) ?? null;
       });
     } catch (reason) {
       if (reason instanceof DOMException && reason.name === 'AbortError') return;
@@ -513,7 +461,7 @@ export default function LiveHistoryPage() {
         setRefreshing(false);
       }
     }
-  }, [selectedKey]);
+  }, [selectedKey,followedIds]);
 
   useEffect(() => {
     const refreshIfVisible = () => { if (document.visibilityState === 'visible') void load(false); };
@@ -524,7 +472,7 @@ export default function LiveHistoryPage() {
     return () => { window.clearInterval(timer); document.removeEventListener('visibilitychange', onVisibilityChange); requestRef.current?.abort(); };
   }, [load]);
 
-  const intelligenceByKey = useMemo(() => new Map(matches.map(match => [matchKey(match), calculateIntelligence(match)] as const)), [matches]);
+  const intelligenceByKey = useMemo(() => new Map(matches.map(match => [matchKey(match), calculateIntelligence(match)] as const)), [matches,clock]);
   const decisionCounts = useMemo(() => {
     const counts: Record<DecisionFilter, number> = { TODOS: matches.length, OPORTUNIDADE: 0, ACOMPANHAR: 0, EVITAR: 0, COLETANDO: 0 };
     for (const match of matches) counts[intelligenceByKey.get(matchKey(match))?.decision ?? 'COLETANDO'] += 1;

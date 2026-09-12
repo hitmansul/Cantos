@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState, useRef } from 'react';
 import {
   AlertCircle,
   BarChart3,
@@ -163,7 +163,7 @@ function hasPositive(value?: number | null) {
 }
 
 function formatMinutes(value?: number | null, prefix = '') {
-  if (!hasPositive(value)) return 'não informado';
+  if (typeof value !== 'number' || !hasPositive(value)) return 'não informado';
   return `${prefix}${value.toFixed(1).replace('.0', '')} min`;
 }
 
@@ -735,10 +735,13 @@ export function LiveMatches() {
   const [selectedCompetition, setSelectedCompetition] = useState('all');
   const [selectedMatchKey, setSelectedMatchKey] = useState<string | null>(null);
 
+  const pollingRef=useRef(false);
   const fetchLiveMatches = useCallback(async () => {
+    if(pollingRef.current||document.visibilityState!=='visible')return;
+    pollingRef.current=true;
     try {
       setError(null);
-      const response = await fetch('/api/live', { cache: 'no-store' });
+      const response = await fetch('/api/live', { cache: 'no-store', signal: AbortSignal.timeout(45_000) });
       const data = (await response.json()) as {
         matches?: LiveMatch[];
         lastUpdated?: string;
@@ -760,6 +763,7 @@ export function LiveMatches() {
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Erro desconhecido');
     } finally {
+      pollingRef.current=false;
       setLoading(false);
     }
   }, []);

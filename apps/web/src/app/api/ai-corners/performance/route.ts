@@ -34,7 +34,7 @@ export async function GET() {
   }
 
   try {
-    const models = await sql<SummaryRow[]>`
+    const models = await sql`
       SELECT
         v.model_key,
         v.name AS model_name,
@@ -64,7 +64,7 @@ export async function GET() {
       LEFT JOIN ai_offer_settlements s ON s.prediction_offer_id = o.id AND s.result <> 'pending'
       GROUP BY v.model_key, v.name, v.version, v.status
       ORDER BY CASE v.status WHEN 'production' THEN 1 WHEN 'challenger' THEN 2 WHEN 'experimental' THEN 3 ELSE 4 END, roi_percent DESC NULLS LAST
-    `;
+    ` as SummaryRow[];
 
     const competitions = await sql`
       SELECT

@@ -62,7 +62,7 @@ export async function persistCornerDecision(input: DecisionWarehouseInput): Prom
   const range = rangeBounds(input.projectedRange);
 
   try {
-    const rows = await sql<PredictionIdRow[]>`
+    const rows = await sql`
       INSERT INTO ai_prediction_runs (
         prediction_key, model_key, fixture_key, competition_key, competition_name,
         home_team_name, away_team_name, kickoff_at, expected_home_corners,
@@ -85,7 +85,7 @@ export async function persistCornerDecision(input: DecisionWarehouseInput): Prom
         ${JSON.stringify(input.requestSnapshot ?? {})}::jsonb,
         ${JSON.stringify(input.responseSnapshot ?? {})}::jsonb
       ) RETURNING id
-    `;
+    ` as PredictionIdRow[];
 
     const predictionRunId = rows[0]?.id;
     if (!predictionRunId) return null;

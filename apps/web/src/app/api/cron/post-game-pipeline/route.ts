@@ -1,14 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { runPostGamePipeline } from '@/lib/pipeline/postGamePipeline';
 
-function isAuthorized(request: NextRequest): boolean {
-  const cronSecret = process.env.CRON_SECRET;
-  if (!cronSecret) return process.env.NODE_ENV === 'development';
-  const authHeader = request.headers.get('authorization');
-  if (authHeader === `Bearer ${cronSecret}`) return true;
-  const { searchParams } = new URL(request.url);
-  return searchParams.get('secret') === cronSecret;
-}
+import { authorized as isAuthorized } from '@/lib/live/cronAuth';
 
 function optionalInteger(value: string | null): number | undefined {
   if (!value) return undefined;

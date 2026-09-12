@@ -1,3 +1,4 @@
+import { isAdmin } from '@/app/api/utils/adminAuth';
 /**
  * Diagnóstico completo do Better Auth + Google OAuth.
  * GET /api/auth/debug
@@ -6,6 +7,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import sql from '@/app/api/utils/sql';
 
 export async function GET(req: NextRequest) {
+  if(!await isAdmin(req))return NextResponse.json({error:'Não autorizado'},{status:401});
   const clientId = process.env.GOOGLE_CLIENT_ID;
   const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
   const betterAuthUrl = process.env.BETTER_AUTH_URL;

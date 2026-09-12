@@ -1,8 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { aliases, initialKey } from '@/lib/live/identity';
 import { apiFootballGet } from '../../utils/apiFootball';
 
 type LiveStatRow = { key?: string; label?: string; home?: string; away?: string };
 type LiveMatch = {
+  source?: string;
   id: number;
   minute: number | string;
   statusText?: string;
@@ -44,7 +46,7 @@ function minuteValue(value: number | string) {
 }
 function hasUsefulLiveData(match: LiveMatch) { return Boolean(match.corners || (Array.isArray(match.liveStats) && match.liveStats.length > 0)); }
 function sourceIds(match: LiveMatch) { return [match.id, match.sourceIds?.scores365, match.sourceIds?.sofascore, match.sourceIds?.apiFootball].filter((value): value is number => typeof value === 'number' && Number.isFinite(value)); }
-function matchesAnyId(match: LiveMatch, ids: Set<number>) { return sourceIds(match).some((id) => ids.has(id)); }
+function matchesAnyId(match: LiveMatch, ids: Set<number>) { return typeof match.sourceIds?.scores365 === "number" && ids.has(match.sourceIds.scores365); }
 function sameRequestedMatch(match: LiveMatch, eventId: number, home: string, away: string) {
   if (eventId > 0 && sourceIds(match).includes(eventId)) return true;
   return Boolean(home && away && canonicalTeam(match.homeTeam.name) === canonicalTeam(home) && canonicalTeam(match.awayTeam.name) === canonicalTeam(away));
@@ -114,6 +116,7 @@ function fixtureSimilarity(match: LiveMatch, fixture: ApiFixture) {
 function findBestFixture(match: LiveMatch, fixtures: ApiFixture[]) {
   let best: { fixture: ApiFixture; score: number } | null = null;
   for (const fixture of fixtures) {
+    if(canonicalTeam(match.homeTeam.name)!==canonicalTeam(fixture.teams.home.name)||canonicalTeam(match.awayTeam.name)!==canonicalTeam(fixture.teams.away.name))continue;
     const score = fixtureSimilarity(match, fixture);
     if (score <= 0) continue;
     if (!best || score > best.score) best = { fixture, score };
@@ -132,13 +135,13 @@ async function enrichFollowedFallback(matches: LiveMatch[], followedIds: Set<num
   const targets = matches.filter((match) => matchesAnyId(match, followedIds) && !hasUsefulLiveData(match)).slice(0, MAX_FOLLOWED_FALLBACK);
   if (!targets.length) return matches;
   try {
-    const live = await apiFootballGet<ApiFixture[]>('/fixtures', { params: { live: 'all' }, cache: 'no-store', timeoutMs: 8_000 });
+    const live = await apiFootballGet<ApiFixture[]>('/fixtures', { params: { live: 'all' }, cache: 'no-store', timeoutMs: 3_000 });
     const fixtures = live?.response ?? [];
-    const replacements = new Map<number, LiveMatch>();
+    const replacements = new Map<string, LiveMatch>();
     await Promise.all(targets.map(async (match) => {
       const fixture = findBestFixture(match, fixtures);
       if (!fixture) return;
-      const result = await apiFootballGet<ApiTeamStats[]>('/fixtures/statistics', { params: { fixture: fixture.fixture.id }, cache: 'no-store', timeoutMs: 8_000 });
+      const result = await apiFootballGet<ApiTeamStats[]>('/fixtures/statistics', { params: { fixture: fixture.fixture.id }, cache: 'no-store', timeoutMs: 3_000 });
       const teams = result?.response ?? [];
       if (teams.length < 2) return;
       const homeStats = bestTeamStats(teams, match.homeTeam.name, 0);
@@ -150,19 +153,20 @@ async function enrichFollowedFallback(matches: LiveMatch[], followedIds: Set<num
       const dangerousHome = statValue(homeStats, ['Dangerous Attacks']);
       const dangerousAway = statValue(awayStats, ['Dangerous Attacks']);
       const liveStats: LiveStatRow[] = [];
-      if (cornersHome !== null || cornersAway !== null) liveStats.push({ key: 'corners', label: 'Escanteios', home: String(cornersHome ?? 0), away: String(cornersAway ?? 0) });
-      if (shotsHome !== null || shotsAway !== null) liveStats.push({ key: 'shots', label: 'Finalizações', home: String(shotsHome ?? 0), away: String(shotsAway ?? 0) });
-      if (dangerousHome !== null || dangerousAway !== null) liveStats.push({ key: 'dangerous-attacks', label: 'Ataques perigosos', home: String(dangerousHome ?? 0), away: String(dangerousAway ?? 0) });
+      if (cornersHome !== null || cornersAway !== null) liveStats.push({ key: 'corners', label: 'Escanteios', home: String(cornersHome ?? '-'), away: String(cornersAway ?? '-') });
+      if (shotsHome !== null || shotsAway !== null) liveStats.push({ key: 'shots', label: 'Finalizações', home: String(shotsHome ?? '-'), away: String(shotsAway ?? '-') });
+      if (dangerousHome !== null || dangerousAway !== null) liveStats.push({ key: 'dangerous-attacks', label: 'Ataques perigosos', home: String(dangerousHome ?? '-'), away: String(dangerousAway ?? '-') });
       if (!liveStats.length) return;
-      replacements.set(match.id, {
+      replacements.set(initialKey(match), {
         ...match,
-        corners: cornersHome !== null || cornersAway !== null ? { home: cornersHome ?? 0, away: cornersAway ?? 0, total: (cornersHome ?? 0) + (cornersAway ?? 0) } : match.corners,
+        corners: cornersHome !== null && cornersAway !== null ? { home: cornersHome ?? 0, away: cornersAway ?? 0, total: (cornersHome ?? 0) + (cornersAway ?? 0) } : match.corners,
         liveStats,
         statsSource: 'api-football',
+        statsObservedAt:new Date().toISOString(),
         sourceIds: { ...match.sourceIds, apiFootball: fixture.fixture.id },
       });
     }));
-    return matches.map((match) => replacements.get(match.id) ?? match);
+    return matches.map((match) => replacements.get(initialKey(match)) ?? match);
   } catch (error) {
     console.warn('[live/followed-fallback] API-Football indisponível.', error);
     return matches;
@@ -170,6 +174,7 @@ async function enrichFollowedFallback(matches: LiveMatch[], followedIds: Set<num
 }
 
 export async function GET(request: NextRequest) {
+  const required=new Set((request.nextUrl.searchParams.get('required')??'').split(',').filter(v=>/^(scores365|sofascore|apiFootball):\d+$/.test(v)).slice(0,300));
   const requestedEventId = Number(request.nextUrl.searchParams.get('eventId') ?? '0');
   const requestedHome = request.nextUrl.searchParams.get('home') ?? '';
   const requestedAway = request.nextUrl.searchParams.get('away') ?? '';
@@ -178,7 +183,7 @@ export async function GET(request: NextRequest) {
   rawUrl.searchParams.set('raw', '1');
   let payload: Record<string, unknown> & { matches?: LiveMatch[] };
   try {
-    const response = await fetch(rawUrl, { cache: 'no-store' });
+    const response = await fetch(rawUrl, { cache: 'no-store',signal:AbortSignal.timeout(25_000) });
     payload = (await response.json()) as Record<string, unknown> & { matches?: LiveMatch[] };
     if (!response.ok) return NextResponse.json(payload, { status: response.status });
   } catch {
@@ -193,11 +198,13 @@ export async function GET(request: NextRequest) {
     const requested = sorted.find((match) => sameRequestedMatch(match, requestedEventId, requestedHome, requestedAway));
     monitored = requested ? [requested] : [];
   } else {
-    const selected = new Map<number, LiveMatch>();
-    for (const match of sorted) { if (matchesAnyId(match, followedIds)) selected.set(match.id, match); if (selected.size >= MAX_MONITORED) break; }
-    for (const match of useful) { if (selected.size >= MAX_MONITORED) break; selected.set(match.id, match); }
-    if (selected.size === 0) for (const match of sorted.slice(0, FALLBACK_MONITORED)) selected.set(match.id, match);
-    monitored = [...selected.values()].slice(0, MAX_MONITORED);
+    const selected = new Map<string, LiveMatch>();
+    for (const match of sorted) { if (matchesAnyId(match, followedIds)) selected.set(initialKey(match), match); if (selected.size >= MAX_MONITORED) break; }
+    for (const match of useful) { if (selected.size >= MAX_MONITORED) break; selected.set(initialKey(match), match); }
+    if (selected.size === 0) for (const match of sorted.slice(0, FALLBACK_MONITORED)) selected.set(initialKey(match), match);
+    const pinned=sorted.filter(m=>aliases(m).some(a=>required.has(a)));
+    for(const m of pinned)selected.set(initialKey(m),m);
+    monitored = [...selected.values()];
   }
   return NextResponse.json({
     ...payload, matches: monitored, count: monitored.length, lastUpdated: new Date().toISOString(),

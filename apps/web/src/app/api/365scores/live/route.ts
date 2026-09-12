@@ -5,9 +5,13 @@
  * Sofascore's /sport/football/events/live returns ALL live football matches globally.
  */
 import { NextResponse } from 'next/server';
+import { sameFixture } from '@/lib/live/identity';
 import { apiFootballGet } from '../../utils/apiFootball';
 
 interface LiveMatch {
+  observedAt?: string;
+  statsObservedAt?: string;
+  kickoffAt?: string;
   id: number;
   minute: number | string;
   statusText: string;
@@ -73,6 +77,7 @@ interface PeriodStoppageInfo {
 }
 
 interface Scores365Game {
+  startTime?: string;
   id: number;
   sportId?: number;
   statusGroup?: number;
@@ -126,6 +131,7 @@ interface PlayByPlayMessage {
 
 interface ApiFootballLiveFixture {
   fixture: {
+    date?: string;
     id: number;
     status: { elapsed?: number; extra?: number; short?: string; long?: string };
   };
@@ -162,7 +168,7 @@ const SCORES365_COUNTRIES: Record<number, string> = {
   252: 'Aruba',
 };
 
-const MAX_STOPPAGE_ENRICHMENT = 24;
+const MAX_STOPPAGE_ENRICHMENT = 12;
 const MAX_API_FOOTBALL_STATS_ENRICHMENT = 8;
 const LIVE_CACHE_TTL_MS = 20_000;
 const STOPPAGE_MIN_DURATION_MS = 15_000;
@@ -177,6 +183,7 @@ let liveResponseCache:
         count: number;
         lastUpdated: string;
         sources: { scores365: number; sofascore: number; apiFootball: number };
+        sourceStatus: Record<string,string>;
       };
     }
   | undefined;
@@ -249,13 +256,15 @@ function matchKey(match: Pick<LiveMatch, 'homeTeam' | 'awayTeam'>) {
 }
 
 function mergeMatch(base: LiveMatch, incoming: LiveMatch): LiveMatch {
+  const stats = base.corners || base.liveStats?.length ? base : incoming;
   return {
     ...base,
     competition: base.competition ?? incoming.competition,
     competitionId: base.competitionId || incoming.competitionId,
-    corners: incoming.corners ?? base.corners,
-    liveStats: incoming.liveStats ?? base.liveStats,
-    statsSource: incoming.statsSource ?? base.statsSource,
+    corners: stats.corners,
+    liveStats: stats.liveStats,
+    statsSource: stats.statsSource,
+    statsObservedAt: stats.statsObservedAt,
     stoppage: base.stoppage ?? incoming.stoppage,
     periodStoppage: mergePeriodStoppage(base.periodStoppage, incoming.periodStoppage),
     sourceIds: {
@@ -625,7 +634,7 @@ async function fetchApiFootballStats(match: LiveMatch): Promise<Pick<LiveMatch, 
   const response = await apiFootballGet<ApiFootballTeamStatistics[]>('/fixtures/statistics', {
     params: { fixture: match.sourceIds?.apiFootball ?? match.id },
     cache: 'no-store',
-    timeoutMs: 8_000,
+    timeoutMs: 4_000,
   });
 
   const stats = response?.response ?? [];
@@ -657,6 +666,7 @@ async function enrichWithApiFootballStats(matches: LiveMatch[]): Promise<LiveMat
         corners: stats.corners,
         liveStats: stats.liveStats,
         statsSource: stats.statsSource,
+        statsObservedAt: new Date().toISOString(),
       };
     })
   );
@@ -699,6 +709,7 @@ async function enrichWith365Stats(matches: LiveMatch[]): Promise<LiveMatch[]> {
         corners: extractCornersFromRows(liveStats) ?? match.corners,
         liveStats,
         statsSource: '365scores',
+        statsObservedAt: new Date().toISOString(),
       };
     });
   } catch (err) {
@@ -885,6 +896,7 @@ async function fetchStoppageInfo(gameId: number, currentPeriod: PeriodKey | null
     const playByPlayRes = await fetchWithTimeout(feedURL, {
       headers: SCORES365_HEADERS,
       cache: 'no-store',
+      signal: AbortSignal.timeout(8_000),
     });
 
     if (!playByPlayRes.ok) return fromActualPlayTime ?? announcedFromClock;
@@ -942,14 +954,16 @@ async function fetchFrom365Scores(): Promise<LiveMatch[]> {
     const res = await fetch('https://webws.365scores.com/web/games/?appTypeId=5&langId=31&statuses=2', {
       headers: SCORES365_HEADERS,
       cache: 'no-store',
+      signal: AbortSignal.timeout(8_000),
     });
 
-    if (!res.ok) return [];
+    if (!res.ok) throw new Error(`365Scores ${res.status}`);
 
     const data = (await res.json()) as {
       games?: Scores365Game[];
     };
 
+    if(!Array.isArray(data.games))throw new Error('Resposta 365Scores inválida');
     const liveMatches = (data.games ?? [])
       .filter((game) => {
         const isFootball = game.sportId === 1 || game.homeCompetitor?.sportId === 1;
@@ -971,6 +985,8 @@ async function fetchFrom365Scores(): Promise<LiveMatch[]> {
 
         return {
           id: game.id,
+          observedAt: new Date().toISOString(),
+          kickoffAt:game.startTime,
           minute:
             displayMinute && addedTimeMinutes
               ? displayMinute
@@ -1000,8 +1016,7 @@ async function fetchFrom365Scores(): Promise<LiveMatch[]> {
     const withStats = await enrichWith365Stats(liveMatches);
     return enrichWithStoppage(withStats);
   } catch (err) {
-    console.error('[live/365scores] error:', err);
-    return [];
+    throw err;
   }
 }
 
@@ -1020,11 +1035,11 @@ async function fetchFromSofascore(): Promise<LiveMatch[]> {
         'Cache-Control': 'no-cache',
       },
       cache: 'no-store',
+      signal: AbortSignal.timeout(8_000),
     });
 
     if (!res.ok) {
-      console.warn('[live/sofascore] status:', res.status);
-      return [];
+      throw new Error(`Sofascore ${res.status}`);
     }
 
     const data = (await res.json()) as {
@@ -1044,7 +1059,8 @@ async function fetchFromSofascore(): Promise<LiveMatch[]> {
       }>;
     };
 
-    const events = data.events ?? [];
+    if(!Array.isArray(data.events))throw new Error('Resposta Sofascore inválida');
+    const events = data.events;
     console.log('[live/sofascore] events:', events.length);
 
     return events.map((ev) => {
@@ -1076,6 +1092,8 @@ async function fetchFromSofascore(): Promise<LiveMatch[]> {
 
       return {
         id: ev.id,
+        observedAt: new Date().toISOString(),
+        kickoffAt:new Date(ev.startTimestamp*1000).toISOString(),
         minute,
         statusText: ev.status?.description ?? 'Ao vivo',
         homeTeam: {
@@ -1097,8 +1115,7 @@ async function fetchFromSofascore(): Promise<LiveMatch[]> {
       };
     });
   } catch (err) {
-    console.error('[live/sofascore] error:', err);
-    return [];
+    throw err;
   }
 }
 
@@ -1109,10 +1126,11 @@ async function fetchFromApiFootball(): Promise<LiveMatch[]> {
     const data = await apiFootballGet<ApiFootballLiveFixture[]>('/fixtures', {
       params: { live: 'all' },
       cache: 'no-store',
-      timeoutMs: 12_000,
+      timeoutMs: 8_000,
     });
 
-    const matches = (data?.response ?? []).map((item) => {
+    if(!Array.isArray(data?.response))throw new Error('API-Football indisponível ou resposta inválida');
+    const matches = (data.response ?? []).map((item) => {
       const currentPeriod = periodFromRawPeriod(
         item.fixture.status.short ?? item.fixture.status.long,
         item.fixture.status.elapsed !== null && item.fixture.status.elapsed !== undefined
@@ -1131,6 +1149,8 @@ async function fetchFromApiFootball(): Promise<LiveMatch[]> {
 
       return {
         id: item.fixture.id,
+        observedAt: new Date().toISOString(),
+        kickoffAt:item.fixture.date,
         minute:
           item.fixture.status.extra && item.fixture.status.elapsed
             ? `${item.fixture.status.elapsed}+${item.fixture.status.extra}'`
@@ -1157,8 +1177,7 @@ async function fetchFromApiFootball(): Promise<LiveMatch[]> {
 
     return enrichWithApiFootballStats(matches);
   } catch (err) {
-    console.error('[live/api-football] error:', err);
-    return [];
+    throw err;
   }
 }
 
@@ -1179,18 +1198,18 @@ export async function GET() {
       fetchFromApiFootball(),
     ]);
 
+    const results=[scores365Result,sofascoreResult,apiFootballResult];
+    if(results.every(r=>r.status==='rejected'))return NextResponse.json({matches:[],error:'Todas as fontes ao vivo estão indisponíveis',sourceStatus:{scores365:'unavailable',sofascore:'unavailable',apiFootball:'unavailable'}},{status:503});
     const scores365Matches = scores365Result.status === 'fulfilled' ? scores365Result.value : [];
     const sfMatches = sofascoreResult.status === 'fulfilled' ? sofascoreResult.value : [];
     const afMatches = apiFootballResult.status === 'fulfilled' ? apiFootballResult.value : [];
 
     const allMatches: LiveMatch[] = [];
-    const indexByKey = new Map<string, number>();
+
 
     const addOrMerge = (match: LiveMatch) => {
-      const key = matchKey(match);
-      const existingIndex = indexByKey.get(key);
-      if (existingIndex === undefined) {
-        indexByKey.set(key, allMatches.length);
+      const existingIndex=allMatches.findIndex(current=>sameFixture(current,match));
+      if (existingIndex < 0) {
         allMatches.push(match);
       } else {
         allMatches[existingIndex] = mergeMatch(allMatches[existingIndex], match);
@@ -1202,6 +1221,7 @@ export async function GET() {
     for (const match of afMatches) addOrMerge(match);
 
     const body = {
+      sourceStatus:{scores365:scores365Result.status==='fulfilled'?'available':'unavailable',sofascore:sofascoreResult.status==='fulfilled'?'available':'unavailable',apiFootball:apiFootballResult.status==='fulfilled'?'available':'unavailable'},
       matches: allMatches,
       count: allMatches.length,
       lastUpdated: new Date().toISOString(),

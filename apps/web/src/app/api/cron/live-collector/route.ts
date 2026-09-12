@@ -1,152 +1,24 @@
 import { NextRequest, NextResponse } from 'next/server';
-
-export const dynamic = 'force-dynamic';
-export const maxDuration = 300;
-
-function isAuthorized(request: NextRequest) {
-  const authorization = request.headers.get('authorization');
-  const secret = process.env.CRON_SECRET;
-
-  if (!authorization) return true;
-  if (!secret) return true;
-  return authorization === `Bearer ${secret}`;
-}
-
-function sleep(ms: number) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-async function fetchCentral(url: URL) {
-  const response = await fetch(url, {
-    cache: 'no-store',
-    headers: { 'Cache-Control': 'no-cache' },
-  });
-  const payload = await response.json() as Record<string, unknown>;
-  return { response, payload };
-}
-
-async function collectRecommendationAnalytics(request: NextRequest) {
-  const url = new URL('/api/live/recommendations/collect', request.nextUrl.origin);
-  url.searchParams.set('t', String(Date.now()));
-  const authorization = request.headers.get('authorization');
-  const headers: Record<string, string> = { 'Cache-Control': 'no-cache' };
-  if (authorization) headers.Authorization = authorization;
-
-  try {
-    const response = await fetch(url, { cache: 'no-store', headers });
-    const payload = await response.json() as Record<string, unknown>;
-    return {
-      ok: response.ok,
-      status: response.status,
-      inserted: typeof payload.inserted === 'number' ? payload.inserted : 0,
-      summary: payload.summary ?? null,
-      error: response.ok ? null : (typeof payload.error === 'string' ? payload.error : 'Falha na avaliação de recomendações'),
-    };
-  } catch (error) {
-    return {
-      ok: false,
-      status: 0,
-      inserted: 0,
-      summary: null,
-      error: error instanceof Error ? error.message : 'Falha desconhecida na avaliação de recomendações',
-    };
-  }
-}
-
-export async function GET(request: NextRequest) {
-  if (!isAuthorized(request)) {
-    return NextResponse.json({ ok: false, error: 'Não autorizado' }, { status: 401 });
-  }
-
-  const startedAt = new Date().toISOString();
-  const centralUrl = new URL('/api/live/central', request.nextUrl.origin);
-  centralUrl.searchParams.set('refresh', '1');
-  centralUrl.searchParams.set('history', '0');
-  centralUrl.searchParams.set('collector', 'cron');
-  centralUrl.searchParams.set('t', String(Date.now()));
-
-  try {
-    const initial = await fetchCentral(centralUrl);
-
-    if (!initial.response.ok) {
-      return NextResponse.json(
-        {
-          ok: false,
-          startedAt,
-          finishedAt: new Date().toISOString(),
-          error: typeof initial.payload.error === 'string' ? initial.payload.error : 'Falha ao acionar o Motor Central',
-        },
-        { status: initial.response.status }
-      );
-    }
-
-    const previousUpdatedAt = typeof initial.payload.lastUpdated === 'string' ? initial.payload.lastUpdated : null;
-    let confirmedPayload = initial.payload;
-    let collectionConfirmed = initial.payload.refreshQueued === false && previousUpdatedAt !== null;
-
-    if (!collectionConfirmed) {
-      for (let attempt = 1; attempt <= 12; attempt += 1) {
-        await sleep(5_000);
-
-        const verifyUrl = new URL('/api/live/central', request.nextUrl.origin);
-        verifyUrl.searchParams.set('history', '0');
-        verifyUrl.searchParams.set('collectorCheck', '1');
-        verifyUrl.searchParams.set('t', String(Date.now()));
-
-        const verification = await fetchCentral(verifyUrl);
-        if (!verification.response.ok) continue;
-
-        confirmedPayload = verification.payload;
-        const currentUpdatedAt = typeof verification.payload.lastUpdated === 'string'
-          ? verification.payload.lastUpdated
-          : null;
-
-        if (currentUpdatedAt && currentUpdatedAt !== previousUpdatedAt) {
-          collectionConfirmed = true;
-          break;
-        }
-      }
-    }
-
-    if (!collectionConfirmed) {
-      return NextResponse.json(
-        {
-          ok: false,
-          startedAt,
-          finishedAt: new Date().toISOString(),
-          error: 'O Motor Central respondeu, mas nenhuma nova coleta foi confirmada no período de verificação.',
-          previousUpdatedAt,
-          lastUpdated: confirmedPayload.lastUpdated ?? null,
-          matches: typeof confirmedPayload.count === 'number' ? confirmedPayload.count : 0,
-          engine: confirmedPayload.engine ?? null,
-        },
-        { status: 504 }
-      );
-    }
-
-    const recommendationAnalytics = await collectRecommendationAnalytics(request);
-
-    return NextResponse.json({
-      ok: true,
-      collectionConfirmed: true,
-      startedAt,
-      finishedAt: new Date().toISOString(),
-      matches: typeof confirmedPayload.count === 'number' ? confirmedPayload.count : 0,
-      previousUpdatedAt,
-      lastUpdated: confirmedPayload.lastUpdated ?? null,
-      refreshQueued: confirmedPayload.refreshQueued ?? false,
-      engine: confirmedPayload.engine ?? null,
-      recommendationAnalytics,
-    });
-  } catch (error) {
-    return NextResponse.json(
-      {
-        ok: false,
-        startedAt,
-        finishedAt: new Date().toISOString(),
-        error: error instanceof Error ? error.message : 'Falha desconhecida no coletor',
-      },
-      { status: 500 }
-    );
-  }
+import { authorized, internalHeaders } from '@/lib/live/cronAuth';
+export const dynamic='force-dynamic';
+export const maxDuration=60;
+export async function GET(request:NextRequest){
+  if(!authorized(request))return NextResponse.json({ok:false,error:'Não autorizado'},{status:401});
+  const startedAt=new Date().toISOString();
+  try{
+    const url=new URL('/api/live/central?history=0',request.nextUrl.origin);
+    const response=await fetch(url,{cache:'no-store',headers:internalHeaders(),signal:AbortSignal.timeout(45_000)});
+    const data=await response.json();
+    const confirmed=response.ok&&data.collectionConfirmed===true&&data.persistenceConfirmed===true;
+    // Resolution is independent of acquisition, including on cycles with no live matches.
+    let resolution:unknown;
+    try{
+      const r=await fetch(new URL('/api/live/recommendations/collect',request.nextUrl.origin),{cache:'no-store',headers:internalHeaders(),signal:AbortSignal.timeout(8_000)});
+      resolution={ok:r.ok,...await r.json()};
+    }catch(error){resolution={ok:false,error:error instanceof Error?error.message:'Avaliação indisponível'};}
+    return NextResponse.json({ok:confirmed,collectionConfirmed:confirmed,persistenceConfirmed:data.persistenceConfirmed,
+      startedAt,finishedAt:new Date().toISOString(),lastUpdated:data.lastUpdated,matches:data.count,engine:data.engine,
+      recommendationAnalytics:{recording:data.recommendationAnalytics,resolution},error:confirmed?null:data.error??'Persistência não confirmada'},
+      {status:confirmed?200:503,headers:{'Cache-Control':'no-store'}});
+  }catch(error){return NextResponse.json({ok:false,collectionConfirmed:false,error:error instanceof Error?error.message:'Coleta indisponível'},{status:503});}
 }
