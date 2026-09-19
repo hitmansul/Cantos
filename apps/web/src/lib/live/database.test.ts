@@ -13,6 +13,7 @@ import { recordAssessments,resolveRecommendations } from './recommendations';
 import { assess,type Sample } from './intelligence';
 import { cleanupLiveData } from './maintenance';
 import { GET as performance } from '@/app/api/live/recommendations/performance/route';
+import { GET as history } from '@/app/api/live/recommendations/history/route';
 import { GET as health } from '@/app/api/live/health/route';
 import { GET as central } from '@/app/api/live/central/route';
 import { NextRequest } from 'next/server';
@@ -29,6 +30,7 @@ it('persists once, resolves PostgreSQL evidence, and reports measurable outcomes
  await resolveRecommendations(now);await resolveRecommendations(now);
  const {rows}=await context.db.query<any>('SELECT * FROM live_recommendations_v2');expect(rows[0].assessment).toEqual(a);expect(rows[0].corners_before).toBe(9);expect(rows[0].outcome_5m).toBe('miss');expect(rows[0].outcome_10m).toBe('hit');
  const metrics=await(await performance()).json();expect(metrics.rows.find((r:any)=>r.dimension==='all').actual_percent).toBe(100);
+ const results=await(await history()).json();expect(results.rows).toHaveLength(1);expect(results.rows[0].outcome_5m).toBe('miss');expect(results.rows[0].outcome_10m).toBe('hit');expect(results.rows[0].reason_10m).toBe('increase-observed-inside-window');expect(results.rows[0]).not.toHaveProperty('input_data');
  await cleanupLiveData();
 },30000);
 it('reports idle only after a successful empty collection',async()=>{
