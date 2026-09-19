@@ -4,7 +4,8 @@
  *
  * Sofascore's /sport/football/events/live returns ALL live football matches globally.
  */
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
+import { collectScores365Stats, type Scores365Statistic } from '@/lib/live/scores365Stats';
 import { sameFixture } from '@/lib/live/identity';
 import { apiFootballGet } from '../../utils/apiFootball';
 
@@ -99,18 +100,6 @@ interface Scores365ActualPlayTime {
   totalTime?: { name?: string; progress?: number };
 }
 
-interface Scores365Statistic {
-  id?: number;
-  name?: string;
-  competitorId?: number;
-  categoryId?: number;
-  categoryName?: string;
-  isMajor?: boolean;
-  value?: number | string;
-  order?: number;
-  categoryOrder?: number;
-}
-
 interface LiveStatRow {
   key: string;
   label: string;
@@ -178,6 +167,7 @@ const STOPPAGE_FETCH_TIMEOUT_MS = 4_500;
 let liveResponseCache:
   | {
       expiresAt: number;
+      priorityKey: string;
       body: {
         matches: LiveMatch[];
         count: number;
@@ -674,48 +664,20 @@ async function enrichWithApiFootballStats(matches: LiveMatch[]): Promise<LiveMat
   return enrichedMatches;
 }
 
-async function enrichWith365Stats(matches: LiveMatch[]): Promise<LiveMatch[]> {
-  const ids = [...new Set(matches.map((match) => match.sourceIds?.scores365 ?? match.id))].filter(
-    (id) => Number.isFinite(id) && id > 0
-  );
-
-  if (ids.length === 0) return matches;
-
-  try {
-    const statsRes = await fetchWithTimeout(
-      `https://webws.365scores.com/web/game/stats/?appTypeId=5&langId=31&games=${ids.join(',')}`,
-      {
-        headers: {
-          ...SCORES365_HEADERS,
-          Referer: 'https://www.365scores.com/pt-br',
-          Origin: 'https://www.365scores.com',
-        },
-        cache: 'no-store',
-      }
-    );
-
-    if (!statsRes.ok) return matches;
-
-    const data = (await statsRes.json()) as { statistics?: Scores365Statistic[] };
-    const stats = data.statistics ?? [];
-    if (stats.length === 0) return matches;
-
-    return matches.map((match) => {
-      const liveStats = extractRowsForMatch(stats, match);
-      if (liveStats.length === 0) return match;
-
-      return {
-        ...match,
-        corners: extractCornersFromRows(liveStats) ?? match.corners,
-        liveStats,
-        statsSource: '365scores',
-        statsObservedAt: new Date().toISOString(),
-      };
-    });
-  } catch (err) {
-    console.warn('[live/365scores/stats] error:', err);
-    return matches;
-  }
+async function enrichWith365Stats(matches: LiveMatch[], priorityIds: number[]): Promise<LiveMatch[]> {
+  const collected = await collectScores365Stats(matches, {
+    ...SCORES365_HEADERS,
+    Referer: 'https://www.365scores.com/pt-br',
+    Origin: 'https://www.365scores.com',
+  }, priorityIds);
+  return matches.map(match => {
+    const result = collected.get(match.sourceIds?.scores365 ?? match.id);
+    if (!result) return match;
+    const liveStats = extractRowsForMatch(result.statistics, match);
+    if (!liveStats.length) return match;
+    return { ...match, corners: extractCornersFromRows(liveStats), liveStats,
+      statsSource: '365scores', statsObservedAt: result.observedAt };
+  });
 }
 
 function messageTime(message: PlayByPlayMessage) {
@@ -949,7 +911,7 @@ async function enrichWithStoppage(matches: LiveMatch[]): Promise<LiveMatch[]> {
   return enrichedMatches;
 }
 
-async function fetchFrom365Scores(): Promise<LiveMatch[]> {
+async function fetchFrom365Scores(priorityIds: number[]): Promise<LiveMatch[]> {
   try {
     const res = await fetch('https://webws.365scores.com/web/games/?appTypeId=5&langId=31&statuses=2', {
       headers: SCORES365_HEADERS,
@@ -1013,7 +975,7 @@ async function fetchFrom365Scores(): Promise<LiveMatch[]> {
         };
       });
 
-    const withStats = await enrichWith365Stats(liveMatches);
+    const withStats = await enrichWith365Stats(liveMatches, priorityIds);
     return enrichWithStoppage(withStats);
   } catch (err) {
     throw err;
@@ -1183,9 +1145,12 @@ async function fetchFromApiFootball(): Promise<LiveMatch[]> {
 
 // ── Main ──────────────────────────────────────────────────────────────────────
 
-export async function GET() {
+export async function GET(request: NextRequest) {
+  const priorityIds = [...new Set((request.nextUrl.searchParams.get('priority') ?? '').split(',')
+    .map(Number).filter(id => Number.isSafeInteger(id) && id > 0))].slice(0, 300);
+  const priorityKey = priorityIds.join(',');
   try {
-    if (liveResponseCache && liveResponseCache.expiresAt > Date.now()) {
+    if (liveResponseCache && liveResponseCache.expiresAt > Date.now() && liveResponseCache.priorityKey === priorityKey) {
       return NextResponse.json({
         ...liveResponseCache.body,
         cached: true,
@@ -1193,7 +1158,7 @@ export async function GET() {
     }
 
     const [scores365Result, sofascoreResult, apiFootballResult] = await Promise.allSettled([
-      fetchFrom365Scores(),
+      fetchFrom365Scores(priorityIds),
       fetchFromSofascore(),
       fetchFromApiFootball(),
     ]);
@@ -1234,6 +1199,7 @@ export async function GET() {
 
     liveResponseCache = {
       expiresAt: Date.now() + LIVE_CACHE_TTL_MS,
+      priorityKey,
       body,
     };
 

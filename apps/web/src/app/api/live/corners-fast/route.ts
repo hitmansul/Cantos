@@ -181,6 +181,8 @@ export async function GET(request: NextRequest) {
   const followedIds = new Set((request.nextUrl.searchParams.get('follow') ?? '').split(',').map(Number).filter((value) => Number.isFinite(value) && value > 0));
   const rawUrl = new URL('/api/365scores/live', request.nextUrl.origin);
   rawUrl.searchParams.set('raw', '1');
+  const required365 = [...required].filter(key => key.startsWith('scores365:')).map(key => Number(key.split(':')[1]));
+  rawUrl.searchParams.set('priority', [...new Set([...required365, ...followedIds])].join(','));
   let payload: Record<string, unknown> & { matches?: LiveMatch[] };
   try {
     const response = await fetch(rawUrl, { cache: 'no-store',signal:AbortSignal.timeout(25_000) });
