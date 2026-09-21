@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState, useRef } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   AlertCircle,
   BarChart3,
@@ -13,6 +13,7 @@ import {
   X,
   XCircle,
 } from 'lucide-react';
+import { useLiveFeed } from '@/hooks/useLiveFeed';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -51,7 +52,7 @@ type LiveStatRow = {
   away: string;
 };
 
-type LiveMatch = {
+export type LiveMatch = {
   id: number;
   minute: number | string;
   statusText: string;
@@ -727,56 +728,14 @@ function Details({
 }
 
 export function LiveMatches() {
-  const [matches, setMatches] = useState<LiveMatch[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [lastUpdatedDisplay, setLastUpdatedDisplay] = useState('');
-  const [autoRefresh, setAutoRefresh] = useState(true);
+  const { matches: sourceMatches, loading, error, lastUpdated, autoRefresh, setAutoRefresh, refresh: fetchLiveMatches } = useLiveFeed();
+  const matches = useMemo(() => restoreCachedAddedTime(dedupeMatches(sourceMatches)), [sourceMatches]);
+  useEffect(() => { rememberAddedTime(sourceMatches); }, [sourceMatches]);
+  const lastUpdatedDisplay = lastUpdated ? new Intl.DateTimeFormat('pt-BR', {
+    timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit', second: '2-digit',
+  }).format(new Date(lastUpdated)) : '';
   const [selectedCompetition, setSelectedCompetition] = useState('all');
   const [selectedMatchKey, setSelectedMatchKey] = useState<string | null>(null);
-
-  const pollingRef=useRef(false);
-  const fetchLiveMatches = useCallback(async () => {
-    if(pollingRef.current||document.visibilityState!=='visible')return;
-    pollingRef.current=true;
-    try {
-      setError(null);
-      const response = await fetch('/api/live', { cache: 'no-store', signal: AbortSignal.timeout(45_000) });
-      const data = (await response.json()) as {
-        matches?: LiveMatch[];
-        lastUpdated?: string;
-        error?: string;
-      };
-      if (!response.ok) throw new Error(data.error ?? 'Erro ao carregar jogos ao vivo');
-      const deduped = dedupeMatches(data.matches ?? []);
-      rememberAddedTime(deduped);
-      setMatches(restoreCachedAddedTime(deduped));
-      const updatedAt = data.lastUpdated ? new Date(data.lastUpdated) : new Date();
-      setLastUpdatedDisplay(
-        new Intl.DateTimeFormat('pt-BR', {
-          timeZone: 'America/Sao_Paulo',
-          hour: '2-digit',
-          minute: '2-digit',
-          second: '2-digit',
-        }).format(updatedAt)
-      );
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Erro desconhecido');
-    } finally {
-      pollingRef.current=false;
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    fetchLiveMatches();
-  }, [fetchLiveMatches]);
-
-  useEffect(() => {
-    if (!autoRefresh) return;
-    const interval = setInterval(fetchLiveMatches, 25000);
-    return () => clearInterval(interval);
-  }, [autoRefresh, fetchLiveMatches]);
 
   const matchesByCompetition = useMemo(
     () =>
@@ -819,7 +778,7 @@ export function LiveMatches() {
     return <div className="flex justify-center py-12"><RefreshCw className="h-8 w-8 animate-spin text-emerald-500" /></div>;
   }
 
-  if (error) {
+  if (error && matches.length === 0) {
     return (
       <div className="rounded-xl border border-red-500/20 bg-red-500/10 p-6">
         <AlertCircle className="mb-2 h-5 w-5 text-red-500" />
@@ -834,6 +793,7 @@ export function LiveMatches() {
 
   return (
     <div className="min-w-0 space-y-4 overflow-hidden">
+      {error && <p role="alert" className="rounded-xl border border-red-500/30 p-3 text-sm text-red-400">{error} Exibindo a última leitura recebida.</p>}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex min-w-0 flex-wrap items-center gap-3">
           <div className="flex items-center gap-2">
@@ -857,7 +817,6 @@ export function LiveMatches() {
             variant="outline"
             size="sm"
             onClick={() => {
-              setLoading(true);
               fetchLiveMatches();
             }}
             disabled={loading}

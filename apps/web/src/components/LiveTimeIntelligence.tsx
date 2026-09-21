@@ -1,6 +1,7 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState, useRef } from 'react';
+import { useMemo } from 'react';
+import { useLiveFeed } from '@/hooks/useLiveFeed';
 import { Activity, AlertTriangle, Clock3, RefreshCw, ShieldCheck, TimerReset } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -82,31 +83,7 @@ function buildRow(match: Match): Row {
 }
 
 export function LiveTimeIntelligence() {
-  const [matches, setMatches] = useState<Match[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
-
-  const pollingRef=useRef(false);
-  const load = useCallback(async () => {
-    if(pollingRef.current||document.visibilityState!=='visible')return;
-    pollingRef.current=true;
-    setLoading(true);
-    setError('');
-    try {
-      const response = await fetch('/api/live', { cache: 'no-store', signal: AbortSignal.timeout(45_000) });
-      const payload = await response.json() as { matches?: Match[]; error?: string };
-      if (!response.ok) throw new Error(payload.error || 'Não foi possível carregar a inteligência de tempo.');
-      setMatches(payload.matches ?? []);
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Falha ao carregar os dados ao vivo.');
-    } finally {
-      pollingRef.current=false;
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => { void load(); }, [load]);
-  useEffect(() => { const timer = setInterval(() => void load(), 25000); return () => clearInterval(timer); }, [load]);
+  const { matches, loading, error, refresh: load } = useLiveFeed();
 
   const rows = useMemo(() => matches.map(buildRow).sort((a, b) => (b.official != null ? 1 : 0) - (a.official != null ? 1 : 0) || minuteValue(b.match) - minuteValue(a.match)), [matches]);
   const confirmed = rows.filter((row) => row.official != null).length;

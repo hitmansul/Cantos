@@ -1,38 +1,11 @@
 'use client';
 
 import Link from 'next/link';
-import { useEffect, useState } from 'react';
+import { useLiveFeed } from '@/hooks/useLiveFeed';
 import { Bot, Loader2, RefreshCw } from 'lucide-react';
 
-type LiveMatch = {
-  id: number;
-  minute: number | string;
-  statusText?: string;
-  competition?: string;
-  homeTeam: { name: string; score: number };
-  awayTeam: { name: string; score: number };
-};
-
-type LiveResponse = { matches?: LiveMatch[] };
-
 export function LiveAssistantQuickAccess() {
-  const [matches, setMatches] = useState<LiveMatch[]>([]);
-  const [loading, setLoading] = useState(true);
-
-  async function load() {
-    setLoading(true);
-    try {
-      const response = await fetch('/api/live', { cache: 'no-store' });
-      const payload = await response.json() as LiveResponse;
-      setMatches(Array.isArray(payload.matches) ? payload.matches : []);
-    } catch {
-      setMatches([]);
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  useEffect(() => { void load(); }, []);
+  const { matches, loading, error, refresh: load } = useLiveFeed();
 
   return (
     <section className="rounded-2xl border bg-card p-4 sm:p-5">
@@ -46,10 +19,11 @@ export function LiveAssistantQuickAccess() {
         </button>
       </div>
 
+      {error && <p role="alert" className="mt-3 text-sm text-red-400">{error}</p>}
       {loading && matches.length === 0 ? (
         <div className="mt-4 rounded-xl border border-dashed p-5 text-center text-sm text-muted-foreground">Carregando partidas ao vivo…</div>
       ) : matches.length === 0 ? (
-        <div className="mt-4 rounded-xl border border-dashed p-5 text-center text-sm text-muted-foreground">Nenhuma partida ao vivo disponível agora.</div>
+        <div className="mt-4 rounded-xl border border-dashed p-5 text-center text-sm text-muted-foreground">{error ? 'Não foi possível consultar as partidas.' : 'Nenhuma partida ao vivo disponível agora.'}</div>
       ) : (
         <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
           {matches.slice(0, 12).map((match) => {
