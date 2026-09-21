@@ -1,5 +1,7 @@
 'use client';
 
+import Link from 'next/link';
+import { LiveFeedProvider } from '@/hooks/useLiveFeed';
 import { Activity, Clock3, CornerUpRight, Radio, Sparkles } from 'lucide-react';
 import { LiveMatches } from '@/components/LiveMatches';
 import { LiveTimeIntelligence } from '@/components/LiveTimeIntelligence';
@@ -9,7 +11,7 @@ import { Card } from '@/components/ui/card';
 
 export default function LivePage() {
   return (
-    <main className="mx-auto w-full max-w-7xl space-y-6 px-3 py-6 sm:px-5 lg:px-8">
+    <LiveFeedProvider><main className="mx-auto w-full max-w-7xl space-y-6 px-3 py-6 sm:px-5 lg:px-8">
       <section className="overflow-hidden rounded-2xl border border-red-500/20 bg-gradient-to-br from-red-500/10 via-background to-emerald-500/10 p-4 sm:p-6">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
           <div className="min-w-0 space-y-3">
@@ -54,9 +56,13 @@ export default function LivePage() {
         </div>
       </section>
 
+      <nav aria-label="Análise de escanteios" className="flex flex-wrap gap-3">
+        <Link href="/live-history" className="rounded-xl bg-emerald-600 px-4 py-3 text-sm font-bold text-white hover:bg-emerald-500">Ver força e probabilidade de escanteios</Link>
+        <Link href="/live-results" className="rounded-xl border border-border px-4 py-3 text-sm font-bold">Resultados das oportunidades</Link>
+      </nav>
       <LiveAssistantQuickAccess />
       <LiveTimeIntelligence />
       <LiveMatches />
-    </main>
+    </main></LiveFeedProvider>
   );
 }
