@@ -89,7 +89,7 @@ function dedupeLiveMatches(matches: LiveMatch[]) {
   return result;
 }
 function pair(home: number | null, away: number | null): Pair { return { home, away, total: home !== null && away !== null ? home + away : null }; }
-function statPair(match: LiveMatch, aliases: string[]): Pair { const row = (match.liveStats ?? []).find(item => { const text = normalize(`${item.key ?? ''} ${item.label ?? ''}`); return aliases.some(alias => text.includes(alias)); }); return pair(parseNumber(row?.home), parseNumber(row?.away)); }
+function statPair(match: LiveMatch, aliases: string[]): Pair { const row = (match.liveStats ?? []).find(item => { const names = [item.label ?? '', (item.key ?? '').replace(/^\d+:/, '')].map(normalize); return aliases.some(alias => names.includes(alias)); }); return pair(parseNumber(row?.home), parseNumber(row?.away)); }
 
 async function hydrate(force = false) {
   if (!force && Date.now() - state.hydratedAt < HYDRATE_MAX_AGE_MS) return;
@@ -119,10 +119,10 @@ function snapshot(match: LiveMatch, capturedAt: string): Snapshot {
   return {
     statsSource:match.statsSource,sourceObservedAt:match.statsObservedAt,quality:match.statsObservedAt&&Date.parse(capturedAt)>=Date.parse(match.statsObservedAt)&&Date.parse(capturedAt)-Date.parse(match.statsObservedAt)<=90_000?'verified':'unknown',
     capturedAt, minute: match.minute, minuteNumber: minuteNumber(match.minute), homeScore: match.homeTeam.score, awayScore: match.awayTeam.score,
-    corners: match.corners ? pair(match.corners.home, match.corners.away) : statPair(match, ['corner', 'escanteio']),
-    shots: statPair(match, ['total shots', 'shots total', 'chutes totais', 'finalizacoes']),
+    corners: match.corners ? pair(match.corners.home, match.corners.away) : statPair(match, ['corner', 'corners', 'escanteio', 'escanteios']),
+    shots: statPair(match, ['total shots', 'shots total', 'shots', 'chutes totais', 'total de chutes', 'finalizacoes', 'total de finalizacoes']),
     shotsOnTarget: statPair(match, ['shots on target', 'on target', 'chutes no gol', 'finalizacoes certas']),
-    dangerousAttacks: statPair(match, ['dangerous attacks', 'ataques perigosos']), attacks: statPair(match, ['total attacks', 'attacks', 'ataques']),
+    dangerousAttacks: statPair(match, ['dangerous attacks', 'ataques perigosos']), attacks: statPair(match, ['total attacks', 'attacks', 'ataques', 'ataque', 'total de ataques']),
     possession: statPair(match, ['ball possession', 'possession', 'posse de bola']), totalStoppedMinutes: parseNumber(match.stoppage?.totalStoppedMinutes),
     predictedAddedMinutes: parseNumber(match.stoppage?.predictedAddedMinutes), stoppageIncidents: Array.isArray(match.stoppage?.incidents) ? match.stoppage!.incidents!.length : 0,
     statsCount: match.liveStats?.length ?? 0,
