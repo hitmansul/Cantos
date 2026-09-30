@@ -1,5 +1,5 @@
 /** Shared contract: the server evaluates; all consumers display the same versioned result. */
-export const MODEL_VERSION = 'live-heuristic-v2';
+export const MODEL_VERSION = 'live-heuristic-v3';
 export const PROTOCOL_VERSION = 'observed-corner-wall-clock-v2';
 export const MAX_AGE_MS = 180_000;
 export const MAX_GAP_MS = 90_000;

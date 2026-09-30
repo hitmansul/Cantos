@@ -56,3 +56,22 @@ it('executes atomic central persistence and suppresses identical snapshots',asyn
  const after=(await context.db.query<any>('SELECT COUNT(*)::int AS n FROM live_engine_snapshots')).rows[0].n;expect(after).toBe(before);
  const healthy=await(await health()).json();expect(healthy.databaseReachable).toBe(true);expect(healthy.activeMatches).toBe(1);
 },30000);
+it.each([
+ {id:51,stats:[{key:'3:total de chutes',label:'Total de chutes',home:'6',away:'4'},{key:'dangerous-attacks',label:'Ataques perigosos',home:'15',away:'12'},{key:'11:ataque',label:'Ataque',home:'83',away:'77'}],shots:10,attacks:160,dangerous:27},
+ {id:52,stats:[{key:'shots-on-target',label:'Finalizações certas',home:'2',away:'1'},{key:'dangerous-attacks',label:'Ataques perigosos',home:'15',away:'12'}],shots:null,attacks:null,dangerous:27},
+ {id:53,stats:[{key:'shots',label:'Finalizações',home:'0',away:'0'},{key:'total-attacks',label:'Total attacks',home:'0',away:'0'}],shots:0,attacks:0,dangerous:null},
+])('persists distinct statistics without treating missing values as zero ($id)',async({id,stats,shots,attacks,dangerous})=>{
+ await context.db.query("UPDATE live_engine_control SET last_success_at=NOW()-INTERVAL '30 seconds'");
+ (globalThis as any).__cornerGptLiveEngine.hydratedAt=0;
+ const now=new Date().toISOString();
+ const match={id,sourceIds:{scores365:id},source:'365scores',minute:70,homeTeam:{name:'Casa',score:0},awayTeam:{name:'Fora',score:0},observedAt:now,statsObservedAt:now,statsSource:'365scores',corners:{home:2,away:1,total:3},liveStats:stats};
+ vi.stubGlobal('fetch',vi.fn(async()=>new Response(JSON.stringify({matches:[match]}))));
+ const result=await(await central(new NextRequest('https://test.invalid/api/live/central?history=compact'))).json();
+ expect(result.persistenceConfirmed,result.error).toBe(true);
+ const rows=(await context.db.query<any>('SELECT snapshot_data FROM live_engine_snapshots WHERE event_key=$1 ORDER BY captured_at DESC LIMIT 1',[String(id)])).rows;
+ expect(rows[0].snapshot_data.shots.total).toBe(shots);
+ expect(rows[0].snapshot_data.attacks.total).toBe(attacks);
+ expect(rows[0].snapshot_data.dangerousAttacks.total).toBe(dangerous);
+ expect(result.matches[0].engineHistory.at(-1)).toEqual(rows[0].snapshot_data);
+ expect(result.matches[0].assessment.modelVersion).toBe('live-heuristic-v3');
+},30000);
