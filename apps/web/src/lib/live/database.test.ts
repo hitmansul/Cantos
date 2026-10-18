@@ -34,7 +34,7 @@ it('persists once, resolves PostgreSQL evidence, and reports measurable outcomes
  await cleanupLiveData();
 },30000);
 it('reports idle only after a successful empty collection',async()=>{
- await context.db.query("UPDATE live_engine_control SET last_success_at=NOW()-INTERVAL '30 seconds'");
+ await context.db.query("UPDATE live_engine_control SET last_success_at=NOW()-INTERVAL '60 seconds',last_attempt_at=NOW()-INTERVAL '60 seconds'");
  (globalThis as any).__cornerGptLiveEngine.hydratedAt=0;
  vi.stubGlobal('fetch',vi.fn(async()=>new Response(JSON.stringify({matches:[]}))));
  const data=await(await central(new NextRequest('https://test.invalid/api/live/central'))).json();
@@ -44,13 +44,14 @@ it('reports idle only after a successful empty collection',async()=>{
  expect((await(await health()).json()).status).toBe('degraded-collector');
 },30000);
 it('executes atomic central persistence and suppresses identical snapshots',async()=>{
+ await context.db.query("UPDATE live_engine_control SET last_attempt_at=NOW()-INTERVAL '60 seconds'");
  (globalThis as any).__cornerGptLiveEngine.hydratedAt=0;
  const match={id:43,sourceIds:{scores365:43},source:'365scores',minute:70,homeTeam:{name:'A',score:0},awayTeam:{name:'B',score:0},observedAt:new Date().toISOString(),statsObservedAt:new Date().toISOString(),statsSource:'365scores',corners:{home:10,away:0,total:10}};
  vi.stubGlobal('fetch',vi.fn(async()=>new Response(JSON.stringify({matches:[match]}))));
  const req=new NextRequest('https://test.invalid/api/live/central?history=compact');
  const result=await(await central(req)).json();expect(result.persistenceConfirmed,result.error).toBe(true);expect(result.matches[0].eventKey).toBe('43');
  const before=(await context.db.query<any>('SELECT COUNT(*)::int AS n FROM live_engine_snapshots')).rows[0].n;
- await context.db.query("UPDATE live_engine_control SET last_success_at=NOW()-INTERVAL '30 seconds'");
+ await context.db.query("UPDATE live_engine_control SET last_success_at=NOW()-INTERVAL '60 seconds',last_attempt_at=NOW()-INTERVAL '60 seconds'");
  const state=(globalThis as any).__cornerGptLiveEngine;state.hydratedAt=0;
  await central(req);
  const after=(await context.db.query<any>('SELECT COUNT(*)::int AS n FROM live_engine_snapshots')).rows[0].n;expect(after).toBe(before);
@@ -61,7 +62,7 @@ it.each([
  {id:52,stats:[{key:'shots-on-target',label:'Finalizações certas',home:'2',away:'1'},{key:'dangerous-attacks',label:'Ataques perigosos',home:'15',away:'12'}],shots:null,attacks:null,dangerous:27},
  {id:53,stats:[{key:'shots',label:'Finalizações',home:'0',away:'0'},{key:'total-attacks',label:'Total attacks',home:'0',away:'0'}],shots:0,attacks:0,dangerous:null},
 ])('persists distinct statistics without treating missing values as zero ($id)',async({id,stats,shots,attacks,dangerous})=>{
- await context.db.query("UPDATE live_engine_control SET last_success_at=NOW()-INTERVAL '30 seconds'");
+ await context.db.query("UPDATE live_engine_control SET last_success_at=NOW()-INTERVAL '60 seconds',last_attempt_at=NOW()-INTERVAL '60 seconds'");
  (globalThis as any).__cornerGptLiveEngine.hydratedAt=0;
  const now=new Date().toISOString();
  const match={id,sourceIds:{scores365:id},source:'365scores',minute:70,homeTeam:{name:'Casa',score:0},awayTeam:{name:'Fora',score:0},observedAt:now,statsObservedAt:now,statsSource:'365scores',corners:{home:2,away:1,total:3},liveStats:stats};
@@ -74,4 +75,20 @@ it.each([
  expect(rows[0].snapshot_data.dangerousAttacks.total).toBe(dangerous);
  expect(result.matches[0].engineHistory.at(-1)).toEqual(rows[0].snapshot_data);
  expect(result.matches[0].assessment.modelVersion).toBe('live-heuristic-v3');
+},30000);
+
+it('coalesces repeated callers across instances without relabeling stale data',async()=>{
+ const state=(globalThis as any).__cornerGptLiveEngine;
+ await context.db.query("UPDATE live_engine_control SET last_success_at=NOW()-INTERVAL '30 seconds',last_attempt_at=NOW()-INTERVAL '40 seconds'");
+ state.hydratedAt=0;
+ const fetcher=vi.fn();vi.stubGlobal('fetch',fetcher);
+ const req=new NextRequest('https://test.invalid/api/live/central');
+ const recent=await(await central(req)).json();
+ expect(fetcher).not.toHaveBeenCalled();expect(recent.collectionConfirmed).toBe(true);
+ // A recently failed attempt must not cause every browser to retry acquisition.
+ await context.db.query("UPDATE live_engine_control SET last_success_at=NOW()-INTERVAL '5 minutes',last_attempt_at=NOW(),last_error='Source unavailable'");
+ state.hydratedAt=0;
+ const stale=await(await central(req)).json();
+ expect(fetcher).not.toHaveBeenCalled();expect(stale.collectionConfirmed).toBe(false);
+ expect(stale.matches.every((m:any)=>m.assessment.ready===false)).toBe(true);
 },30000);
