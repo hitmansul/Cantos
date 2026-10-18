@@ -134,7 +134,8 @@ async function refresh(origin:string, follow:string){
     await ensureSchema();
     const owner=randomUUID();
     const claimed=await sql`UPDATE live_engine_control SET owner=${owner},lease_until=NOW()+INTERVAL '55 seconds',last_attempt_at=NOW()
-      WHERE id=1 AND (lease_until IS NULL OR lease_until<NOW()) AND (last_success_at IS NULL OR last_success_at<NOW()-INTERVAL '25 seconds') RETURNING id`;
+      WHERE id=1 AND (lease_until IS NULL OR lease_until<NOW())
+      AND (last_attempt_at IS NULL OR last_attempt_at<NOW()-INTERVAL '55 seconds') AND (last_success_at IS NULL OR last_success_at<NOW()-INTERVAL '25 seconds') RETURNING id`;
     if(!claimed.length){await hydrate(true);return;}
     try{
       // Keep pending events in the monitored set independently of browser preferences.

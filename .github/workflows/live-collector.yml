@@ -10,6 +10,8 @@ concurrency:
   cancel-in-progress: false
 jobs:
   collect:
+    # cron-job.org is the primary minute scheduler. Enable this fallback explicitly.
+    if: github.event_name == 'workflow_dispatch' || vars.ENABLE_GITHUB_LIVE_COLLECTOR == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 6
     steps:
