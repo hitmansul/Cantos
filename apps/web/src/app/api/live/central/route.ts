@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { ensureLiveSchema as ensureSchema } from '@/lib/live/schema';
 import { aliases, initialKey, sameFixture } from '@/lib/live/identity';
 import { assess, analyticalHistory, recentHistory, trend as buildTrend, type Assessment } from '@/lib/live/intelligence';
+import { rankMatches, type AgentMatch } from '@/lib/live/agent';
 import { recordAssessments } from '@/lib/live/recommendations';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -221,8 +222,9 @@ export async function GET(request:NextRequest){
       engineTrend:buildTrend(history),engineUpdatedAt:match.observedAt??null,engineSnapshotCount:history.length,engineTrackedSince:history[0]?.capturedAt??null};
   });
   const healthy=Boolean(state.persisted)&&!state.collectionError&&Number.isFinite(Date.parse(state.updatedAt??''))&&now-Date.parse(state.updatedAt!)<90_000;
-  return NextResponse.json({matches,count:matches.length,lastUpdated:state.updatedAt,refreshQueued:false,
-    collectionConfirmed:healthy,persistenceConfirmed:healthy,error:state.collectionError??null,
+  const agent = rankMatches(matches as AgentMatch[],healthy,now).map(({agent})=>agent);
+  return NextResponse.json({agent:{mode:'autonomous-rules-v1',matches:agent,opportunities:agent.filter(m=>m.decision==='OPORTUNIDADE').length,redCardAlerts:agent.filter(m=>m.hasRedCard).length},matches,count:matches.length,lastUpdated:state.updatedAt,refreshQueued:false,
+    sourceStatus:state.sourceStatus,collectionConfirmed:healthy,persistenceConfirmed:healthy,error:state.collectionError??null,
     recommendationAnalytics:{ok:!state.analyticsError,error:state.analyticsError??null},
     engine:{mode:'central-persistent-neon-v2',persistence:healthy?'neon-postgresql':'degraded',refreshSeconds:25,historyLimit:HISTORY_LIMIT,compactHistoryLimit:12,summaryHistoryLimit:3,trendWindowMinutes:10,coverage:state.coverage??null}},
     {status:!healthy&&!matches.length?503:200,headers:{'Cache-Control':'no-store, max-age=0'}});

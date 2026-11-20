@@ -459,35 +459,8 @@ function calculateStoppageFromActualPlayTime(
   return stoppageInfoFromPeriods(periods, '365scores-actual-play-time', 'calculated-stoppage');
 }
 
-function parseAddedTimeMinutes(value?: string | number | null) {
-  if (value === undefined || value === null) return null;
-
-  const raw = String(value);
-  const normalized = raw.replace(/\s+/g, '');
-
-  // A 365Scores pode mostrar o relógio como "46:41 +6".
-  // Nesse caso o acréscimo sinalizado pelo árbitro é +6,
-  // não o tempo já corrido dentro do acréscimo depois dos 45.
-  const clockWithAdded = raw.match(/\b\d{1,3}\s*[:']\s*\d{1,2}\s*\+\s*(\d{1,2})\b/);
-  if (clockWithAdded) {
-    const minutes = Number(clockWithAdded[1]);
-    return Number.isFinite(minutes) && minutes > 0 ? minutes : null;
-  }
-
-  // Formatos de status: 45+4, 90+6, 105+2, 120+1.
-  const periodBase = normalized.match(/(?:45|90|105|120)\+(\d{1,2})/);
-  if (periodBase) {
-    const minutes = Number(periodBase[1]);
-    return Number.isFinite(minutes) && minutes > 0 ? minutes : null;
-  }
-
-  // Texto simples: "+6", "Acréscimo +6", "added time +6".
-  const standalone = raw.match(/(?:^|[^0-9])\+\s*(\d{1,2})(?:[^0-9]|$)/);
-  if (standalone) {
-    const minutes = Number(standalone[1]);
-    return Number.isFinite(minutes) && minutes > 0 ? minutes : null;
-  }
-
+function parseAddedTimeMinutes(_value?: string | number | null): number | null {
+  // Provider clock text is elapsed stoppage time, not a verified referee announcement.
   return null;
 }
 
@@ -950,7 +923,7 @@ async function fetchFrom365Scores(priorityIds: number[]): Promise<LiveMatch[]> {
           observedAt: new Date().toISOString(),
           kickoffAt:game.startTime,
           minute:
-            displayMinute && addedTimeMinutes
+            displayMinute
               ? displayMinute
               : typeof game.gameTime === 'number' && game.gameTime >= 0
                 ? game.gameTime
@@ -1043,9 +1016,7 @@ async function fetchFromSofascore(): Promise<LiveMatch[]> {
         periodFromRawPeriod(ev.status?.period, ev.status?.description) ??
         inferPeriodFromMinute(minute, ev.status?.description);
       const announcedAddedTime = calculateAnnouncedAddedTime(
-        typeof ev.time?.extra === 'number'
-          ? ev.time.extra
-          : parseAddedTimeMinutes(ev.status?.description),
+        null,
         'sofascore-announced-added-time',
         'Acréscimo sinalizado pelo relógio/status do SofaScore.',
         ev.status?.description,
@@ -1100,9 +1071,7 @@ async function fetchFromApiFootball(): Promise<LiveMatch[]> {
           : item.fixture.status.short ?? item.fixture.status.long
       );
       const announcedAddedTime = calculateAnnouncedAddedTime(
-        typeof item.fixture.status.extra === 'number'
-          ? item.fixture.status.extra
-          : parseAddedTimeMinutes(item.fixture.status.short ?? item.fixture.status.long),
+        null,
         'api-football-announced-added-time',
         'Acréscimo sinalizado pela API-Football.',
         item.fixture.status.short ?? item.fixture.status.long,

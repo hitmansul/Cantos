@@ -200,13 +200,8 @@ export async function GET(request: NextRequest) {
     const requested = sorted.find((match) => sameRequestedMatch(match, requestedEventId, requestedHome, requestedAway));
     monitored = requested ? [requested] : [];
   } else {
-    const selected = new Map<string, LiveMatch>();
-    for (const match of sorted) { if (matchesAnyId(match, followedIds)) selected.set(initialKey(match), match); if (selected.size >= MAX_MONITORED) break; }
-    for (const match of useful) { if (selected.size >= MAX_MONITORED) break; selected.set(initialKey(match), match); }
-    if (selected.size === 0) for (const match of sorted.slice(0, FALLBACK_MONITORED)) selected.set(initialKey(match), match);
-    const pinned=sorted.filter(m=>aliases(m).some(a=>required.has(a)));
-    for(const m of pinned)selected.set(initialKey(m),m);
-    monitored = [...selected.values()];
+    // Keep every discovered fixture visible. Detailed source enrichment remains bounded.
+    monitored = [...new Map(sorted.map(match => [initialKey(match), match])).values()];
   }
   return NextResponse.json({
     ...payload, matches: monitored, count: monitored.length, lastUpdated: new Date().toISOString(),

@@ -56,13 +56,6 @@ function summary(match: Match, period: PeriodKey): Period | undefined {
   return match.periodStoppage?.[period] ?? match.stoppage?.periods?.[period];
 }
 
-function officialFromClock(match: Match, period: PeriodKey) {
-  const raw = `${match.minute ?? ''} ${match.statusText ?? ''}`;
-  const base = period === 'firstHalf' ? 45 : 90;
-  const found = raw.match(new RegExp(`${base}\\s*\\+\\s*(\\d{1,2})`));
-  return found ? Number(found[1]) : null;
-}
-
 function buildRow(match: Match): Row {
   const period = periodOf(match);
   const data = summary(match, period);
@@ -71,7 +64,7 @@ function buildRow(match: Match): Row {
   const raw = data?.rawStoppedMinutes ?? data?.totalStoppedMinutes ?? null;
   const considered = data?.consideredStoppedMinutes ?? data?.totalStoppedMinutes ?? null;
   const predicted = data?.predictedAddedMinutes ?? null;
-  const official = data?.actualAddedMinutes ?? officialFromClock(match, period);
+  const official: number | null = null; // Await a verified referee announcement source.
   const stoppedInsideAdded = current > base && official != null
     ? Math.max(0, (data?.incidents ?? []).filter((item) => item.considered !== false).reduce((total, item) => total + ((item.consideredMs ?? item.durationMs ?? 0) / 60000), 0) - (considered ?? 0))
     : 0;
