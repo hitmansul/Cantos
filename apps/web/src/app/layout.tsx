@@ -10,8 +10,8 @@ import { ProductNavigation } from '@/components/ProductNavigation';
 import { LiveMatchScrollStabilizer } from '@/components/LiveMatchScrollStabilizer';
 
 export const metadata: Metadata = {
-  title: 'Cantos Estatísticas',
-  description: 'Estatísticas inteligentes, comparação de odds e oportunidades para mercados de futebol',
+  title: 'IA Cantos — Agente ao vivo',
+  description: 'Monitoramento de escanteios, alertas de expulsão e previsão de acréscimos com dados ao vivo',
   icons: {
     icon: '/favicon.png',
   },
